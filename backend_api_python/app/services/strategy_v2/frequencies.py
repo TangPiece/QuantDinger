@@ -15,6 +15,8 @@ FREQUENCY_SECONDS: dict[str, int] = {
     "4h": 14_400,
     "1d": 86_400,
     "1w": 604_800,
+    # 30 days. Chart code uses "1M"; this key stays "1mo" so it cannot collide with "1m".
+    "1mo": 2_592_000,
 }
 
 _ALIASES = {
@@ -34,7 +36,12 @@ _ALIASES = {
 
 
 def normalize_frequency(value: object, default: str = "1d") -> str:
-    raw = str(value or default).strip().lower().replace("分钟", "m").replace("小时", "h")
+    """Return a canonical frequency. Exact "1M" is monthly; "1m" stays one minute."""
+    text = str(value or default).strip()
+    # Capital M is the chart monthly token. Lowercasing it first would yield "1m".
+    if text == "1M":
+        return "1mo"
+    raw = text.lower().replace("分钟", "m").replace("小时", "h")
     return _ALIASES.get(raw, raw or default)
 
 

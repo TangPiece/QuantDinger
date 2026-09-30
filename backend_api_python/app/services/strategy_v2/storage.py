@@ -10,6 +10,7 @@ from app.utils.db import get_db_connection
 
 from .contract import strategy_source_code_hash
 from .curve_sampling import sample_equity_curve
+from .symbol_labels import attach_symbol_names
 
 
 class StrategyBacktestRepository:
@@ -508,6 +509,8 @@ def _normalize_backtest_result(
         compatibility["legacyBackfill"] = True
         compatibility["backfilledFields"] = backfilled_fields
 
+    # 已保存的回测打开时补名称，不必重跑。查不到则保持原结果。
+    attach_symbol_names(result, default_market=str(run.get("market") or ""))
     return result
 
 

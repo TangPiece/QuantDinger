@@ -10,7 +10,7 @@ from app.utils.technical_indicators import compute_kdj_cn, compute_rsi_wilder
 def test_factor_catalog_contains_technical_and_fundamental_definitions():
     factors = list_factors()
     types = {item["factor_type"] for item in factors}
-    assert types == {"technical", "fundamental"}
+    assert types == {"technical", "fundamental", "level2"}
     assert {item["factor_id"] for item in factors} >= {
         "momentum",
         "realized_volatility",

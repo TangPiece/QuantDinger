@@ -118,6 +118,7 @@ def test_secret_key_save_requires_restart_without_hot_reload(client, monkeypatch
     assert payload["data"]["restart_required_keys"] == ["SECRET_KEY"]
     assert payload["data"]["hot_reloaded"] is False
     assert payload["data"]["services_refreshed"] is False
+    assert payload["data"]["workers_reload_signaled"] is False
     assert runtime_calls == []
 
 
@@ -162,6 +163,11 @@ def test_ai_setting_save_hot_reloads_without_restarting(client, monkeypatch):
         "refresh_runtime_services",
         lambda: runtime_calls.append("refresh"),
     )
+    monkeypatch.setattr(
+        settings_route,
+        "signal_workers_reload_env",
+        lambda: runtime_calls.append("signal") or True,
+    )
 
     resp = client.post(
         "/api/settings/save",
@@ -177,4 +183,5 @@ def test_ai_setting_save_hot_reloads_without_restarting(client, monkeypatch):
     assert payload["data"]["hot_reloaded_keys"] == ["LLM_PROVIDER"]
     assert payload["data"]["hot_reloaded"] is True
     assert payload["data"]["services_refreshed"] is True
-    assert runtime_calls == ["clear", "reload", "refresh"]
+    assert payload["data"]["workers_reload_signaled"] is True
+    assert runtime_calls == ["clear", "reload", "refresh", "signal"]

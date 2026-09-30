@@ -23,6 +23,9 @@ _TIMEFRAME_SECONDS = {
 }
 
 _TIMEFRAME_ALIASES = {key.lower(): key for key in _TIMEFRAME_SECONDS}
+# Monthly stays out of the dict above: "1M".lower() would overwrite minute "1m".
+_MONTHLY_SECONDS = 2_592_000
+_MONTHLY_ALIASES = {"1mo", "month", "monthly"}
 
 
 class BacktestRangeLimitError(ValueError):
@@ -50,6 +53,8 @@ _DEFAULT_LIMITS: Dict[str, BacktestRangePolicy] = {
     "4H": BacktestRangePolicy(1095, "3 years", "engine workload limit"),
     "1D": BacktestRangePolicy(1095, "3 years", "engine workload limit"),
     "1W": BacktestRangePolicy(1095, "3 years", "engine workload limit"),
+    # Markets without a dedicated row, including A-shares, use the same 3-year daily cap.
+    "1M": BacktestRangePolicy(1095, "3 years", "engine workload limit"),
 }
 
 
@@ -86,8 +91,19 @@ _MARKET_LIMITS: Dict[str, Dict[str, BacktestRangePolicy]] = {
 
 
 def normalize_backtest_timeframe(timeframe: str) -> str:
+    """Normalize a backtest period. Exact "1M" is monthly and must not become "1m"."""
     raw = str(timeframe or "1D").strip()
+    if raw == "1M" or raw.lower() in _MONTHLY_ALIASES:
+        return "1M"
     return _TIMEFRAME_ALIASES.get(raw.lower(), raw)
+
+
+def _backtest_timeframe_seconds(timeframe: str) -> int:
+    """Seconds used for range math. Monthly is kept off the lowercased alias map."""
+    normalized = normalize_backtest_timeframe(timeframe)
+    if normalized == "1M":
+        return _MONTHLY_SECONDS
+    return _TIMEFRAME_SECONDS.get(normalized, 86400)
 
 
 def backtest_range_policy(market: str, timeframe: str) -> BacktestRangePolicy:
@@ -104,7 +120,11 @@ def backtest_warmup_calendar_days(timeframe: str, warmup_bars: int) -> int:
     bars = max(0, int(warmup_bars or 0))
     if bars == 0:
         return 0
-    normalized = normalize_backtest_timeframe(timeframe).lower()
+    normalized = normalize_backtest_timeframe(timeframe)
+    # Return before lowercasing so "1M" is not treated as a one-minute warmup.
+    if normalized == "1M":
+        return max(31, bars * 32)
+    normalized = normalized.lower()
     if normalized.endswith("m") and normalized[:-1].isdigit():
         minutes = max(1, int(normalized[:-1]))
         return max(1, math.ceil(bars * minutes * 1.5 / 1440.0))
@@ -135,7 +155,7 @@ def backtest_range_policy_metadata(
     ]
     market, policy = min(policies, key=lambda item: item[1].max_days)
     normalized_timeframe = normalize_backtest_timeframe(timeframe)
-    timeframe_seconds = _TIMEFRAME_SECONDS.get(normalized_timeframe, 86400)
+    timeframe_seconds = _backtest_timeframe_seconds(normalized_timeframe)
     normalized_warmup_bars = max(0, int(warmup_bars or 0))
     warmup_days = backtest_warmup_calendar_days(normalized_timeframe, normalized_warmup_bars)
     return {

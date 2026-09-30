@@ -14,7 +14,11 @@ from app.utils.config_loader import clear_config_cache
 from app.utils.auth import login_required, admin_required
 from app.services.settings.branding import build_brand_config
 from app.services.settings.env_file import read_env_file, write_env_file
-from app.services.settings.runtime import reload_runtime_env, refresh_runtime_services
+from app.services.settings.runtime import (
+    reload_runtime_env,
+    refresh_runtime_services,
+    signal_workers_reload_env,
+)
 
 logger = get_logger(__name__)
 
@@ -1980,6 +1984,11 @@ def save_settings():
                 clear_config_cache()
                 reload_runtime_env()
                 refresh_runtime_services()
+                # Multi-worker Gunicorn only hot-reloads this process; ask the
+                # master to recycle siblings so LLM keys etc. match .env.
+                workers_signaled = signal_workers_reload_env()
+            else:
+                workers_signaled = False
 
             if 'ADMIN_EMAIL' in updates:
                 try:
@@ -2002,7 +2011,8 @@ def save_settings():
                 'hot_reloaded_keys': hot_reload_keys,
                 'requires_restart': bool(restart_keys),
                 'hot_reloaded': bool(hot_reload_keys),
-                'services_refreshed': bool(hot_reload_keys)
+                'services_refreshed': bool(hot_reload_keys),
+                'workers_reload_signaled': bool(workers_signaled),
             }
             if admin_email_sync is not None:
                 response_data['admin_email_sync'] = admin_email_sync

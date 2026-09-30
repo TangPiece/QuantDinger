@@ -28,11 +28,13 @@ from app.utils.logger import get_logger
 from .contract import StrategyV2ContractError, compile_strategy_v2
 from .factor_research import FactorResearchEngine
 from .models import InstrumentSpec, StrategyManifest
+from .frequencies import normalize_frequency
 from .market_data import load_strategy_frame
 from .runtime import StrategyV2BacktestRunner
 from .readiness import validate_universe_history, validate_warmup, validate_fundamentals
 from .snapshot import MarketDataSnapshotStore, canonical_frame_bytes
 from .storage import StrategyBacktestRepository
+from .symbol_labels import attach_symbol_names
 
 
 logger = get_logger(__name__)
@@ -50,6 +52,7 @@ class StrategyV2BacktestService:
         data_source: str = "system_market_data_router",
         snapshot_store: MarketDataSnapshotStore | None = None,
         instrument_rules_provider: InstrumentRulesProvider | None = None,
+        level2_enricher: Callable[[dict[str, pd.DataFrame], list[dict[str, Any]]], dict[str, pd.DataFrame]] | None = None,
     ) -> None:
         self.repository = repository or StrategyBacktestRepository()
         self.universe_service = universe_service or get_universe_service()
@@ -59,6 +62,7 @@ class StrategyV2BacktestService:
         self.data_source = str(data_source or "system_market_data_router")
         self.snapshot_store = snapshot_store or MarketDataSnapshotStore()
         self.instrument_rules_provider = instrument_rules_provider or get_instrument_rules_provider()
+        self.level2_enricher = level2_enricher
 
     def compile(self, code: str) -> dict[str, Any]:
         return compile_strategy_v2(code).manifest.metadata()
@@ -114,6 +118,7 @@ class StrategyV2BacktestService:
         if manifest.fundamental_dependencies:
             enricher = self.fundamental_enricher or get_fundamental_data_service().enrich_panel
             frames = enricher(frames, candidates)
+        frames = self._attach_level2_panel(frames, candidates, frequency)
         result = FactorResearchEngine().run(
             frames=frames,
             factor_id=factor_id,
@@ -204,6 +209,8 @@ class StrategyV2BacktestService:
             frames = enricher(frames, candidates)
             frequency_frames[frequency] = frames
             self.validate_fundamental_dependencies(frames, manifest)
+        frames = self._attach_level2_panel(frames, candidates, frequency)
+        frequency_frames[frequency] = frames
 
         def resolve_universe(reference: str, timestamp: pd.Timestamp) -> list[str]:
             del reference
@@ -355,6 +362,12 @@ class StrategyV2BacktestService:
             "frequencies": list(manifest.frequencies),
             "higherTimeframePolicy": "completed_before_driving_bar_close",
         }
+        # 名称只附加在结果上，调仓权重的 key 仍是仓位代码。
+        markets = list(manifest.markets)
+        attach_symbol_names(
+            result,
+            default_market=markets[0] if len(markets) == 1 else "",
+        )
 
         persistence_at = perf_counter()
         run_id = None
@@ -418,6 +431,21 @@ class StrategyV2BacktestService:
         if len(members) > limit:
             raise StrategyV2ContractError("strategyV2.universeTooLarge")
         return [{**item, "key": _member_key(item)} for item in members], universe_id
+
+    def _attach_level2_panel(
+        self,
+        frames: dict[str, pd.DataFrame],
+        candidates: list[dict[str, Any]],
+        frequency: str,
+    ) -> dict[str, pd.DataFrame]:
+        """日线才并入 Level2 因子。分钟线没有逐笔面板，保持原样。"""
+        if normalize_frequency(frequency) != "1d" or not frames:
+            return frames
+        enricher = self.level2_enricher
+        if enricher is None:
+            from app.services.level2_factor_panel import enrich_panel
+            enricher = enrich_panel
+        return enricher(frames, candidates)
 
     def fetch_frames(
         self,
@@ -678,6 +706,9 @@ def _warmup_calendar_days(frequency: str, warmup_bars: int, candidates=()) -> in
     """Keep the legacy helper available for internal callers and tests."""
     days = backtest_warmup_calendar_days(frequency, warmup_bars)
     normalized = str(frequency).lower()
+    # "1mo" endswith "m" but is not a minute bar; the monthly day count is already set.
+    if normalized in {"1mo", "month", "monthly"} or str(frequency).strip() == "1M":
+        return days
     if warmup_bars > 0 and normalized.endswith(("m", "h")) and any(
         item.get("market") in {"USStock", "HKStock", "AStock"}
         or str(item.get("underlying_market") or "") in {"USStock", "HKStock", "AStock"}

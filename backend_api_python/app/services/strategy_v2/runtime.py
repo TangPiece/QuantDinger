@@ -52,6 +52,20 @@ def _cached_backtest_time_iso(timestamp: pd.Timestamp) -> str:
     return timestamp.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _last_level2_column(frame: pd.DataFrame, factor_id: str) -> float | None:
+    """未登记的 ``l2_*`` 列取最后一根。不是这类列名时返回 None，让后面继续找 TA-Lib。"""
+    if not str(factor_id).startswith("l2_") or not hasattr(frame, "columns") or factor_id not in frame.columns:
+        return None
+    if frame.empty:
+        return float("nan")
+    value = pd.to_numeric(frame[factor_id], errors="coerce").iloc[-1]
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return number if math.isfinite(number) else float("nan")
+
+
 @dataclass
 class Position:
     symbol: str
@@ -496,12 +510,17 @@ class StrategyRuntimeContext:
         )
         frame = self.portal.visible_frame(target, frequency=frequency)
         factor_id = str(name or "").strip()
+        key = factor_id.lower()
         try:
-            get_factor(factor_id.lower())
-            return compute_factor(factor_id.lower(), frame, params)
+            get_factor(key)
+            return compute_factor(key, frame, params)
         except FactorError as exc:
             if exc.code != "factor.notFound":
                 raise
+        # 已并入日线、但尚未登记的 l2_* 列也直接取最后一根，不落到 TA-Lib。
+        column_value = _last_level2_column(frame, key)
+        if column_value is not None:
+            return column_value
         output = str(params.pop("output", "") or "")
         return compute_talib_factor(factor_id, frame, params, output=output)
 
@@ -2684,7 +2703,10 @@ def _truthy(value: Any) -> bool:
 
 
 def _is_intraday_frequency(frequency: str) -> bool:
-    normalized = str(frequency or "1d").strip().lower()
+    """True for minute and hour bars. Monthly "1mo" also ends with m, so it is excluded."""
+    normalized = normalize_frequency(frequency)
+    if normalized == "1mo":
+        return False
     return normalized.endswith("m") or normalized.endswith("h")
 
 
@@ -2733,10 +2755,13 @@ def _next_average_cost(old_amount: float, old_cost: float, delta: float, fill_pr
 
 
 def _periods_per_year(frequency: str, markets: Iterable[str]) -> float:
-    normalized = str(frequency or "1d").strip().lower()
+    normalized = normalize_frequency(frequency)
     is_crypto = "Crypto" in set(markets)
     trading_days = 365.25 if is_crypto else 252.0
-    if normalized.endswith("m"):
+    # "1mo" ends with m; annualize it as 12 periods before the minute branch.
+    if normalized == "1mo":
+        return 12.0
+    if normalized.endswith("m") and normalized[:-1].isdigit():
         minutes = max(1, int(normalized[:-1] or 1))
         session_minutes = 1440.0 if is_crypto else 390.0
         return trading_days * session_minutes / minutes

@@ -67,6 +67,7 @@ class MetaCacheConfig(type):
             '4H': 15,
             '1D': 30,
             '1W': 60,
+            '1M': 60,
             '1h': 10,
             '4h': 15,
             '1d': 30,

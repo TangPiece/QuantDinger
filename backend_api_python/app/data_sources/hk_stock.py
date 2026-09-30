@@ -2,11 +2,11 @@
 港股/H股数据源 — 多层 fallback
 
 有 TWELVE_DATA_API_KEY:
-  所有周期 → Twelve Data（主） → 腾讯日/周线 → yfinance → AkShare
+  所有周期 → Twelve Data（主） → 腾讯日/周/月线 → yfinance → AkShare
 
 无 API Key:
   分钟/小时 → yfinance → AkShare
-  日/周线 → 腾讯 fqkline → yfinance → AkShare
+  日/周/月线 → 腾讯 fqkline → yfinance → AkShare
 """
 
 from __future__ import annotations
@@ -75,9 +75,9 @@ class HKStockDataSource(BaseDataSource):
                 truncate=(after_time is None),
             )
 
-        # Tier 2: Tencent for daily/weekly (fast, free)
-        if tf in ("1D", "1W"):
-            tf_map = {"1D": "day", "1W": "week"}
+        # 日/周/月线走腾讯；分钟周期这个接口会返回 bad params
+        if tf in ("1D", "1W", "1M"):
+            tf_map = {"1D": "day", "1W": "week", "1M": "month"}
             period = tf_map.get(tf, "day")
             raw_rows = fetch_kline(code, period=period, count=lim, adj="qfq")
             out = tencent_kline_rows_to_dicts(raw_rows)
@@ -111,6 +111,10 @@ class HKStockDataSource(BaseDataSource):
         elif tf == "1W":
             rows = fetch_akshare_weekly_klines(
                 is_hk=True, tencent_code=code, limit=lim, before_time=before_time
+            )
+        elif tf == "1M":
+            rows = fetch_akshare_weekly_klines(
+                is_hk=True, tencent_code=code, limit=lim, before_time=before_time, period="monthly"
             )
         else:
             rows = []

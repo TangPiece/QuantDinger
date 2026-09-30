@@ -2,10 +2,10 @@
 A-share / H-share chart K-lines — multi-tier fallback.
 
 Priority order (when TWELVE_DATA_API_KEY is configured):
-  ALL timeframes → Twelve Data (paid, globally stable) → Tencent daily/weekly → yfinance → AkShare
+  ALL timeframes → Twelve Data (paid, globally stable) → Tencent daily/weekly/monthly → yfinance → AkShare
 
 Without API key:
-  Daily / Weekly → Tencent fqkline (fast, no key) → yfinance → AkShare
+  Daily / Weekly / Monthly → Tencent fqkline (fast, no key) → yfinance → AkShare
   Minute / Hour → yfinance → AkShare (Eastmoney, fragile overseas)
 
 Tencent ``fqkline`` only reliably supports day/week/month.
@@ -88,13 +88,21 @@ _CHART_TF_ALIASES = {
     "240m": "4H",
     "1day": "1D",
     "1week": "1W",
+    # Monthly aliases. "1m" must stay one minute; exact "1M" is handled before lower().
+    "1mo": "1M",
+    "month": "1M",
+    "monthly": "1M",
 }
 
 
 def normalize_chart_timeframe(timeframe: str) -> str:
+    """Normalize chart periods. "1M" stays monthly; "1m" stays one minute."""
     t = (timeframe or "1D").strip()
     if not t:
         return "1D"
+    # Exact capital M is monthly. Lowercasing it first would collide with "1m".
+    if t == "1M":
+        return "1M"
     key = t.lower()
     if key in _CHART_TF_ALIASES:
         return _CHART_TF_ALIASES[key]
@@ -148,6 +156,7 @@ _TD_INTERVAL_MAP = {
     "4H": "4h",
     "1D": "1day",
     "1W": "1week",
+    "1M": "1month",
 }
 
 _TD_DAILY_LIMIT_LOCK = threading.Lock()
@@ -353,6 +362,7 @@ _YF_INTERVAL_MAP = {
     "4H": "1h",
     "1D": "1d",
     "1W": "1wk",
+    "1M": "1mo",
 }
 
 _MERGE_FACTOR_MAP = {
@@ -369,6 +379,8 @@ _YF_DAYS_MAP = {
     "4H": lambda lim: min(730, max(20, lim + 10)),
     "1D": lambda lim: min(3650, lim + 10),
     "1W": lambda lim: min(3650, lim * 7 + 30),
+    # Scale the lookback by months, still capped at the ~10 year daily/weekly window.
+    "1M": lambda lim: min(3650, lim * 31 + 40),
 }
 
 
@@ -623,9 +635,14 @@ def fetch_akshare_weekly_klines(
     tencent_code: str,
     limit: int,
     before_time: Optional[int],
+    period: str = "weekly",
 ) -> List[Dict[str, Any]]:
+    """Fetch qfq weekly or monthly bars from AkShare. Weekly stays the default."""
+    # Eastmoney daily/weekly/monthly share one endpoint. Monthly needs a wider day window.
+    hist_period = period if period in {"weekly", "monthly"} else "weekly"
+    scope = f"AkShare {hist_period} K-line"
     try:
-        assert_fd_available("AkShare weekly K-line")
+        assert_fd_available(scope)
     except ResourceExhaustedError as e:
         logger.warning(str(e))
         return []
@@ -637,7 +654,8 @@ def fetch_akshare_weekly_klines(
 
     sym = ak_hk_code_from_tencent(tencent_code) if is_hk else ak_a_code_from_tencent(tencent_code)
     end = datetime.fromtimestamp(int(before_time)) if before_time else datetime.now()
-    start = end - timedelta(days=max(int(limit or 300), 1) * 14 + 400)
+    day_span = 35 if hist_period == "monthly" else 14
+    start = end - timedelta(days=max(int(limit or 300), 1) * day_span + 400)
     start_s = start.strftime("%Y%m%d")
     end_s = end.strftime("%Y%m%d")
 
@@ -646,25 +664,25 @@ def fetch_akshare_weekly_klines(
         try:
             with _bypass_proxy():
                 if is_hk:
-                    df = ak.stock_hk_hist(symbol=sym, period="weekly", start_date=start_s, end_date=end_s, adjust="qfq")
+                    df = ak.stock_hk_hist(symbol=sym, period=hist_period, start_date=start_s, end_date=end_s, adjust="qfq")
                 else:
-                    df = ak.stock_zh_a_hist(symbol=sym, period="weekly", start_date=start_s, end_date=end_s, adjust="qfq")
+                    df = ak.stock_zh_a_hist(symbol=sym, period=hist_period, start_date=start_s, end_date=end_s, adjust="qfq")
             break
         except Exception as e:
             try:
-                record_exception(e, scope="AkShare weekly K-line")
+                record_exception(e, scope=scope)
             except ResourceExhaustedError as guarded:
                 logger.warning(str(guarded))
                 return []
             if attempt + 1 < _MAX_ATTEMPTS and _is_transient(e):
                 delay = min(_BACKOFF_CAP_SEC, _BACKOFF_BASE_SEC * (2 ** attempt))
                 logger.debug(
-                    "AkShare weekly transient error sym=%s (attempt %s/%s): %s",
-                    sym, attempt + 1, _MAX_ATTEMPTS, e,
+                    "AkShare %s transient error sym=%s (attempt %s/%s): %s",
+                    hist_period, sym, attempt + 1, _MAX_ATTEMPTS, e,
                 )
                 time.sleep(delay)
                 continue
-            logger.warning("AkShare weekly K-line failed sym=%s: %s", sym, e)
+            logger.warning("AkShare %s K-line failed sym=%s: %s", hist_period, sym, e)
             return []
 
     if df is None or getattr(df, "empty", True) or "日期" not in df.columns:

@@ -367,6 +367,7 @@ class MetaAkshareConfig(type):
         return {
             '1D': 'daily',
             '1W': 'weekly',
+            '1M': 'monthly',
         }
 
 
