@@ -1,6 +1,7 @@
 """DatasetAdapter / QlibAdapter：Domain Dataset → Qlib Handler / DatasetH。
 
 业务唯一构造面；禁止绕过本模块直接 qlib.init。
+Phase 2B：ResearchDatasetSpec → QuantDingerQLibHandler → DatasetH(train/valid/test)。
 """
 
 from __future__ import annotations
@@ -14,10 +15,14 @@ from app.services.research_data.qlib_materializer.instrument_mapper import to_ql
 from app.services.research_data.qlib_materializer.protocol import MaterializationResult
 from app.services.research_data.registry import ResearchRegistry
 
+from .dataset_cache import DatasetArtifactCache, compute_dataset_artifact_id
 from .errors import QlibAdapterError
 from .feature_adapter import FeatureAdapter
+from .handler import HandlerBuilder, QuantDingerQLibHandler
+from .label_adapter import LabelAdapter
 from .processor_adapter import ProcessorAdapter
 from .runtime import QlibRuntime, default_runtime
+from .specs import ResearchDatasetSpec, SegmentSpec
 from .version_resolver import ResearchBundleIdentity, VersionResolver
 
 
@@ -32,6 +37,7 @@ class QlibAdapter:
         runtime: QlibRuntime | None = None,
         registry: ResearchRegistry | None = None,
         cache_root=None,
+        dataset_cache_root=None,
         start: date | None = None,
         end: date | None = None,
     ) -> None:
@@ -42,10 +48,26 @@ class QlibAdapter:
             query, cache_root=cache_root, start=start, end=end
         )
         self._features = FeatureAdapter()
+        self._labels = LabelAdapter()
         self._processors = ProcessorAdapter(self._registry)
         self._versions = VersionResolver(query, self._registry)
         self._start = start
         self._end = end
+        self._dataset_cache = DatasetArtifactCache(root=dataset_cache_root)
+        self._handler_builder = HandlerBuilder(
+            query,
+            runtime=self._runtime,
+            materializer=self._materializer,
+            registry=self._registry,
+            versions=self._versions,
+            features=self._features,
+            labels=self._labels,
+            processors=self._processors,
+        )
+
+    @property
+    def dataset_cache(self) -> DatasetArtifactCache:
+        return self._dataset_cache
 
     def resolve(self, dataset_ref: str) -> ResearchBundleIdentity:
         """解析版本身份（含 dataset_hash / bundle_hash）。"""
@@ -60,20 +82,33 @@ class QlibAdapter:
         """经 Materializer 确保 Qlib Cache READY。"""
         return self._materializer.materialize(dataset_ref, force=force)
 
+    def build_qd_handler(
+        self,
+        spec: ResearchDatasetSpec,
+        *,
+        force_materialize: bool | None = None,
+    ) -> QuantDingerQLibHandler:
+        """Phase 2B：按 ResearchDatasetSpec 构建 QuantDingerQLibHandler。"""
+        return self._handler_builder.build(spec, force_materialize=force_materialize)
+
     def build_handler(
         self,
-        dataset_ref: str,
+        dataset_ref: str | ResearchDatasetSpec,
         *,
         start: date | str | None = None,
         end: date | str | None = None,
         force_materialize: bool = False,
         instruments: list[str] | None = None,
     ) -> Any:
-        """构建最小 DataHandlerLP（无 Alpha158）。
+        """构建 DataHandlerLP。
 
-        Returns:
-            qlib DataHandlerLP 实例（需已 activate runtime）
+        - 传入 ResearchDatasetSpec → QuantDingerQLibHandler.inner（含 label）
+        - 传入 dataset_ref 字符串 → 2A 兼容最小 Handler（仅 feature）
         """
+        if isinstance(dataset_ref, ResearchDatasetSpec):
+            qd = self.build_qd_handler(dataset_ref, force_materialize=force_materialize)
+            return qd.inner
+
         try:
             from qlib.data.dataset.handler import DataHandlerLP
         except ImportError as exc:
@@ -87,7 +122,6 @@ class QlibAdapter:
         start_d = _as_date(start) or self._start or date(1970, 1, 1)
         end_d = _as_date(end) or self._end or date(2100, 1, 1)
 
-        # Universe：与 Materializer 一致，用窗口终点 as_of
         if instruments is None:
             members = self._query.universe(
                 definition.universe_code,
@@ -101,8 +135,6 @@ class QlibAdapter:
             raise QlibAdapterError("empty universe for handler")
 
         qlib_insts = [to_qlib_instrument(ik).lower() for ik in members]
-
-        # Feature 编译：Dataset.features 默认 OHLCV
         raw_feats = list(definition.features) or [
             "open",
             "high",
@@ -111,12 +143,10 @@ class QlibAdapter:
             "volume",
             "amount",
         ]
-        # Materializer 只物化原子列；Handler 表达式可含 Ref/Mean 等（基于已物化字段）
         qlib_fields = self._features.to_qlib_fields(raw_feats)
-
         learn_p, infer_p = self._processors.build_handler_processors(bundle.processor)
 
-        handler = DataHandlerLP(
+        return DataHandlerLP(
             instruments=qlib_insts,
             start_time=start_d.isoformat(),
             end_time=end_d.isoformat(),
@@ -131,36 +161,97 @@ class QlibAdapter:
             learn_processors=learn_p,
             infer_processors=infer_p,
         )
-        return handler
 
     def build_dataset(
         self,
-        dataset_ref: str,
+        dataset_ref: str | ResearchDatasetSpec,
         *,
         start: date | str | None = None,
         end: date | str | None = None,
         force_materialize: bool = False,
+        segments: SegmentSpec | None = None,
     ) -> Any:
-        """薄封装 DatasetH；单段 train 占位（完整 segments → Phase 2B）。"""
+        """构建 DatasetH。
+
+        Phase 2B：传入 ResearchDatasetSpec → train/valid/test + dataset cache。
+        2A 兼容：dataset_ref + 可选单段 start/end。
+        """
         try:
             from qlib.data.dataset import DatasetH
         except ImportError as exc:
             raise QlibAdapterError("pyqlib required for build_dataset") from exc
 
+        if isinstance(dataset_ref, ResearchDatasetSpec):
+            return self._build_dataset_from_spec(dataset_ref)
+
+        # 若单独传入 SegmentSpec，包装为 ResearchDatasetSpec
+        if segments is not None:
+            spec = ResearchDatasetSpec(
+                dataset_ref=str(dataset_ref),
+                segments=segments,
+                force_materialize=force_materialize,
+            )
+            return self._build_dataset_from_spec(spec)
+
         start_d = _as_date(start) or self._start or date(1970, 1, 1)
         end_d = _as_date(end) or self._end or date(2100, 1, 1)
         handler = self.build_handler(
-            dataset_ref,
+            str(dataset_ref),
             start=start_d,
             end=end_d,
             force_materialize=force_materialize,
         )
         return DatasetH(
             handler=handler,
-            segments={
-                "train": (start_d.isoformat(), end_d.isoformat()),
+            segments={"train": (start_d.isoformat(), end_d.isoformat())},
+        )
+
+    def _build_dataset_from_spec(self, spec: ResearchDatasetSpec) -> Any:
+        """三段 DatasetH + qlib-dataset-cache 元数据。"""
+        from qlib.data.dataset import DatasetH
+
+        bundle = self.resolve(spec.dataset_ref)
+        resolved_label, compiled = self._labels.resolve(
+            spec.label or bundle.handle.definition.label
+        )
+        label_json = resolved_label.model_dump(mode="json")
+
+        artifact_id = compute_dataset_artifact_id(
+            bundle_hash=bundle.bundle_hash,
+            segments=spec.segments.canonical_dict(),
+            label=label_json,
+        )
+        cache_hit = self._dataset_cache.is_ready(artifact_id)
+
+        qd = self.build_qd_handler(spec)
+        ds = DatasetH(
+            handler=qd.inner,
+            segments=spec.segments.to_qlib_segments(),
+        )
+
+        self._dataset_cache.write_ready(
+            artifact_id,
+            dataset_ref=spec.dataset_ref,
+            dataset_hash=bundle.dataset_hash,
+            bundle_hash=bundle.bundle_hash,
+            segments=spec.segments.canonical_dict(),
+            label=label_json,
+            materialization_id=qd.materialization.materialization_id,
+            qlib_cache_path=qd.materialization.cache_path,
+            extra={
+                "cache_hit": bool(cache_hit and not spec.force_materialize),
+                "label_expression": compiled.qlib_expression,
+                "instrument_count": len(qd.instruments),
             },
         )
+
+        # 挂载元数据供测试读取
+        ds.qd_artifact_id = artifact_id  # type: ignore[attr-defined]
+        ds.qd_dataset_hash = bundle.dataset_hash  # type: ignore[attr-defined]
+        ds.qd_bundle_hash = bundle.bundle_hash  # type: ignore[attr-defined]
+        ds.qd_handler = qd  # type: ignore[attr-defined]
+        ds.qd_cache_hit = bool(cache_hit and not spec.force_materialize)  # type: ignore[attr-defined]
+        return ds
 
     def fetch_features(
         self,

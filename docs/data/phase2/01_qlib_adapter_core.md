@@ -87,4 +87,4 @@ MLFLOW_DISABLE_AGENT_HINT=1 \
 
 ## 9. Next
 
-Phase 2B — Dataset / DataHandler segments (`fit_*` / `valid_*` / `test_*`).
+Phase 2B — [Dataset / DataHandler](02_dataset_handler.md) (`QuantDingerQLibHandler`, train/valid/test).

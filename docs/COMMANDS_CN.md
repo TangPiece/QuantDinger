@@ -97,6 +97,16 @@ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
 
 Phase 2A 说明：[docs/data/phase2/01_qlib_adapter_core.md](data/phase2/01_qlib_adapter_core.md)。
 
+验证 Phase 2B Dataset / Handler（segments / label / dataset-cache）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_phase2b_dataset.py
+```
+
+Phase 2B 说明：[docs/data/phase2/02_dataset_handler.md](data/phase2/02_dataset_handler.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

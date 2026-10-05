@@ -60,13 +60,18 @@ class QlibRuntime:
             return
 
         try:
-            qlib.init(
-                provider_uri=uri,
-                region=region,
-                expression_cache=None,
-                dataset_cache=None,
-                kernels=kernels,
-            )
+            # macOS + stdin/`python -` 下 multiprocessing backend 会 spawn 失败刷屏；
+            # 研究路径默认 kernels=1，改用 threading 即可。
+            init_kwargs: dict = {
+                "provider_uri": uri,
+                "region": region,
+                "expression_cache": None,
+                "dataset_cache": None,
+                "kernels": kernels,
+            }
+            if kernels <= 1:
+                init_kwargs["joblib_backend"] = "threading"
+            qlib.init(**init_kwargs)
         except Exception as exc:
             self._active = False
             self._provider_uri = None

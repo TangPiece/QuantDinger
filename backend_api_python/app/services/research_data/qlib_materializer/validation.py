@@ -72,12 +72,14 @@ def validate_qlib_provider(
         return result
 
     try:
+        # joblib_backend=threading：避免 stdin/`python -` 下 multiprocessing spawn 崩坏
         qlib.init(
             provider_uri=str(provider_uri),
             region="cn",
             expression_cache=None,
             dataset_cache=None,
             kernels=1,
+            joblib_backend="threading",
         )
         calendar = D.calendar(start_time=cal_lines[0], end_time=cal_lines[-1], freq="day")
         result["qlib_calendar_count"] = len(calendar)
@@ -130,12 +132,14 @@ def validate_datahandler(
     provider_uri = Path(provider_uri)
     field_list = list(fields or ["$open", "$high", "$low", "$close", "$volume"])
     insts = [str(x).lower() for x in instruments]
+    # joblib_backend=threading：避免 stdin/`python -` 下 multiprocessing spawn 崩坏
     qlib.init(
         provider_uri=str(provider_uri),
         region="cn",
         expression_cache=None,
         dataset_cache=None,
         kernels=1,
+        joblib_backend="threading",
     )
 
     # 确认 instruments 可见
