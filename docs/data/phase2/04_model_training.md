@@ -54,8 +54,6 @@ Local layout:
 
 ```bash
 cd backend_api_python
-# macOS: if LightGBM fails with libomp
-brew install libomp
 
 QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
   python scripts/verify_phase2d_model.py
@@ -65,6 +63,18 @@ MLFLOW_DISABLE_AGENT_HINT=1 \
 ```
 
 Exit codes: **0** PASS / **1** FAIL / **2** missing pyqlib or LightGBM.
+
+### macOS `libomp` (no Homebrew)
+
+Wheel 版 LightGBM 依赖 `@rpath/libomp.dylib`。若 `brew` 不可用，可把 OpenMP 放进 site-packages（一次性）：
+
+```bash
+# 下载 Homebrew libomp bottle → 复制到 lightgbm/lib/，并改 dylib 引用
+# 详见 scripts/bootstrap_lightgbm_libomp_macos.sh
+./scripts/bootstrap_lightgbm_libomp_macos.sh .test_deps/py312/bin/python
+```
+
+有 Homebrew 时仍可用：`brew install libomp`。
 
 ## 6. Non-goals
 

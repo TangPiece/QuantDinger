@@ -1,0 +1,145 @@
+diff --git a/backend_api_python/app/services/research_data/model_training/adapter.py b/backend_api_python/app/services/research_data/model_training/adapter.py
+index 183066a..40eecf2 100644
+--- a/backend_api_python/app/services/research_data/model_training/adapter.py
++++ b/backend_api_python/app/services/research_data/model_training/adapter.py
+@@ -59,6 +59,28 @@ class LightGBMModelAdapter:
+ 
+     def fit(self, model: Any, dataset: Any) -> None:
+         """仅在 train（及 qlib 内部 valid early-stop）上 fit。"""
++        # Phase 2D：不依赖 MLflow 文件仓；LGBModel.fit 末尾会 R.log_metrics
++        import os
++
++        os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
++        os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
++        try:
++            from qlib.workflow import R
++
++            # 无 Recorder 时静默跳过指标上报，避免刷屏 / 阻塞训练
++            if not getattr(R, "_qd_log_metrics_patched", False):
++                _orig = R.log_metrics
++
++                def _safe_log_metrics(*args: Any, **kwargs: Any) -> None:
++                    try:
++                        return _orig(*args, **kwargs)
++                    except Exception:
++                        return None
++
++                R.log_metrics = _safe_log_metrics  # type: ignore[method-assign]
++                R._qd_log_metrics_patched = True  # type: ignore[attr-defined]
++        except Exception:
++            pass
+         model.fit(dataset, verbose_eval=0)
+ 
+     def predict(self, model: Any, dataset: Any, segment: str = "test") -> pd.Series:
+diff --git a/backend_api_python/app/services/research_data/model_training/runner.py b/backend_api_python/app/services/research_data/model_training/runner.py
+index eb8ced6..be803ac 100644
+--- a/backend_api_python/app/services/research_data/model_training/runner.py
++++ b/backend_api_python/app/services/research_data/model_training/runner.py
+@@ -50,12 +50,29 @@ def _predictions_to_records(
+     """Qlib MultiIndex → PredictionRecord 列表。"""
+     out: list[PredictionRecord] = []
+     for idx, val in series.items():
++        inst: Any
++        dt: Any
+         if isinstance(idx, tuple) and len(idx) >= 2:
+-            inst, dt = idx[0], idx[1]
++            a, b = idx[0], idx[1]
++            # Qlib 常见顺序：(datetime, instrument) 或 (instrument, datetime)
++            a_s, b_s = str(a).lower(), str(b).lower()
++            if a_s.startswith(("sh", "sz")) or ":" in a_s:
++                inst, dt = a, b
++            elif b_s.startswith(("sh", "sz")) or ":" in b_s:
++                inst, dt = b, a
++            else:
++                # 兜底：带 Timestamp / date 的一侧为交易日
++                if hasattr(a, "year") or (isinstance(a, str) and a[:4].isdigit()):
++                    dt, inst = a, b
++                else:
++                    inst, dt = a, b
+         else:
+             inst, dt = "UNKNOWN", idx
+-        if hasattr(dt, "date"):
+-            trading_date = dt.date().isoformat() if callable(getattr(dt, "date", None)) else str(dt)[:10]
++        if hasattr(dt, "date") and callable(getattr(dt, "date", None)):
++            try:
++                trading_date = dt.date().isoformat()
++            except Exception:
++                trading_date = str(dt)[:10]
+         else:
+             trading_date = str(dt)[:10]
+         out.append(
+@@ -96,18 +113,24 @@ def _maybe_mlflow_log(
+     params: dict[str, Any],
+     metrics: dict[str, Any],
+ ) -> Optional[str]:
+-    """可选 MLflow；不可用时不阻塞。"""
++    """可选 MLflow；不可用则跳过（完整编排留给 Phase 2F）。"""
++    import os
++
++    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
++    os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
+     try:
+         import mlflow
+     except ImportError:
+         return None
+     try:
++        tracking = os.environ.get("MLFLOW_TRACKING_URI") or "file:./mlruns"
++        mlflow.set_tracking_uri(tracking)
+         mlflow.set_experiment(experiment_name)
+         with mlflow.start_run() as run:
+             for k, v in params.items():
+-                mlflow.log_param(k, v)
++                mlflow.log_param(k, str(v)[:250])
+             for k, v in metrics.items():
+-                if isinstance(v, (int, float)):
++                if isinstance(v, (int, float)) and v == v:  # 非 NaN
+                     mlflow.log_metric(k, float(v))
+             return run.info.run_id
+     except Exception:
+diff --git a/docs/COMMANDS_CN.md b/docs/COMMANDS_CN.md
+index cf33d5a..032e9f2 100644
+--- a/docs/COMMANDS_CN.md
++++ b/docs/COMMANDS_CN.md
+@@ -121,7 +121,9 @@ Phase 2C 说明：[docs/data/phase2/03_processor_pipeline.md](data/phase2/03_pro
+ 
+ ```bash
+ cd backend_api_python
+-# macOS 若 LightGBM 报 libomp：brew install libomp
++# macOS 无 brew 且 import lightgbm 报 libomp：
++#   ./scripts/bootstrap_lightgbm_libomp_macos.sh .test_deps/py312/bin/python
++# 有 Homebrew：brew install libomp
+ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+   python scripts/verify_phase2d_model.py
+ ```
+diff --git a/docs/data/phase2/04_model_training.md b/docs/data/phase2/04_model_training.md
+index 31fa60f..bb74d3f 100644
+--- a/docs/data/phase2/04_model_training.md
++++ b/docs/data/phase2/04_model_training.md
+@@ -54,8 +54,6 @@ Local layout:
+ 
+ ```bash
+ cd backend_api_python
+-# macOS: if LightGBM fails with libomp
+-brew install libomp
+ 
+ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+   python scripts/verify_phase2d_model.py
+@@ -66,6 +64,18 @@ MLFLOW_DISABLE_AGENT_HINT=1 \
+ 
+ Exit codes: **0** PASS / **1** FAIL / **2** missing pyqlib or LightGBM.
+ 
++### macOS `libomp` (no Homebrew)
++
++Wheel 版 LightGBM 依赖 `@rpath/libomp.dylib`。若 `brew` 不可用，可把 OpenMP 放进 site-packages（一次性）：
++
++```bash
++# 下载 Homebrew libomp bottle → 复制到 lightgbm/lib/，并改 dylib 引用
++# 详见 scripts/bootstrap_lightgbm_libomp_macos.sh
++./scripts/bootstrap_lightgbm_libomp_macos.sh .test_deps/py312/bin/python
++```
++
++有 Homebrew 时仍可用：`brew install libomp`。
++
+ ## 6. Non-goals
+ 
+ ```text

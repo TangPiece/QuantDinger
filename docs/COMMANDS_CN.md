@@ -121,7 +121,9 @@ Phase 2C 说明：[docs/data/phase2/03_processor_pipeline.md](data/phase2/03_pro
 
 ```bash
 cd backend_api_python
-# macOS 若 LightGBM 报 libomp：brew install libomp
+# macOS 无 brew 且 import lightgbm 报 libomp：
+#   ./scripts/bootstrap_lightgbm_libomp_macos.sh .test_deps/py312/bin/python
+# 有 Homebrew：brew install libomp
 QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
   python scripts/verify_phase2d_model.py
 ```

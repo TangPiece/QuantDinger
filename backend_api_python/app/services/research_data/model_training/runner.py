@@ -40,6 +40,40 @@ def from_qlib_instrument(qlib_id: str) -> str:
     return f"UNKNOWN:{text}"
 
 
+def _split_pred_index(idx: Any) -> tuple[Any, Any]:
+    """从 Qlib MultiIndex 拆出 (instrument, datetime)。"""
+    if not (isinstance(idx, tuple) and len(idx) >= 2):
+        return "UNKNOWN", idx
+    a, b = idx[0], idx[1]
+    # 优先使用 pandas Timestamp / datetime
+    if hasattr(a, "year") and not hasattr(b, "year"):
+        return b, a
+    if hasattr(b, "year") and not hasattr(a, "year"):
+        return a, b
+    a_s, b_s = str(a).lower(), str(b).lower()
+    # instrument 形如 sh600000 / sz000001（不以日期开头）
+    if len(a_s) >= 8 and a_s[:2] in ("sh", "sz") and a_s[2:8].isdigit():
+        return a, b
+    if len(b_s) >= 8 and b_s[:2] in ("sh", "sz") and b_s[2:8].isdigit():
+        return b, a
+    if ":" in a_s and not a_s[:4].isdigit():
+        return a, b
+    return a, b
+
+
+def _trading_date_str(dt: Any) -> str:
+    if hasattr(dt, "date") and callable(getattr(dt, "date", None)):
+        try:
+            return dt.date().isoformat()
+        except Exception:
+            pass
+    text = str(dt)
+    # 截取 YYYY-MM-DD
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10]
+    return text[:10]
+
+
 def _predictions_to_records(
     series: pd.Series,
     *,
@@ -50,18 +84,11 @@ def _predictions_to_records(
     """Qlib MultiIndex → PredictionRecord 列表。"""
     out: list[PredictionRecord] = []
     for idx, val in series.items():
-        if isinstance(idx, tuple) and len(idx) >= 2:
-            inst, dt = idx[0], idx[1]
-        else:
-            inst, dt = "UNKNOWN", idx
-        if hasattr(dt, "date"):
-            trading_date = dt.date().isoformat() if callable(getattr(dt, "date", None)) else str(dt)[:10]
-        else:
-            trading_date = str(dt)[:10]
+        inst, dt = _split_pred_index(idx)
         out.append(
             PredictionRecord(
                 instrument_key=from_qlib_instrument(str(inst)),
-                trading_date=trading_date,
+                trading_date=_trading_date_str(dt),
                 prediction=float(val),
                 model_version=model_version,
                 dataset_hash=dataset_hash,
@@ -96,18 +123,24 @@ def _maybe_mlflow_log(
     params: dict[str, Any],
     metrics: dict[str, Any],
 ) -> Optional[str]:
-    """可选 MLflow；不可用时不阻塞。"""
+    """可选 MLflow；不可用则跳过（完整编排留给 Phase 2F）。"""
+    import os
+
+    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+    os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
     try:
         import mlflow
     except ImportError:
         return None
     try:
+        tracking = os.environ.get("MLFLOW_TRACKING_URI") or "file:./mlruns"
+        mlflow.set_tracking_uri(tracking)
         mlflow.set_experiment(experiment_name)
         with mlflow.start_run() as run:
             for k, v in params.items():
-                mlflow.log_param(k, v)
+                mlflow.log_param(k, str(v)[:250])
             for k, v in metrics.items():
-                if isinstance(v, (int, float)):
+                if isinstance(v, (int, float)) and v == v:  # 非 NaN
                     mlflow.log_metric(k, float(v))
             return run.info.run_id
     except Exception:

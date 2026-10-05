@@ -1,0 +1,19 @@
+On branch feature/20261005-qlib
+Your branch is ahead of 'origin/feature/20261005-qlib' by 8 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   app/services/research_data/model_training/adapter.py
+	modified:   app/services/research_data/model_training/runner.py
+	modified:   ../docs/COMMANDS_CN.md
+	modified:   ../docs/data/phase2/04_model_training.md
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	Users/
+	mlruns/
+	scripts/bootstrap_lightgbm_libomp_macos.sh
+
+no changes added to commit (use "git add" and/or "git commit -a")

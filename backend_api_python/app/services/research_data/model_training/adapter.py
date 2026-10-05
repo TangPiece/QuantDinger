@@ -59,6 +59,28 @@ class LightGBMModelAdapter:
 
     def fit(self, model: Any, dataset: Any) -> None:
         """仅在 train（及 qlib 内部 valid early-stop）上 fit。"""
+        # Phase 2D：不依赖 MLflow 文件仓；LGBModel.fit 末尾会 R.log_metrics
+        import os
+
+        os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+        os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
+        try:
+            from qlib.workflow import R
+
+            # 无 Recorder 时静默跳过指标上报，避免刷屏 / 阻塞训练
+            if not getattr(R, "_qd_log_metrics_patched", False):
+                _orig = R.log_metrics
+
+                def _safe_log_metrics(*args: Any, **kwargs: Any) -> None:
+                    try:
+                        return _orig(*args, **kwargs)
+                    except Exception:
+                        return None
+
+                R.log_metrics = _safe_log_metrics  # type: ignore[method-assign]
+                R._qd_log_metrics_patched = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
         model.fit(dataset, verbose_eval=0)
 
     def predict(self, model: Any, dataset: Any, segment: str = "test") -> pd.Series:
