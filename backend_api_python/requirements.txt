@@ -9,10 +9,13 @@ ccxt>=4.5.73
 # GHSA-mq44-7p77-q5h7 (WebSocket parsing); 3.14.3+
 aiohttp>=3.14.3,<3.15
 pandas>=3.0.5
+# 研究 Domain Contract（research_data）与 professional_report 共用。
+pydantic>=2.10,<3
 # Level2 日频面板是 Parquet。pandas 读这些文件需要这个引擎。
 pyarrow>=23.0.1
 # 日频因子同步到 Cloudflare R2（S3 兼容接口）。
 boto3>=1.35.0
+
 # Strategy API V2 technical indicator runtime. The 0.6.x wheels bundle the C library.
 TA-Lib==0.7.1
 exchange-calendars>=4.13.2,<5

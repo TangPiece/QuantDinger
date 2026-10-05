@@ -1,0 +1,12 @@
+# 研究 Registry D1 代理：Python 后端经此 Worker 读写 qd_research，不直连 D1 REST。
+# 与 l2-factors-d1 独立数据库。
+name = "qd-research-d1"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+# 创建库后把 database_id 填进来：npx wrangler d1 create qd_research
+[[d1_databases]]
+binding = "DB"
+database_name = "qd_research"
+database_id = "REPLACE_AFTER_D1_CREATE"
+migrations_dir = "migrations"

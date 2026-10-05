@@ -28,6 +28,36 @@
 
 网页默认在 `http://127.0.0.1:8888`，接口在 `http://127.0.0.1:5000`。
 
+## 研究 Registry D1 Worker（qd_research）
+
+在 `workers/qd-research-d1`（与 Level2 `l2_factors` **独立**）：
+
+```bash
+cd workers/qd-research-d1
+npm install
+npx wrangler d1 create qd_research
+# 把 database_id 写入 wrangler.toml
+npx wrangler d1 migrations apply qd_research --remote
+echo -n '<随机 token>' | npx wrangler secret put WORKER_TOKEN
+npx wrangler deploy
+```
+
+```
+D1_RESEARCH_WORKER_URL=https://qd-research-d1.<account>.workers.dev
+D1_RESEARCH_WORKER_TOKEN=<随机 token>
+QD_CANONICAL_PREFIX=qd
+```
+
+导出 PG Universe → 研究 Snapshot（默认写本地 Canonical；加 `--use-r2` 写 R2）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 python scripts/export_universe_snapshot.py \
+  --universe-code CSI300 --version 2026.10.05 --start 2020-01-01
+```
+
+本地单测：`cd workers/qd-research-d1 && npm test`；`cd backend_api_python && python -m pytest tests/research_data -q`。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

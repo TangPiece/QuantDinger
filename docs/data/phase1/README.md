@@ -1,8 +1,11 @@
 # Phase 1 — Research Data Platform Contracts
 
-> **Status:** Design only (Doc-first). No Worker / Qlib Adapter / migration apply in this phase.
+> **Status:** Phase 1A implemented (Worker + Domain Contract + Canonical/DataQuery + tests).
+> Qlib Adapter / Materializer still out of scope.
 >
 > **Audience:** Engineers implementing QuantDinger × Qlib research data foundation.
+>
+> **Code:** `workers/qd-research-d1/`, `backend_api_python/app/services/research_data/`.
 
 This package locks the contracts for:
 
@@ -85,19 +88,19 @@ Phase 1 design is accepted when implementers can build from these docs without i
 | Leakage | Any `available_time > knowledge_time` access fails |
 | Scope | Research backtest need **not** match production PnL yet |
 
-## Explicit non-goals
+## Explicit non-goals (still)
 
-- Creating `workers/qd-research-d1` or applying D1 migrations
-- Implementing Qlib Adapter / Materializer / research Worker
+- Implementing Qlib Adapter / Materializer
 - Migrating PG universe/fundamental tables into D1
 - Kafka / Flink / Spark / K8s
 - Frontend changes
 - Changing existing Level2 Baidu/R2 convert/upload behavior
+- Full Feature DSL compiler / pre-post adjustment engine
 
-## Next phase (after doc review)
+## Next phase
 
-1. Scaffold `workers/qd-research-d1` + env (`D1_RESEARCH_WORKER_URL`)
-2. Pydantic modules under `backend_api_python/app/services/research_data/`
-3. Minimal `DataQuery` stub over R2/local cache
-4. Universe snapshot export job (PG → R2)
-5. Consistency / leakage tests from [06_research_consistency.md](06_research_consistency.md)
+1. Deploy `qd_research` D1 + wire production `D1_RESEARCH_*`
+2. Ingest market/PIT Canonical from QuantDinger Source → R2
+3. Feature DSL offline/online consistency tests
+4. Qlib Materializer (derived cache only)
+5. Differential research vs production backtest (later phase)

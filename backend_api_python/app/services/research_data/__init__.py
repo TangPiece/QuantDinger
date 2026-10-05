@@ -1,0 +1,39 @@
+"""研究数据地基：Domain Contract、Canonical Store、DataQuery。
+
+所有研究读路径必须经 DataQuery；禁止直连实时行情 API。
+契约见 docs/data/phase1/。
+"""
+
+from .contracts import (
+    DataVersionRef,
+    DatasetDefinition,
+    DatasetHandle,
+    FeatureDefinition,
+    InstrumentKey,
+    LabelDefinition,
+    OrderIntent,
+    PricePolicy,
+    ProcessorDefinition,
+    Signal,
+    SnapshotRef,
+    TargetPosition,
+)
+from .data_query import DataQuery
+from .hashing import compute_dataset_hash
+
+__all__ = [
+    "DataQuery",
+    "DataVersionRef",
+    "DatasetDefinition",
+    "DatasetHandle",
+    "FeatureDefinition",
+    "InstrumentKey",
+    "LabelDefinition",
+    "OrderIntent",
+    "PricePolicy",
+    "ProcessorDefinition",
+    "Signal",
+    "SnapshotRef",
+    "TargetPosition",
+    "compute_dataset_hash",
+]
