@@ -171,6 +171,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
+      # Level2 明细缓存；日频因子真源在 D1（D1_WORKER_*），不再挂本地 level2_factors。
+      - ./backend_api_python/data/level2_parquet:/app/data/level2_parquet
+      - ./backend_api_python/data/level2_staging/parquet:/level2/staging/parquet:ro
       - ./backend_api_python/.env:/app/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger123}@postgres:5432/${POSTGRES_DB:-quantdinger}
@@ -207,6 +210,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
+      # Level2 明细缓存；日频因子真源在 D1（D1_WORKER_*）。
+      - ./backend_api_python/data/level2_parquet:/app/data/level2_parquet
+      - ./backend_api_python/data/level2_staging/parquet:/level2/staging/parquet:ro
       # Mount .env for runtime config and admin-panel updates
       - ./backend_api_python/.env:/app/.env
     environment:
@@ -314,6 +320,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
+      # Level2 明细缓存；日频因子真源在 D1（D1_WORKER_*）。
+      - ./backend_api_python/data/level2_parquet:/app/data/level2_parquet
+      - ./backend_api_python/data/level2_staging/parquet:/level2/staging/parquet:ro
       - ./backend_api_python/.env:/app/.env
     environment:
       <<: *worker-environment
@@ -347,6 +356,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
+      # Level2 明细缓存；日频因子真源在 D1（D1_WORKER_*）。
+      - ./backend_api_python/data/level2_parquet:/app/data/level2_parquet
+      - ./backend_api_python/data/level2_staging/parquet:/level2/staging/parquet:ro
       - ./backend_api_python/.env:/app/.env
     environment:
       <<: *worker-environment
@@ -379,6 +391,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
+      # Level2 明细缓存；日频因子真源在 D1（D1_WORKER_*）。
+      - ./backend_api_python/data/level2_parquet:/app/data/level2_parquet
+      - ./backend_api_python/data/level2_staging/parquet:/level2/staging/parquet:ro
       - ./backend_api_python/.env:/app/.env
     environment:
       <<: *worker-environment
@@ -409,6 +424,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
+      # Level2 明细缓存；日频因子真源在 D1（D1_WORKER_*）。
+      - ./backend_api_python/data/level2_parquet:/app/data/level2_parquet
+      - ./backend_api_python/data/level2_staging/parquet:/level2/staging/parquet:ro
       - ./backend_api_python/.env:/app/.env
     environment:
       <<: *worker-environment

@@ -548,6 +548,7 @@ The maintained documentation index is available at [`docs/README.md`](docs/READM
 | MCP and agents | [Agent documentation](docs/agent/README.md) |
 | Cloud deployment | [Cloud deployment](docs/deployment/CLOUD_DEPLOYMENT_EN.md) |
 | Installation problems | [Troubleshooting](docs/deployment/INSTALL_TROUBLESHOOTING.md) |
+| Commands | [Command list (Chinese)](docs/COMMANDS_CN.md) |
 
 ## Contributing
 

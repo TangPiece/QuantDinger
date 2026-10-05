@@ -47,6 +47,7 @@ TIMEFRAME_SECONDS = {
     "4h": 14400,
     "1d": 86400,
     "1w": 604800,
+    "1mo": 2592000,
 }
 
 PROVIDER_TIMEFRAMES = {
@@ -54,7 +55,23 @@ PROVIDER_TIMEFRAMES = {
     "4h": "4H",
     "1d": "1D",
     "1w": "1W",
+    "1mo": "1M",
 }
+
+
+def _canonical_loader_timeframe(timeframe: str) -> str:
+    """Map chart "1M" onto loader key "1mo" before any lowercasing.
+
+    Strategy code already stores monthly as "1mo". A raw "1M" must not become
+    "1m", or the loader would request one-minute bars.
+    """
+    text = str(timeframe or "1d").strip()
+    if text == "1M":
+        return "1mo"
+    lowered = text.lower()
+    if lowered in {"1mo", "month", "monthly"}:
+        return "1mo"
+    return lowered
 
 
 def _normalize_utc_datetime(value: datetime) -> datetime:
@@ -137,7 +154,7 @@ def _load_strategy_frame_uncached(
     ).strip().lower()
     start_utc = _normalize_utc_datetime(start_date)
     end_utc = _normalize_utc_datetime(end_date)
-    normalized_timeframe = str(timeframe or "1d").strip().lower()
+    normalized_timeframe = _canonical_loader_timeframe(timeframe)
     timeframe_seconds = TIMEFRAME_SECONDS.get(normalized_timeframe, 86400)
     provider_timeframe = PROVIDER_TIMEFRAMES.get(normalized_timeframe, normalized_timeframe)
     data_market = equity_data_market(market, product, resolved_api_family)
@@ -487,7 +504,7 @@ def load_strategy_frame(
     """
     start_utc = _normalize_utc_datetime(start_date)
     end_utc = _normalize_utc_datetime(end_date)
-    normalized_timeframe = str(timeframe or "1d").strip().lower()
+    normalized_timeframe = _canonical_loader_timeframe(timeframe)
     timeframe_seconds = TIMEFRAME_SECONDS.get(normalized_timeframe, 86400)
     requested_start = pd.Timestamp(start_utc).tz_localize(None)
     requested_end = pd.Timestamp(end_utc).tz_localize(None)
@@ -515,7 +532,7 @@ def load_strategy_frame(
     key = _shared_frame_key(
         market,
         symbol,
-        timeframe,
+        normalized_timeframe,
         market_type,
         exchange_id,
         instrument_id,

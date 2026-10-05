@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import signal
 
 from dotenv import load_dotenv
 
@@ -45,6 +46,27 @@ def reload_runtime_env() -> None:
             registry.clear_runtime_env_cache()
     except Exception as exc:
         logger.warning("clear_runtime_env_cache skipped: %s", exc)
+
+
+def signal_workers_reload_env() -> bool:
+    """Ask the Gunicorn master to gracefully recycle every worker.
+
+    Settings save only hot-reloads the current worker. With GUNICORN_WORKERS>1,
+    sibling workers keep stale LLM keys until they restart. SIGHUP on the master
+    recycles the whole pool so they re-read .env. Non-Gunicorn parents are
+    skipped; failures must not fail the settings save response.
+    """
+    try:
+        ppid = os.getppid()
+        if ppid <= 1:
+            logger.debug("skip worker env reload signal: no usable parent pid")
+            return False
+        os.kill(ppid, signal.SIGHUP)
+        logger.info("Signaled process group parent pid=%s with SIGHUP after settings save", ppid)
+        return True
+    except Exception as exc:
+        logger.warning("Failed to signal workers to reload env: %s", exc)
+        return False
 
 
 def refresh_runtime_services() -> None:

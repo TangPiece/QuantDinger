@@ -14,7 +14,7 @@ from app.data_sources.errors import (
     classify_market_data_failure,
 )
 from app.services.fundamental_data import get_fundamental_data_service
-from app.services.strategy_v2.frequencies import frequency_seconds
+from app.services.strategy_v2.frequencies import frequency_seconds, normalize_frequency
 from app.services.strategy_v2.models import StrategyManifest
 from app.services.strategy_v2.service import StrategyV2BacktestService
 
@@ -37,7 +37,10 @@ def live_history_days(
     bars = max(10, max(1, int(warmup_bars or 0)) * 3)
     seconds = frequency_seconds(frequency) * bars
     days = max(1, int(math.ceil(seconds / 86_400)))
-    normalized = str(frequency or "").strip().lower()
+    normalized = normalize_frequency(frequency)
+    # Monthly ends with "m" but is not an intraday session, so keep the calendar-day lookback.
+    if normalized == "1mo":
+        return days
     stock_session = any(
         str(item.get("market") or "") in {"USStock", "HKStock", "CNStock", "AStock"}
         or str(item.get("underlying_market") or "") in {"USStock", "HKStock", "CNStock", "AStock"}

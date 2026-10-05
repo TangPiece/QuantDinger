@@ -27,8 +27,8 @@ logs/
 .env
 .env.local
 
-# Data (mounted by docker-compose)
-data/memory/*.db
+# Data (mounted by docker-compose; do not bake into image)
+data/
 
 # Git
 .git/

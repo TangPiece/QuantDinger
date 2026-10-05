@@ -21,7 +21,9 @@ TIMEFRAME_SECONDS = {
     '1H': 3600,
     '4H': 14400,
     '1D': 86400,
-    '1W': 604800
+    '1W': 604800,
+    # 30 days for monthly delay checks. Do not use lowercase "1m"; that is one minute.
+    '1M': 2592000,
 }
 
 

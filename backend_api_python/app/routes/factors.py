@@ -1,5 +1,7 @@
 """Factor catalog and research APIs."""
 
+import re
+
 from flask import jsonify, request
 
 from app.openapi.blueprint import HumanBlueprint as Blueprint
@@ -12,6 +14,7 @@ from app.services.factors import (
     list_talib_factors,
 )
 from app.services.factors.research import information_coefficient, quantile_returns, winsorize_zscore
+from app.services.factors.series import bars_to_frame, build_factor_plot
 from app.services.fundamental_data import get_fundamental_data_service
 from app.utils.auth import login_required
 from app.utils.logger import get_logger
@@ -19,6 +22,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 factors_blp = Blueprint("factors", __name__)
+
+# 临时：因子库 API 不返回 Level2 滚动 mean/std/skew（计算/按 id 取数仍可用）
+_HIDDEN_L2_ROLLUP_ID = re.compile(r"_(mean|std|skew)_(5|10|20)$")
 
 
 @factors_blp.route("", methods=["GET"])
@@ -28,10 +34,14 @@ def factor_catalog():
         factor_type = str(request.args.get("type") or request.args.get("factor_type") or "").strip()
         category = str(request.args.get("category") or "").strip()
         provider = str(request.args.get("provider") or "").strip().lower()
-        data = list_factors(
-            category=category,
-            factor_type=factor_type,
-        )
+        data = [
+            item
+            for item in list_factors(
+                category=category,
+                factor_type=factor_type,
+            )
+            if not _HIDDEN_L2_ROLLUP_ID.search(str(item.get("factor_id") or ""))
+        ]
         talib_data = []
         if provider in ("", "ta-lib", "talib") and is_talib_available() and factor_type != "fundamental":
             talib_data = [
@@ -53,6 +63,33 @@ def factor_catalog():
     except Exception:
         logger.exception("factor catalog failed")
         return jsonify({"code": 0, "msg": "factor.listFailed", "data": None}), 500
+
+
+@factors_blp.route("/series", methods=["POST"])
+@login_required
+def factor_series():
+    """按当前图表 K 线展开一个因子，返回指标副图 ``plots``。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        frame = bars_to_frame(payload.get("bars") or [])
+        data = build_factor_plot(
+            str(payload.get("factor_id") or payload.get("factorId") or ""),
+            frame,
+            market=str(payload.get("market") or ""),
+            symbol=str(payload.get("symbol") or ""),
+            timeframe=str(payload.get("timeframe") or payload.get("frequency") or "1d"),
+            params=params,
+        )
+        return jsonify({"code": 1, "msg": "success", "data": data})
+    except FactorError as exc:
+        status = 404 if exc.code == "factor.notFound" else 400
+        return jsonify({"code": 0, "msg": exc.code, "data": None}), status
+    except TalibFactorError as exc:
+        return jsonify({"code": 0, "msg": exc.code, "data": None}), 503
+    except Exception:
+        logger.exception("factor series failed")
+        return jsonify({"code": 0, "msg": "factor.seriesFailed", "data": None}), 500
 
 
 @factors_blp.route("/<string:factor_id>", methods=["GET"])

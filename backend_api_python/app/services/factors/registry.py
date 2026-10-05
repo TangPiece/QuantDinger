@@ -9,6 +9,8 @@ from typing import Any, Callable, Mapping, Optional
 import numpy as np
 import pandas as pd
 
+from app.services.factors.level2_catalog import level2_factor_specs
+
 
 class FactorError(ValueError):
     def __init__(self, code: str):
@@ -220,6 +222,37 @@ _FACTORS = {
         _fundamental("free_cash_flow_yield", "cashflow", ("free_cash_flow", "market_cap"), "higher_is_bullish", lambda f, p: _ratio_last(f, "free_cash_flow", "market_cap")),
     )
 }
+
+def _level2_column(column: str) -> Callable[[pd.DataFrame, Mapping[str, Any]], float]:
+    """读取日线上同名 ``l2_*`` 列的最后一根可见值。列不存在时为 NaN。"""
+
+    def compute(frame: pd.DataFrame, _params: Mapping[str, Any]) -> float:
+        if column not in frame.columns or frame.empty:
+            return float("nan")
+        value = pd.to_numeric(frame[column], errors="coerce").iloc[-1]
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return float("nan")
+        return number if math.isfinite(number) else float("nan")
+
+    return compute
+
+
+# 预计算的 Level2 列不从 K 线现算，缺列时返回 NaN，避免回测在没配面板时直接失败。
+for _spec in level2_factor_specs():
+    _FACTORS[_spec.factor_id] = FactorDefinition(
+        factor_id=_spec.factor_id,
+        version="1.0.0",
+        name_i18n_key=f"factor.{_spec.factor_id}.name",
+        description_i18n_key=f"factor.{_spec.factor_id}.description",
+        category="level2",
+        factor_type="level2",
+        required_fields=(),
+        direction_hint=_spec.direction_hint,
+        supported_contexts=("cta", "portfolio"),
+        compute=_level2_column(_spec.factor_id),
+    )
 
 
 def list_factors(*, category: str = "", factor_type: str = "") -> list[dict]:

@@ -30,6 +30,7 @@ def _latest_kline_ttl(timeframe: str) -> int:
         '4H': 15,
         '1D': 30,
         '1W': 60,
+        '1M': 60,
         '1h': 10,
         '4h': 15,
         '1d': 30,
@@ -69,7 +70,7 @@ def get_kline():
     Query params:
         market: Market type (Crypto, USStock, Forex, Futures)
         symbol: Symbol or ticker
-        timeframe: Bar size (1m, 5m, 15m, 30m, 1H, 4H, 1D, 1W)
+        timeframe: Bar size (1m, 5m, 15m, 30m, 1H, 4H, 1D, 1W, 1M)
         limit: Number of bars (default 300)
         before_time: Return bars before this Unix timestamp (optional)
     """
