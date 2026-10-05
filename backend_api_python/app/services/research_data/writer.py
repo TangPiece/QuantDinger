@@ -184,6 +184,91 @@ def write_universe_snapshot(
     return result
 
 
+def write_corporate_action(
+    store: CanonicalStore,
+    table: pa.Table,
+    *,
+    exchange: str,
+    year: int,
+    registry: ResearchRegistry | None = None,
+    dataset_code: str = "corporate_action",
+    version: str,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """写入公司行为 / 复权因子 Canonical。"""
+    key = paths.corporate_action_key(exchange=exchange, year=year, part=part)
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.corporate_action_schema(),
+        required_columns=["instrument_key", "effective_date", "action_type"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_CORPORATE_ACTION,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        dv_id = registry.upsert_data_version(
+            dataset_code=dataset_code,
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_CORPORATE_ACTION,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+        result["data_version_id"] = dv_id
+    return result
+
+
+def write_trading_status(
+    store: CanonicalStore,
+    table: pa.Table,
+    *,
+    exchange: str,
+    year: int,
+    month: int,
+    registry: ResearchRegistry | None = None,
+    dataset_code: str = "trading_status",
+    version: str,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """写入停牌/涨跌停 Canonical；允许空表（空分区占位）。"""
+    key = paths.trading_status_key(exchange=exchange, year=year, month=month, part=part)
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.trading_status_schema(),
+        required_columns=["instrument_key", "trading_date", "status"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_TRADING_STATUS,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        dv_id = registry.upsert_data_version(
+            dataset_code=dataset_code,
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_TRADING_STATUS,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+        result["data_version_id"] = dv_id
+    return result
+
+
 def write_factor_long(
     store: CanonicalStore,
     table: pa.Table,

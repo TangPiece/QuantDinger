@@ -101,11 +101,14 @@ class R2CanonicalStore:
 
 
 class CachingCanonicalStore:
-    """读 R2 时回填本地 mirror。"""
+    """读 remote 时回填本地 mirror，并统计 cache hit/miss。"""
 
     def __init__(self, remote: CanonicalStore, local: LocalCanonicalStore) -> None:
         self.remote = remote
         self.local = local
+        # Phase 1B：供 cache 测试与验收报告统计
+        self.hits = 0
+        self.misses = 0
 
     def put_bytes(self, key: str, data: bytes) -> str:
         checksum = self.remote.put_bytes(key, data)
@@ -114,7 +117,9 @@ class CachingCanonicalStore:
 
     def get_bytes(self, key: str) -> bytes:
         if self.local.exists(key):
+            self.hits += 1
             return self.local.get_bytes(key)
+        self.misses += 1
         data = self.remote.get_bytes(key)
         self.local.put_bytes(key, data)
         return data
@@ -127,3 +132,18 @@ class CachingCanonicalStore:
         if remote_keys:
             return remote_keys
         return self.local.list_keys(prefix)
+
+    def reset_stats(self) -> None:
+        """清零 hit/miss 计数。"""
+        self.hits = 0
+        self.misses = 0
+
+    def stats(self) -> dict[str, int]:
+        """返回当前 cache 统计。"""
+        return {"hits": self.hits, "misses": self.misses}
+
+    def invalidate(self, key: str) -> None:
+        """删除本地 mirror，强制下次从 remote 拉取。"""
+        path = self.local._path(key)
+        if path.is_file():
+            path.unlink()

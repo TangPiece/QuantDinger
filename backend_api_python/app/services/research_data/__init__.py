@@ -18,10 +18,12 @@ from .contracts import (
     SnapshotRef,
     TargetPosition,
 )
+from .canonical_repository import CanonicalRepository
 from .data_query import DataQuery
 from .hashing import compute_dataset_hash
 
 __all__ = [
+    "CanonicalRepository",
     "DataQuery",
     "DataVersionRef",
     "DatasetDefinition",

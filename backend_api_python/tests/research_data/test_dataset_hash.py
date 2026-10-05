@@ -31,3 +31,15 @@ def test_price_policy_changes_hash():
 
 def test_snapshot_id_changes_hash():
     assert _base(snapshot_id="snap_1") != _base(snapshot_id="snap_2")
+
+
+def test_case_d_processor_version_changes_hash():
+    """Case D：processor_version 变化必须改变 dataset_hash。"""
+    assert _base(processor_version="proc@1") != _base(processor_version="proc@2")
+
+
+def test_case_e_schema_version_changes_hash():
+    """Case E：schema_version 变化必须改变 dataset_hash。"""
+    assert _base(schema_version="market_bar_daily@1") != _base(
+        schema_version="market_bar_daily@2"
+    )

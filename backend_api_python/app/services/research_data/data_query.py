@@ -1,14 +1,16 @@
-"""DataQuery：研究数据唯一读面（禁止实时行情 API）。"""
+"""DataQuery：研究数据唯一读面（禁止实时行情 API）。
+
+读路径：DataQuery → CanonicalRepository → (Local/R2 Store + DuckDB scan)。
+"""
 
 from __future__ import annotations
 
-import io
 from datetime import date, datetime, timezone
 from typing import Optional, Sequence
 
 import pandas as pd
-import pyarrow.parquet as pq
 
+from .canonical_repository import CanonicalRepository
 from .canonical_store import CanonicalStore
 from .contracts import DatasetHandle, PricePolicy
 from .paths import (
@@ -26,14 +28,26 @@ class DataQueryError(RuntimeError):
 
 
 class DataQuery:
-    """从 Canonical Store + Registry 读取研究数据。
+    """从 CanonicalRepository + Registry 读取研究数据。
 
     构造时注入 store/registry；模块内不 import 行情 HTTP 客户端。
     """
 
-    def __init__(self, store: CanonicalStore, registry: ResearchRegistry) -> None:
+    def __init__(
+        self,
+        store: CanonicalStore,
+        registry: ResearchRegistry,
+        *,
+        repository: CanonicalRepository | None = None,
+    ) -> None:
         self._store = store
         self._registry = registry
+        # 允许测试注入自定义 Repository；默认由 store 构建
+        self._repo = repository or CanonicalRepository(store)
+
+    @property
+    def repository(self) -> CanonicalRepository:
+        return self._repo
 
     def market(
         self,
@@ -46,22 +60,26 @@ class DataQuery:
         exchange: str = "CN",
         snapshot_id: Optional[str] = None,
     ) -> pd.DataFrame:
-        """读取 Canonical 日线；Phase 1A 仅支持 price_policy.adjustment=none。"""
+        """读取 Canonical 日线；none=raw，post=后复权，pre 仍未实现。"""
         del snapshot_id  # 绑定通过 store 内已发布文件体现
         if frequency != "1d":
             raise DataQueryError(f"unsupported frequency: {frequency}")
         policy = price_policy or PricePolicy()
-        if policy.adjustment != "none":
+        if policy.adjustment == "pre":
             raise NotImplementedError(
-                "Phase 1A only supports PricePolicy.adjustment='none' (raw Canonical prices)"
+                "PricePolicy.adjustment='pre' is not implemented in Phase 1B"
             )
+        if policy.adjustment not in ("none", "post"):
+            raise DataQueryError(f"unsupported adjustment: {policy.adjustment}")
+
         frames: list[pd.DataFrame] = []
         for year, month in _iter_months(start, end):
             prefix = market_daily_prefix(exchange=exchange, year=year, month=month)
-            for key in self._store.list_keys(prefix):
-                if not key.endswith(".parquet"):
-                    continue
-                df = self._read_parquet_df(key)
+            df = self._repo.read_parquet_df(
+                prefix=prefix,
+                order_by=("instrument_key", "trading_date"),
+            )
+            if not df.empty:
                 frames.append(df)
         if not frames:
             return _empty_market()
@@ -71,7 +89,10 @@ class DataQuery:
         if keys:
             out = out[out["instrument_key"].isin(keys)]
         out = out[(out["trading_date"] >= start) & (out["trading_date"] <= end)]
-        return out.reset_index(drop=True)
+        out = out.reset_index(drop=True)
+        if policy.adjustment == "post":
+            out = self._apply_post_adjustment(out, exchange=exchange, start=start, end=end)
+        return out
 
     def fundamental(
         self,
@@ -90,9 +111,9 @@ class DataQuery:
         years = {kt.year - 1, kt.year, kt.year + 1}
         for year in sorted(years):
             prefix = pit_fundamental_prefix(exchange=exchange, year=year)
-            for key in self._store.list_keys(prefix):
-                if key.endswith(".parquet"):
-                    frames.append(self._read_parquet_df(key))
+            df = self._repo.read_parquet_df(prefix=prefix)
+            if not df.empty:
+                frames.append(df)
         if not frames:
             return _empty_pit()
         out = pd.concat(frames, ignore_index=True)
@@ -142,13 +163,9 @@ class DataQuery:
                 "universe() requires universe_version or snapshot_id that pins a universe snapshot"
             )
         prefix = universe_snapshot_prefix(universe_code=universe_code, universe_version=version)
-        frames: list[pd.DataFrame] = []
-        for key in self._store.list_keys(prefix):
-            if key.endswith(".parquet"):
-                frames.append(self._read_parquet_df(key))
-        if not frames:
+        out = self._repo.read_parquet_df(prefix=prefix)
+        if out.empty:
             return []
-        out = pd.concat(frames, ignore_index=True)
         valid_from = pd.to_datetime(out["valid_from"], errors="coerce")
         as_of_ts = pd.Timestamp(as_of)
         if "valid_to" in out.columns:
@@ -175,23 +192,17 @@ class DataQuery:
         prefix = trading_status_prefix(
             exchange=exchange, year=trading_date.year, month=trading_date.month
         )
-        frames = [
-            self._read_parquet_df(k)
-            for k in self._store.list_keys(prefix)
-            if k.endswith(".parquet")
+        out = self._repo.read_parquet_df(prefix=prefix)
+        empty_cols = [
+            "instrument_key",
+            "trading_date",
+            "status",
+            "is_suspended",
+            "is_limit_up",
+            "is_limit_down",
         ]
-        if not frames:
-            return pd.DataFrame(
-                columns=[
-                    "instrument_key",
-                    "trading_date",
-                    "status",
-                    "is_suspended",
-                    "is_limit_up",
-                    "is_limit_down",
-                ]
-            )
-        out = pd.concat(frames, ignore_index=True)
+        if out.empty:
+            return pd.DataFrame(columns=empty_cols)
         out = _ensure_datetime_date(out, "trading_date")
         keys = set(instrument_keys)
         if keys:
@@ -210,15 +221,21 @@ class DataQuery:
     ) -> pd.DataFrame:
         del snapshot_id
         frames: list[pd.DataFrame] = []
-        for year, _month in _iter_months(start, end):
+        years = {start.year, end.year}
+        for year in sorted(years):
             prefix = corporate_action_prefix(exchange=exchange, year=year)
-            for key in self._store.list_keys(prefix):
-                if key.endswith(".parquet"):
-                    frames.append(self._read_parquet_df(key))
+            df = self._repo.read_parquet_df(prefix=prefix)
+            if not df.empty:
+                frames.append(df)
+        empty_cols = [
+            "instrument_key",
+            "effective_date",
+            "action_type",
+            "cash_dividend",
+            "split_ratio",
+        ]
         if not frames:
-            return pd.DataFrame(
-                columns=["instrument_key", "effective_date", "action_type", "cash_dividend", "split_ratio"]
-            )
+            return pd.DataFrame(columns=empty_cols)
         out = pd.concat(frames, ignore_index=True)
         out = _ensure_datetime_date(out, "effective_date")
         keys = set(instrument_keys)
@@ -247,7 +264,7 @@ class DataQuery:
             if feat.backend == "d1_l2_factors":
                 raise DataQueryError(
                     "feature backend=d1_l2_factors is a hot store; "
-                    "Phase 1A research path expects R2 factor assets (backend=r2_factor)"
+                    "Phase 1 research path expects R2 factor assets (backend=r2_factor)"
                 )
             if feat.backend == "r2_factor":
                 factor_set = feat.definition.get("factor_set") or f"{feat.code}@{feat.version}"
@@ -286,21 +303,71 @@ class DataQuery:
         from . import config as rd_config
 
         prefix = f"{rd_config.canonical_prefix()}/factor/daily/factor_set={factor_set}"
-        frames = [
-            self._read_parquet_df(k)
-            for k in self._store.list_keys(prefix)
-            if k.endswith(".parquet")
-        ]
-        if not frames:
+        out = self._repo.read_parquet_df(prefix=prefix)
+        if out.empty:
             return pd.DataFrame(
                 columns=["instrument_key", "trading_date", "factor_code", "factor_version", "value"]
             )
-        return pd.concat(frames, ignore_index=True)
+        return out
 
-    def _read_parquet_df(self, key: str) -> pd.DataFrame:
-        data = self._store.get_bytes(key)
-        table = pq.read_table(io.BytesIO(data))
-        return table.to_pandas()
+    def _apply_post_adjustment(
+        self,
+        market: pd.DataFrame,
+        *,
+        exchange: str,
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        """用 Canonical corporate_action.split_ratio 做最小后复权。
+
+        因子定义：对交易日 t，post_factor = ∏ split_ratio(effective_date > t)。
+        无任何 CA 时显式报错（避免 silently 恒等导致 none==post）。
+        """
+        if market.empty:
+            return market
+        instruments = market["instrument_key"].astype(str).unique().tolist()
+        # 取更宽 CA 窗口，覆盖 end 之后的拆分（后复权需要未来事件）
+        ca_start = date(min(start.year, end.year) - 1, 1, 1)
+        ca_end = date(end.year + 1, 12, 31)
+        frames: list[pd.DataFrame] = []
+        for year in range(ca_start.year, ca_end.year + 1):
+            prefix = corporate_action_prefix(exchange=exchange, year=year)
+            df = self._repo.read_parquet_df(prefix=prefix)
+            if not df.empty:
+                frames.append(df)
+        if not frames:
+            raise DataQueryError(
+                "PricePolicy.adjustment='post' requires corporate_action in Canonical; none found"
+            )
+        ca = pd.concat(frames, ignore_index=True)
+        ca = _ensure_datetime_date(ca, "effective_date")
+        ca = ca[ca["instrument_key"].isin(instruments)]
+        if ca.empty:
+            raise DataQueryError(
+                "PricePolicy.adjustment='post' found no corporate_action for requested instruments"
+            )
+        # split_ratio 缺省视为 1.0（无价格缩放）
+        ca = ca.copy()
+        ca["split_ratio"] = pd.to_numeric(ca["split_ratio"], errors="coerce").fillna(1.0)
+        ca = ca.sort_values(["instrument_key", "effective_date"])
+
+        out = market.copy()
+        price_cols = [c for c in ("open", "high", "low", "close", "vwap") if c in out.columns]
+        factors: list[float] = []
+        for _, row in out.iterrows():
+            ik = str(row["instrument_key"])
+            td = row["trading_date"]
+            subsequent = ca[(ca["instrument_key"] == ik) & (ca["effective_date"] > td)]
+            factor = float(subsequent["split_ratio"].prod()) if len(subsequent) else 1.0
+            factors.append(factor)
+        out["_post_factor"] = factors
+        for col in price_cols:
+            out[col] = out[col].astype(float) * out["_post_factor"]
+        # 拆分后成交量按因子反向缩放（金额不变）
+        if "volume" in out.columns:
+            out["volume"] = out["volume"].astype(float) / out["_post_factor"].replace(0, 1.0)
+        out = out.drop(columns=["_post_factor"])
+        return out.reset_index(drop=True)
 
 
 def _iter_months(start: date, end: date):

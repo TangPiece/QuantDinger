@@ -56,7 +56,17 @@ QUANTDINGER_SKIP_APP_INIT=1 python scripts/export_universe_snapshot.py \
   --universe-code CSI300 --version 2026.10.05 --start 2020-01-01
 ```
 
+构建 Golden Dataset `cn_stock_daily@v1`（默认 fixture / 本地 Canonical；`--from-source` 拉真源；`--use-r2` 写 R2）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 python scripts/build_golden_dataset.py \
+  --start 2020-01-01 --end 2025-12-31
+```
+
 本地单测：`cd workers/qd-research-d1 && npm test`；`cd backend_api_python && python -m pytest tests/research_data -q`。
+
+Phase 1B 验收报告：[docs/data/phase1/07_phase1b_validation.md](data/phase1/07_phase1b_validation.md)。
 
 ## Level2 因子 D1 Worker
 

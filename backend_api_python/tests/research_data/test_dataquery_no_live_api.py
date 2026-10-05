@@ -48,7 +48,8 @@ def test_market_and_universe_do_not_call_requests(seeded_research, monkeypatch):
     assert "CNStock:999999" not in members  # valid_to 已结束
 
 
-def test_price_policy_non_none_rejected(seeded_research):
+def test_price_policy_pre_still_rejected(seeded_research):
+    """Phase 1B：post 已实现；pre 仍 NotImplemented。"""
     from app.services.research_data.contracts import PricePolicy
 
     query = seeded_research["query"]
@@ -57,5 +58,5 @@ def test_price_policy_non_none_rejected(seeded_research):
             ["CNStock:000001"],
             date(2024, 5, 1),
             date(2024, 5, 1),
-            price_policy=PricePolicy(adjustment="post"),
+            price_policy=PricePolicy(adjustment="pre"),
         )

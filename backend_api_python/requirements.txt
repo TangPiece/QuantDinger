@@ -13,6 +13,8 @@ pandas>=3.0.5
 pydantic>=2.10,<3
 # Level2 日频面板是 Parquet。pandas 读这些文件需要这个引擎。
 pyarrow>=23.0.1
+# Phase 1B：CanonicalRepository 经 DuckDB read_parquet 稳定化查询。
+duckdb>=1.1.0,<2
 # 日频因子同步到 Cloudflare R2（S3 兼容接口）。
 boto3>=1.35.0
 

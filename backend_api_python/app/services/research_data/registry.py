@@ -48,7 +48,9 @@ class ResearchRegistry(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> str: ...
 
-    def upsert_dataset(self, definition: DatasetDefinition) -> None: ...
+    def upsert_dataset(
+        self, definition: DatasetDefinition, *, status: str = "ACTIVE"
+    ) -> None: ...
 
     def get_dataset(self, dataset_ref: str) -> DatasetHandle: ...
 
@@ -145,11 +147,17 @@ class LocalJsonRegistry:
             self._write(data)
             return snapshot_id
 
-    def upsert_dataset(self, definition: DatasetDefinition) -> None:
+    def upsert_dataset(
+        self, definition: DatasetDefinition, *, status: str = "ACTIVE"
+    ) -> None:
+        """登记 Dataset；status 存旁路字段（Local JSON），供 validated 等验收态。"""
         with self._lock:
             data = self._read()
             key = f"{definition.code}@{definition.version}"
-            data["datasets"][key] = definition.model_dump(mode="json")
+            payload = definition.model_dump(mode="json")
+            # Domain Contract 无 status 字段；Registry 侧单独记录
+            payload["_registry_status"] = status
+            data["datasets"][key] = payload
             self._write(data)
 
     def get_dataset(self, dataset_ref: str) -> DatasetHandle:
@@ -158,7 +166,9 @@ class LocalJsonRegistry:
         raw = data["datasets"].get(f"{code}@{version}")
         if not raw:
             raise KeyError(f"dataset not found: {dataset_ref}")
-        definition = DatasetDefinition.model_validate(raw)
+        # 剥离 Registry 旁路字段，避免 DatasetDefinition extra=forbid 失败
+        payload = {k: v for k, v in raw.items() if not str(k).startswith("_")}
+        definition = DatasetDefinition.model_validate(payload)
         snapshot = self.get_snapshot(definition.snapshot_id)
         digest = compute_dataset_hash(
             dataset_definition=definition.model_dump(mode="json"),
@@ -305,14 +315,17 @@ class D1ResearchRegistry:
             )
         return snapshot_id
 
-    def upsert_dataset(self, definition: DatasetDefinition) -> None:
+    def upsert_dataset(
+        self, definition: DatasetDefinition, *, status: str = "ACTIVE"
+    ) -> None:
+        """登记 Dataset；status 文本列可写 validated（不改 DDL）。"""
         d1_client.query(
             """
             INSERT INTO dataset (
               code, version, name, frequency, universe_code, universe_version,
               snapshot_id, schema_version, definition_json, price_policy_json,
               status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(code, version) DO UPDATE SET
               name=excluded.name,
               frequency=excluded.frequency,
@@ -322,7 +335,7 @@ class D1ResearchRegistry:
               schema_version=excluded.schema_version,
               definition_json=excluded.definition_json,
               price_policy_json=excluded.price_policy_json,
-              status='ACTIVE'
+              status=excluded.status
             """,
             [
                 definition.code,
@@ -335,6 +348,7 @@ class D1ResearchRegistry:
                 definition.schema_version,
                 json.dumps(definition.model_dump(mode="json"), ensure_ascii=False),
                 json.dumps(definition.price_policy.model_dump(mode="json"), ensure_ascii=False),
+                status,
                 _utc_now(),
             ],
         )

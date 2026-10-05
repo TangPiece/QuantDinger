@@ -46,11 +46,21 @@ def corporate_action_prefix(*, exchange: str, year: int) -> str:
     return f"{_root()}/canonical/corporate_action/exchange={exchange}/year={int(year):04d}"
 
 
+def corporate_action_key(*, exchange: str, year: int, part: str = "part-000.parquet") -> str:
+    return f"{corporate_action_prefix(exchange=exchange, year=year)}/{part}"
+
+
 def trading_status_prefix(*, exchange: str, year: int, month: int) -> str:
     return (
         f"{_root()}/canonical/trading_status/"
         f"exchange={exchange}/year={int(year):04d}/month={int(month):02d}"
     )
+
+
+def trading_status_key(
+    *, exchange: str, year: int, month: int, part: str = "part-000.parquet"
+) -> str:
+    return f"{trading_status_prefix(exchange=exchange, year=year, month=month)}/{part}"
 
 
 def factor_daily_prefix(*, factor_set: str, year: int, month: int) -> str:
