@@ -1,7 +1,7 @@
 # Phase 2F — Experiment & Reproducibility
 
 > **Status:** Phase 2F implemented. **Phase 2 complete.**
-> Next: Phase 3A — Backtest Contract (do not extend Phase 2 further).
+> Phase 3A Backtest Contract implemented → [../phase3/README.md](../phase3/README.md).
 
 ## 1. Goal
 

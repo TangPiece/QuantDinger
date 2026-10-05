@@ -1,7 +1,7 @@
 # Phase 2 — Qlib Adapter & Research Engine
 
 > **Status:** Phase 2F implemented — **Phase 2 complete.**
-> Next: Phase 3A Backtest Contract.
+> Phase 3A Backtest Contract implemented → [../phase3/README.md](../phase3/README.md).
 
 ## Reading order
 

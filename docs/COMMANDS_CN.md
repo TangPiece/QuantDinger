@@ -148,7 +148,21 @@ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
   python scripts/verify_phase2f_experiment.py
 ```
 
-Phase 2F 说明：[docs/data/phase2/06_experiment_reproducibility.md](data/phase2/06_experiment_reproducibility.md)。Phase 2 到此结束；下一阶段为 Phase 3A Backtest Contract。
+Phase 2F 说明：[docs/data/phase2/06_experiment_reproducibility.md](data/phase2/06_experiment_reproducibility.md)。Phase 2 到此结束。
+
+验证 Phase 3A Backtest Contract（契约 / 预设 / 无 qlib）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase3a_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase3a_*.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 3A 说明：[docs/backtest/README.md](backtest/README.md)、[docs/data/phase3/README.md](data/phase3/README.md)。
 
 ## Level2 因子 D1 Worker
 
