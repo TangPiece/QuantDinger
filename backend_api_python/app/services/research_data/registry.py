@@ -21,6 +21,7 @@ from .contracts import (
     ModelVersionRecord,
     PricePolicy,
     ProcessorDefinition,
+    SignalRunRecord,
     SnapshotRef,
 )
 from .hashing import canonical_json, compute_dataset_hash
@@ -129,6 +130,10 @@ class ResearchRegistry(Protocol):
 
     def get_experiment(self, experiment_id: str) -> ExperimentDefinition: ...
 
+    def upsert_signal_run(self, record: SignalRunRecord) -> None: ...
+
+    def get_signal_run(self, signal_run_id: str) -> SignalRunRecord: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -150,6 +155,7 @@ class LocalJsonRegistry:
                     "model_versions": {},
                     "artifacts": {},
                     "experiments": {},
+                    "signal_runs": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -399,6 +405,21 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"experiment not found: {experiment_id!r}")
         return ExperimentDefinition.model_validate(raw)
+
+    def upsert_signal_run(self, record: SignalRunRecord) -> None:
+        """登记一次 Signal 管线运行（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("signal_runs", {})
+            data["signal_runs"][record.signal_run_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_signal_run(self, signal_run_id: str) -> SignalRunRecord:
+        data = self._read()
+        raw = (data.get("signal_runs") or {}).get(signal_run_id)
+        if not raw:
+            raise KeyError(f"signal_run not found: {signal_run_id!r}")
+        return SignalRunRecord.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -811,6 +832,28 @@ class D1ResearchRegistry:
             model_version_ref=None,
             mlflow_run_id=row.get("mlflow_run_id"),
             parameters=json.loads(row.get("parameters_json") or "{}"),
+        )
+
+    def upsert_signal_run(self, record: SignalRunRecord) -> None:
+        """D1 无独立 signal_run 表；Phase 2E 索引仅 Local JSON，远端依赖 signal artifact。
+
+        pipeline 已调用 upsert_artifact(type=signal)；此处不重复写入以免覆盖类型。
+        """
+        _ = record
+        return
+
+    def get_signal_run(self, signal_run_id: str) -> SignalRunRecord:
+        """从 signal artifact 元数据重建（D1 无独立表）。"""
+        art = self.get_artifact(signal_run_id)
+        meta = dict(art.metadata or {})
+        return SignalRunRecord(
+            signal_run_id=signal_run_id,
+            strategy_version=str(meta.get("strategy_version") or ""),
+            prediction_fingerprint=str(meta.get("prediction_fingerprint") or ""),
+            artifact_id=str(meta.get("artifact_id") or art.artifact_id),
+            storage_uri=art.storage_uri,
+            cash_weight=float(meta.get("cash_weight") or 0.0),
+            metadata=meta,
         )
 
     def upsert_universe_ref(

@@ -1,0 +1,253 @@
+diff --git a/backend_api_python/app/services/research_data/__init__.py b/backend_api_python/app/services/research_data/__init__.py
+index 6263fac..8123ab2 100644
+--- a/backend_api_python/app/services/research_data/__init__.py
++++ b/backend_api_python/app/services/research_data/__init__.py
+@@ -12,9 +12,11 @@ from .contracts import (
+     InstrumentKey,
+     LabelDefinition,
+     OrderIntent,
++    PredictionRecord,
+     PricePolicy,
+     ProcessorDefinition,
+     Signal,
++    SignalRunRecord,
+     SnapshotRef,
+     TargetPosition,
+ )
+@@ -32,9 +34,11 @@ __all__ = [
+     "InstrumentKey",
+     "LabelDefinition",
+     "OrderIntent",
++    "PredictionRecord",
+     "PricePolicy",
+     "ProcessorDefinition",
+     "Signal",
++    "SignalRunRecord",
+     "SnapshotRef",
+     "TargetPosition",
+     "compute_dataset_hash",
+diff --git a/backend_api_python/app/services/research_data/contracts.py b/backend_api_python/app/services/research_data/contracts.py
+index a07efc9..0fda48c 100644
+--- a/backend_api_python/app/services/research_data/contracts.py
++++ b/backend_api_python/app/services/research_data/contracts.py
+@@ -143,6 +143,10 @@ class PredictionRecord(_ContractModel):
+     model_version: str
+     dataset_hash: str
+     bundle_hash: str
++    # 确定性行 id：sha256(model_version|instrument|trading_date|dataset_hash)
++    prediction_id: str = ""
++    snapshot_id: str = ""
++    created_at: Optional[datetime] = None
+ 
+ 
+ class ArtifactRecord(_ContractModel):
+@@ -190,25 +194,62 @@ class ExperimentDefinition(_ContractModel):
+ 
+ 
+ class Signal(_ContractModel):
++    """研究域信号：Prediction 经 SignalStrategy 解释后的意图（非订单）。"""
++
++    signal_id: str
+     instrument_key: str
+-    timestamp: datetime
++    trading_date: str
++    direction: Literal["LONG", "SHORT", "FLAT"]
+     score: float
++    # 信号生成时刻 / PIT 截止 / 计划可执行时刻（均须 timezone-aware UTC）
++    signal_time: datetime
++    knowledge_time: datetime
++    execution_time: datetime
+     rank: Optional[int] = None
+     confidence: Optional[float] = None
+-    model_version: Optional[str] = None
++    target_weight: Optional[float] = None
++    model_version: str = ""
++    strategy_version: str = ""
++    dataset_hash: str = ""
++    bundle_hash: Optional[str] = None
+ 
+ 
+ class TargetPosition(_ContractModel):
++    """组合构建后的目标仓位；不含 Broker / 撮合。"""
++
+     instrument_key: str
++    trading_date: str
++    portfolio_id: str
++    strategy_version: str
++    dataset_hash: str
++    # 与 Signal.signal_time 对齐，便于下游衔接
+     timestamp: datetime
+     target_weight: Optional[float] = None
+     target_quantity: Optional[float] = None
++    signal_id: Optional[str] = None
+ 
+ 
+ class OrderIntent(_ContractModel):
++    """订单意图契约（Phase 2E 仅保留；不接 Broker）。"""
++
+     instrument_key: str
+     side: Literal["BUY", "SELL"]
+     quantity: float
+     urgency: Literal["LOW", "NORMAL", "HIGH"] = "NORMAL"
+     execution_algorithm: Literal["MARKET", "LIMIT", "TWAP", "VWAP", "POV", "CUSTOM"] = "MARKET"
+     limit_price: Optional[float] = None
++    signal_id: Optional[str] = None
++    strategy_version: Optional[str] = None
++    trading_date: Optional[str] = None
++
++
++class SignalRunRecord(_ContractModel):
++    """一次 Prediction→Signal→TargetPosition 运行的 Registry 索引。"""
++
++    signal_run_id: str
++    strategy_version: str
++    prediction_fingerprint: str
++    artifact_id: str
++    storage_uri: str
++    cash_weight: float = 0.0
++    metadata: dict[str, Any] = Field(default_factory=dict)
+diff --git a/backend_api_python/app/services/research_data/model_training/runner.py b/backend_api_python/app/services/research_data/model_training/runner.py
+index 0315245..36d0178 100644
+--- a/backend_api_python/app/services/research_data/model_training/runner.py
++++ b/backend_api_python/app/services/research_data/model_training/runner.py
+@@ -19,6 +19,7 @@ from app.services.research_data.contracts import (
+ )
+ from app.services.research_data.qlib_adapter import ADAPTER_VERSION, QlibAdapter, VersionResolver
+ from app.services.research_data.registry import ResearchRegistry
++from app.services.research_data.signal.predictions import compute_prediction_id
+ 
+ from .adapter import LightGBMModelAdapter, ModelTrainingError
+ from .artifact_store import (
+@@ -80,19 +81,30 @@ def _predictions_to_records(
+     model_version: str,
+     dataset_hash: str,
+     bundle_hash: str,
++    snapshot_id: str = "",
+ ) -> list[PredictionRecord]:
+-    """Qlib MultiIndex → PredictionRecord 列表。"""
++    """Qlib MultiIndex → PredictionRecord 列表（含 prediction_id / snapshot_id）。"""
+     out: list[PredictionRecord] = []
+     for idx, val in series.items():
+         inst, dt = _split_pred_index(idx)
++        instrument_key = from_qlib_instrument(str(inst))
++        trading_date = _trading_date_str(dt)
++        pred_id = compute_prediction_id(
++            model_version=model_version,
++            instrument_key=instrument_key,
++            trading_date=trading_date,
++            dataset_hash=dataset_hash,
++        )
+         out.append(
+             PredictionRecord(
+-                instrument_key=from_qlib_instrument(str(inst)),
+-                trading_date=_trading_date_str(dt),
++                instrument_key=instrument_key,
++                trading_date=trading_date,
+                 prediction=float(val),
+                 model_version=model_version,
+                 dataset_hash=dataset_hash,
+                 bundle_hash=bundle_hash,
++                prediction_id=pred_id,
++                snapshot_id=snapshot_id or "",
+             )
+         )
+     return out
+@@ -110,6 +122,8 @@ def _predictions_parquet_bytes(records: list[PredictionRecord]) -> bytes:
+             "model_version": [r.model_version for r in records],
+             "dataset_hash": [r.dataset_hash for r in records],
+             "bundle_hash": [r.bundle_hash for r in records],
++            "prediction_id": [r.prediction_id for r in records],
++            "snapshot_id": [r.snapshot_id for r in records],
+         }
+     )
+     buf = io.BytesIO()
+@@ -234,6 +248,7 @@ class ModelTrainer:
+             model_version=model_ref,
+             dataset_hash=bundle.dataset_hash,
+             bundle_hash=bundle.bundle_hash,
++            snapshot_id=bundle.snapshot_id,
+         )
+ 
+         # test 日期 ⊆ test 段
+diff --git a/backend_api_python/app/services/research_data/registry.py b/backend_api_python/app/services/research_data/registry.py
+index 5fbc5b6..fc6a965 100644
+--- a/backend_api_python/app/services/research_data/registry.py
++++ b/backend_api_python/app/services/research_data/registry.py
+@@ -21,6 +21,7 @@ from .contracts import (
+     ModelVersionRecord,
+     PricePolicy,
+     ProcessorDefinition,
++    SignalRunRecord,
+     SnapshotRef,
+ )
+ from .hashing import canonical_json, compute_dataset_hash
+@@ -129,6 +130,10 @@ class ResearchRegistry(Protocol):
+ 
+     def get_experiment(self, experiment_id: str) -> ExperimentDefinition: ...
+ 
++    def upsert_signal_run(self, record: SignalRunRecord) -> None: ...
++
++    def get_signal_run(self, signal_run_id: str) -> SignalRunRecord: ...
++
+ 
+ class LocalJsonRegistry:
+     """本地 JSON Registry，测试默认后端。"""
+@@ -150,6 +155,7 @@ class LocalJsonRegistry:
+                     "model_versions": {},
+                     "artifacts": {},
+                     "experiments": {},
++                    "signal_runs": {},
+                     "universe_refs": {},
+                     "_seq": 0,
+                 }
+@@ -400,6 +406,21 @@ class LocalJsonRegistry:
+             raise KeyError(f"experiment not found: {experiment_id!r}")
+         return ExperimentDefinition.model_validate(raw)
+ 
++    def upsert_signal_run(self, record: SignalRunRecord) -> None:
++        """登记一次 Signal 管线运行（Local JSON）。"""
++        with self._lock:
++            data = self._read()
++            data.setdefault("signal_runs", {})
++            data["signal_runs"][record.signal_run_id] = record.model_dump(mode="json")
++            self._write(data)
++
++    def get_signal_run(self, signal_run_id: str) -> SignalRunRecord:
++        data = self._read()
++        raw = (data.get("signal_runs") or {}).get(signal_run_id)
++        if not raw:
++            raise KeyError(f"signal_run not found: {signal_run_id!r}")
++        return SignalRunRecord.model_validate(raw)
++
+ 
+ class D1ResearchRegistry:
+     """经 Worker 写入 qd_research。"""
+@@ -813,6 +834,28 @@ class D1ResearchRegistry:
+             parameters=json.loads(row.get("parameters_json") or "{}"),
+         )
+ 
++    def upsert_signal_run(self, record: SignalRunRecord) -> None:
++        """D1 无独立 signal_run 表；Phase 2E 索引仅 Local JSON，远端依赖 signal artifact。
++
++        pipeline 已调用 upsert_artifact(type=signal)；此处不重复写入以免覆盖类型。
++        """
++        _ = record
++        return
++
++    def get_signal_run(self, signal_run_id: str) -> SignalRunRecord:
++        """从 signal artifact 元数据重建（D1 无独立表）。"""
++        art = self.get_artifact(signal_run_id)
++        meta = dict(art.metadata or {})
++        return SignalRunRecord(
++            signal_run_id=signal_run_id,
++            strategy_version=str(meta.get("strategy_version") or ""),
++            prediction_fingerprint=str(meta.get("prediction_fingerprint") or ""),
++            artifact_id=str(meta.get("artifact_id") or art.artifact_id),
++            storage_uri=art.storage_uri,
++            cash_weight=float(meta.get("cash_weight") or 0.0),
++            metadata=meta,
++        )
++
+     def upsert_universe_ref(
+         self,
+         *,

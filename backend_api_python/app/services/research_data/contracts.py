@@ -143,6 +143,10 @@ class PredictionRecord(_ContractModel):
     model_version: str
     dataset_hash: str
     bundle_hash: str
+    # 确定性行 id：sha256(model_version|instrument|trading_date|dataset_hash)
+    prediction_id: str = ""
+    snapshot_id: str = ""
+    created_at: Optional[datetime] = None
 
 
 class ArtifactRecord(_ContractModel):
@@ -190,25 +194,62 @@ class ExperimentDefinition(_ContractModel):
 
 
 class Signal(_ContractModel):
+    """研究域信号：Prediction 经 SignalStrategy 解释后的意图（非订单）。"""
+
+    signal_id: str
     instrument_key: str
-    timestamp: datetime
+    trading_date: str
+    direction: Literal["LONG", "SHORT", "FLAT"]
     score: float
+    # 信号生成时刻 / PIT 截止 / 计划可执行时刻（均须 timezone-aware UTC）
+    signal_time: datetime
+    knowledge_time: datetime
+    execution_time: datetime
     rank: Optional[int] = None
     confidence: Optional[float] = None
-    model_version: Optional[str] = None
+    target_weight: Optional[float] = None
+    model_version: str = ""
+    strategy_version: str = ""
+    dataset_hash: str = ""
+    bundle_hash: Optional[str] = None
 
 
 class TargetPosition(_ContractModel):
+    """组合构建后的目标仓位；不含 Broker / 撮合。"""
+
     instrument_key: str
+    trading_date: str
+    portfolio_id: str
+    strategy_version: str
+    dataset_hash: str
+    # 与 Signal.signal_time 对齐，便于下游衔接
     timestamp: datetime
     target_weight: Optional[float] = None
     target_quantity: Optional[float] = None
+    signal_id: Optional[str] = None
 
 
 class OrderIntent(_ContractModel):
+    """订单意图契约（Phase 2E 仅保留；不接 Broker）。"""
+
     instrument_key: str
     side: Literal["BUY", "SELL"]
     quantity: float
     urgency: Literal["LOW", "NORMAL", "HIGH"] = "NORMAL"
     execution_algorithm: Literal["MARKET", "LIMIT", "TWAP", "VWAP", "POV", "CUSTOM"] = "MARKET"
     limit_price: Optional[float] = None
+    signal_id: Optional[str] = None
+    strategy_version: Optional[str] = None
+    trading_date: Optional[str] = None
+
+
+class SignalRunRecord(_ContractModel):
+    """一次 Prediction→Signal→TargetPosition 运行的 Registry 索引。"""
+
+    signal_run_id: str
+    strategy_version: str
+    prediction_fingerprint: str
+    artifact_id: str
+    storage_uri: str
+    cash_weight: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)

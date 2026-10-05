@@ -1,7 +1,7 @@
 # Phase 2D — Model Training (LightGBM)
 
 > **Status:** Phase 2D implemented.
-> Phase 2E Signal / 2F Experiment orchestration remain out of scope.
+> Phase 2E Signal implemented → [05_prediction_signal.md](05_prediction_signal.md); 2F Experiment orchestration remain out of scope.
 
 ## 1. Goal
 
@@ -80,10 +80,11 @@ Wheel 版 LightGBM 依赖 `@rpath/libomp.dylib`。若 `brew` 不可用，可把 
 
 ```text
 ❌ XGBoost / CatBoost / PyTorch / Transformer
-❌ Signal / TargetPosition / OrderIntent
 ❌ Full MLflow experiment platform (Phase 2F)
 ```
 
 ## 7. Next
 
-Phase 2E — Prediction / Signal (Prediction → Signal, not orders).
+Phase 2E — Prediction / Signal — **implemented** → [05_prediction_signal.md](05_prediction_signal.md).
+
+Next: Phase 2F — Experiment & Reproducibility.

@@ -130,6 +130,16 @@ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
 
 Phase 2D 说明：[docs/data/phase2/04_model_training.md](data/phase2/04_model_training.md)。
 
+验证 Phase 2E Prediction & Signal（合成 Prediction → Signal → TargetPosition，无需 LightGBM）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase2e_signal.py
+```
+
+Phase 2E 说明：[docs/data/phase2/05_prediction_signal.md](data/phase2/05_prediction_signal.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

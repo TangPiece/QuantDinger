@@ -140,23 +140,37 @@ class ExperimentDefinition(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 ```
 
-## Trading bridge (contract only)
+## Trading bridge (research domain; Phase 2E)
 
 ```python
 class Signal(BaseModel):
+    signal_id: str
     instrument_key: str
-    timestamp: datetime
+    trading_date: str
+    direction: Literal["LONG", "SHORT", "FLAT"]
     score: float
+    signal_time: datetime
+    knowledge_time: datetime
+    execution_time: datetime
     rank: Optional[int] = None
     confidence: Optional[float] = None
-    model_version: Optional[str] = None
+    target_weight: Optional[float] = None
+    model_version: str = ""
+    strategy_version: str = ""
+    dataset_hash: str = ""
+    bundle_hash: Optional[str] = None
 
 
 class TargetPosition(BaseModel):
     instrument_key: str
+    trading_date: str
+    portfolio_id: str
+    strategy_version: str
+    dataset_hash: str
     timestamp: datetime
     target_weight: Optional[float] = None
     target_quantity: Optional[float] = None
+    signal_id: Optional[str] = None
 
 
 class OrderIntent(BaseModel):
@@ -166,10 +180,12 @@ class OrderIntent(BaseModel):
     urgency: Literal["LOW", "NORMAL", "HIGH"] = "NORMAL"
     execution_algorithm: Literal["MARKET", "LIMIT", "TWAP", "VWAP", "POV", "CUSTOM"] = "MARKET"
     limit_price: Optional[float] = None
+    signal_id: Optional[str] = None
+    strategy_version: Optional[str] = None
+    trading_date: Optional[str] = None
 ```
 
-Research engines emit `Signal`. Portfolio / risk / live execution stay in QuantDinger trading (out of Phase 1).
-
+Research engines emit `Signal` / `TargetPosition`. `OrderIntent` is contract-only in Phase 2E (no Broker). Portfolio / risk / live execution stay in QuantDinger trading (Phase 3+).
 ## `dataset_hash` (locked)
 
 ```python

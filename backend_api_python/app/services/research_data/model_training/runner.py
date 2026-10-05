@@ -19,6 +19,7 @@ from app.services.research_data.contracts import (
 )
 from app.services.research_data.qlib_adapter import ADAPTER_VERSION, QlibAdapter, VersionResolver
 from app.services.research_data.registry import ResearchRegistry
+from app.services.research_data.signal.predictions import compute_prediction_id
 
 from .adapter import LightGBMModelAdapter, ModelTrainingError
 from .artifact_store import (
@@ -80,19 +81,30 @@ def _predictions_to_records(
     model_version: str,
     dataset_hash: str,
     bundle_hash: str,
+    snapshot_id: str = "",
 ) -> list[PredictionRecord]:
-    """Qlib MultiIndex → PredictionRecord 列表。"""
+    """Qlib MultiIndex → PredictionRecord 列表（含 prediction_id / snapshot_id）。"""
     out: list[PredictionRecord] = []
     for idx, val in series.items():
         inst, dt = _split_pred_index(idx)
+        instrument_key = from_qlib_instrument(str(inst))
+        trading_date = _trading_date_str(dt)
+        pred_id = compute_prediction_id(
+            model_version=model_version,
+            instrument_key=instrument_key,
+            trading_date=trading_date,
+            dataset_hash=dataset_hash,
+        )
         out.append(
             PredictionRecord(
-                instrument_key=from_qlib_instrument(str(inst)),
-                trading_date=_trading_date_str(dt),
+                instrument_key=instrument_key,
+                trading_date=trading_date,
                 prediction=float(val),
                 model_version=model_version,
                 dataset_hash=dataset_hash,
                 bundle_hash=bundle_hash,
+                prediction_id=pred_id,
+                snapshot_id=snapshot_id or "",
             )
         )
     return out
@@ -110,6 +122,8 @@ def _predictions_parquet_bytes(records: list[PredictionRecord]) -> bytes:
             "model_version": [r.model_version for r in records],
             "dataset_hash": [r.dataset_hash for r in records],
             "bundle_hash": [r.bundle_hash for r in records],
+            "prediction_id": [r.prediction_id for r in records],
+            "snapshot_id": [r.snapshot_id for r in records],
         }
     )
     buf = io.BytesIO()
@@ -234,6 +248,7 @@ class ModelTrainer:
             model_version=model_ref,
             dataset_hash=bundle.dataset_hash,
             bundle_hash=bundle.bundle_hash,
+            snapshot_id=bundle.snapshot_id,
         )
 
         # test 日期 ⊆ test 段
