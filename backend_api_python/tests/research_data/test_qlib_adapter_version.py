@@ -30,7 +30,9 @@ def test_bundle_hash_stable_and_processor_sensitive(golden_qlib_env):
         dataset_hash=a.dataset_hash,
         adapter_version=ADAPTER_VERSION,
         processor_version="none",
+        pipeline_digest="none",
     )
+    assert a.pipeline_digest == "none"
 
     handle = query.dataset(golden_qlib_env["dataset_ref"])
     post_def = DatasetDefinition(

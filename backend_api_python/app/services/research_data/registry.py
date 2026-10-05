@@ -19,7 +19,25 @@ from .contracts import (
     ProcessorDefinition,
     SnapshotRef,
 )
-from .hashing import compute_dataset_hash
+from .hashing import canonical_json, compute_dataset_hash
+
+
+class ProcessorImmutabilityError(ValueError):
+    """同一 code@version 禁止修改 pipeline；须 bump version。"""
+
+
+def _assert_processor_immutable(
+    existing_raw: dict[str, Any],
+    processor: ProcessorDefinition,
+) -> None:
+    """已存在的 processor 若 pipeline 内容变化则拒绝。"""
+    old_pipe = existing_raw.get("pipeline") if isinstance(existing_raw, dict) else None
+    new_pipe = processor.model_dump(mode="json").get("pipeline")
+    if canonical_json(old_pipe or []) != canonical_json(new_pipe or []):
+        raise ProcessorImmutabilityError(
+            f"processor {processor.code}@{processor.version} is immutable; "
+            "bump version to change pipeline"
+        )
 
 
 def _utc_now() -> str:
@@ -207,13 +225,16 @@ class LocalJsonRegistry:
         return FeatureDefinition.model_validate(raw)
 
     def upsert_processor(self, processor: ProcessorDefinition) -> None:
-        """登记 ProcessorDefinition（Local JSON `processors` 键）。"""
+        """登记 ProcessorDefinition；同 code@version 禁止改 pipeline。"""
         with self._lock:
             data = self._read()
             data.setdefault("processors", {})
-            data["processors"][f"{processor.code}@{processor.version}"] = processor.model_dump(
-                mode="json"
-            )
+            key = f"{processor.code}@{processor.version}"
+            existing = data["processors"].get(key)
+            if existing is not None:
+                _assert_processor_immutable(existing, processor)
+                return  # 幂等：内容相同则跳过
+            data["processors"][key] = processor.model_dump(mode="json")
             self._write(data)
 
     def get_processor(self, processor_ref: str) -> ProcessorDefinition:
@@ -466,13 +487,19 @@ class D1ResearchRegistry:
         )
 
     def upsert_processor(self, processor: ProcessorDefinition) -> None:
-        """登记 Processor 到 D1 `processor` 表。"""
+        """登记 Processor 到 D1；同 code@version 禁止改 pipeline。"""
+        rows = d1_client.query(
+            "SELECT definition_json FROM processor WHERE code=? AND version=?",
+            [processor.code, processor.version],
+        )
+        if rows:
+            existing = json.loads(rows[0]["definition_json"] or "{}")
+            _assert_processor_immutable(existing, processor)
+            return
         d1_client.query(
             """
             INSERT INTO processor (code, version, definition_json, created_at)
             VALUES (?, ?, ?, ?)
-            ON CONFLICT(code, version) DO UPDATE SET
-              definition_json=excluded.definition_json
             """,
             [
                 processor.code,

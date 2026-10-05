@@ -55,10 +55,9 @@ MLFLOW_DISABLE_AGENT_HINT=1 \
 
 ```text
 ❌ Alpha158 / LightGBM / Signal / Backtest
-❌ Full Processor pipeline polish (Phase 2C)
 ❌ Changing Phase 1 DatasetDefinition fields for segments
 ```
 
 ## 7. Next
 
-Phase 2C — Processor Pipeline (train/infer same definition end-to-end).
+Phase 2C — [Processor Pipeline](03_processor_pipeline.md) (fit-on-train, `qd_standard@1`).

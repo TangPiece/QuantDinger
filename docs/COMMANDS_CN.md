@@ -107,6 +107,16 @@ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
 
 Phase 2B 说明：[docs/data/phase2/02_dataset_handler.md](data/phase2/02_dataset_handler.md)。
 
+验证 Phase 2C Processor Pipeline（fit / hash / `qd_standard@1`）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_phase2c_processor.py
+```
+
+Phase 2C 说明：[docs/data/phase2/03_processor_pipeline.md](data/phase2/03_processor_pipeline.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

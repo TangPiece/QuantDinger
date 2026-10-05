@@ -12,6 +12,7 @@ from app.services.research_data.qlib_materializer.identity import MATERIALIZER_V
 from app.services.research_data.registry import ResearchRegistry
 
 from .errors import VersionResolveError
+from .processor_adapter import compute_pipeline_digest
 from .version import ADAPTER_VERSION
 
 
@@ -25,6 +26,7 @@ class ResearchBundleIdentity:
     adapter_version: str
     materializer_version: str
     processor_version: str
+    pipeline_digest: str
     snapshot_id: str
     schema_version: str
     price_policy: dict[str, Any]
@@ -37,9 +39,10 @@ def compute_bundle_hash(
     dataset_hash: str,
     adapter_version: str,
     processor_version: str,
+    pipeline_digest: str = "none",
 ) -> str:
-    """Experiment 复现键；不改 Domain dataset_hash。"""
-    payload = f"{dataset_hash}|{adapter_version}|{processor_version}"
+    """Experiment 复现键；含 pipeline 内容指纹，不改 Domain dataset_hash。"""
+    payload = f"{dataset_hash}|{adapter_version}|{processor_version}|{pipeline_digest}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -73,8 +76,12 @@ class VersionResolver:
                 raise VersionResolveError(
                     f"processor not found: {processor_ref!r}: {exc}"
                 ) from exc
-            # 规范化为 code@version
+                    # 规范化为 code@version
             processor_ref = f"{processor_def.code}@{processor_def.version}"
+
+        digest = compute_pipeline_digest(
+            processor_def.pipeline if processor_def is not None else None
+        )
 
         policy = definition.price_policy
         if isinstance(policy, PricePolicy):
@@ -86,6 +93,7 @@ class VersionResolver:
             dataset_hash=handle.dataset_hash,
             adapter_version=ADAPTER_VERSION,
             processor_version=processor_ref,
+            pipeline_digest=digest,
         )
         return ResearchBundleIdentity(
             dataset_ref=dataset_ref,
@@ -94,6 +102,7 @@ class VersionResolver:
             adapter_version=ADAPTER_VERSION,
             materializer_version=MATERIALIZER_VERSION,
             processor_version=processor_ref,
+            pipeline_digest=digest,
             snapshot_id=definition.snapshot_id,
             schema_version=definition.schema_version,
             price_policy=policy_dict,

@@ -146,6 +146,13 @@ class QlibAdapter:
         qlib_fields = self._features.to_qlib_fields(raw_feats)
         learn_p, infer_p = self._processors.build_handler_processors(bundle.processor)
 
+        # 需 fit 的 processor 禁止走无 train 段的 2A 字符串路径（避免 silent 全样本 fit）
+        if self._processors.definition_needs_fit(bundle.processor):
+            raise QlibAdapterError(
+                "processor requires train fit window; "
+                "use ResearchDatasetSpec (segments.train) instead of build_handler(str)"
+            )
+
         return DataHandlerLP(
             instruments=qlib_insts,
             start_time=start_d.isoformat(),

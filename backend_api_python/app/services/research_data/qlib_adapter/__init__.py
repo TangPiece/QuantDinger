@@ -19,6 +19,10 @@ from .processor_adapter import (
     ProcessorAdapter,
     builtin_cs_zscore_processor,
     builtin_identity_processor,
+    builtin_qd_standard_processor,
+    compute_pipeline_digest,
+    inject_fit_window,
+    qlib_class_needs_fit,
 )
 from .runtime import QlibRuntime, default_runtime
 from .specs import (
@@ -55,9 +59,13 @@ __all__ = [
     "VersionResolver",
     "builtin_cs_zscore_processor",
     "builtin_identity_processor",
+    "builtin_qd_standard_processor",
     "compute_bundle_hash",
     "compute_dataset_artifact_id",
+    "compute_pipeline_digest",
     "dataset_cache_root",
     "default_fwd_ret_label",
     "default_runtime",
+    "inject_fit_window",
+    "qlib_class_needs_fit",
 ]

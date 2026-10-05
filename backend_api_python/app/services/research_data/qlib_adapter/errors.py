@@ -16,7 +16,7 @@ class UnsupportedFeatureError(QlibAdapterError, ValueError):
 
 
 class UnsupportedProcessorError(QlibAdapterError, ValueError):
-    """Processor 步骤不在 Phase 2A 白名单内。"""
+    """Processor 步骤不在 Phase 2C 白名单内。"""
 
 
 class VersionResolveError(QlibAdapterError):

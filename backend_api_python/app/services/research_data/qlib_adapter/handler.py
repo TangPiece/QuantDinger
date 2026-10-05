@@ -16,7 +16,7 @@ from app.services.research_data.registry import ResearchRegistry
 from .errors import QlibAdapterError
 from .feature_adapter import FeatureAdapter
 from .label_adapter import CompiledLabel, LabelAdapter
-from .processor_adapter import ProcessorAdapter
+from .processor_adapter import ProcessorAdapter, inject_fit_window
 from .runtime import QlibRuntime
 from .specs import ResearchDatasetSpec
 from .version_resolver import ResearchBundleIdentity, VersionResolver
@@ -43,24 +43,6 @@ class QuantDingerQLibHandler:
     def fetch(self, *args: Any, **kwargs: Any) -> Any:
         """转发 DataHandlerLP.fetch。"""
         return self.inner.fetch(*args, **kwargs)
-
-
-def _inject_fit_window(
-    processors: list[dict[str, Any]],
-    fit_start: str,
-    fit_end: str,
-) -> list[dict[str, Any]]:
-    """为需要 fit 的 processor 注入 fit_start_time / fit_end_time。"""
-    out: list[dict[str, Any]] = []
-    for step in processors:
-        copied = dict(step)
-        kwargs = dict(copied.get("kwargs") or {})
-        # CSZScoreNorm 等需要 fit 窗口
-        kwargs.setdefault("fit_start_time", fit_start)
-        kwargs.setdefault("fit_end_time", fit_end)
-        copied["kwargs"] = kwargs
-        out.append(copied)
-    return out
 
 
 class HandlerBuilder:
@@ -153,9 +135,9 @@ class HandlerBuilder:
 
             fit_start = spec.resolved_fit_start().isoformat()
             fit_end = spec.resolved_fit_end().isoformat()
-            # Qlib 0.9：fit_* 进 processor kwargs，而非 DataHandlerLP 构造参数
-            learn_p = _inject_fit_window(learn_p, fit_start, fit_end)
-            infer_p = _inject_fit_window(infer_p, fit_start, fit_end)
+            # 仅 RobustZScore / MinMax 等需 fit；CSZScore / Fillna 不注入
+            learn_p = inject_fit_window(learn_p, fit_start, fit_end)
+            infer_p = inject_fit_window(infer_p, fit_start, fit_end)
 
             inner = DataHandlerLP(
                 instruments=qlib_insts,

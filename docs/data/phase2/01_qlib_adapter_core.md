@@ -80,11 +80,10 @@ MLFLOW_DISABLE_AGENT_HINT=1 \
 ```text
 ❌ Alpha158 / LightGBM / Model training
 ❌ Signal / TargetPosition / Backtest
-❌ Full train/valid/test segments (Phase 2B)
-❌ Full Dropna→Winsorize→CSZScore pipeline polish (Phase 2C)
+❌ Full train/valid/test segments (Phase 2B — done)
 ❌ Rank / return Feature DSL
 ```
 
 ## 9. Next
 
-Phase 2B — [Dataset / DataHandler](02_dataset_handler.md) (`QuantDingerQLibHandler`, train/valid/test).
+Phase 2B — [Dataset / DataHandler](02_dataset_handler.md) → Phase 2C — [Processor Pipeline](03_processor_pipeline.md).
