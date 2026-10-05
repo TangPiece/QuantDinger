@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/924076380671048533/3e344eed5bff45b6b64101fec25688f5/artifacts
+end_time: 1791222511480
+entry_point_name: ''
+experiment_id: '924076380671048533'
+lifecycle_stage: active
+run_id: 3e344eed5bff45b6b64101fec25688f5
+run_name: masked-frog-582
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222511471
+status: 3
+tags: []
+user_id: unknown

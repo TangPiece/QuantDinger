@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/850909500982444246/93636fab3cc3412a884d05f926e82f06/artifacts
+end_time: 1791222484598
+entry_point_name: ''
+experiment_id: '850909500982444246'
+lifecycle_stage: active
+run_id: 93636fab3cc3412a884d05f926e82f06
+run_name: gaudy-elk-838
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222484591
+status: 3
+tags: []
+user_id: unknown

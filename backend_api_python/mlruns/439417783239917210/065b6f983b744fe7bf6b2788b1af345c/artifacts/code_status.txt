@@ -1,0 +1,48 @@
+On branch feature/20261005-qlib
+Your branch is ahead of 'origin/feature/20261005-qlib' by 10 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   app/services/research_data/contracts.py
+	modified:   app/services/research_data/model_training/adapter.py
+	modified:   app/services/research_data/model_training/runner.py
+	modified:   app/services/research_data/registry.py
+	modified:   ../docs/COMMANDS_CN.md
+	modified:   ../docs/data/phase2/04_model_training.md
+	modified:   ../docs/data/phase2/05_prediction_signal.md
+	modified:   ../docs/data/phase2/README.md
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	app/services/research_data/experiment/
+	mlruns/439417783239917210/065b6f983b744fe7bf6b2788b1af345c/
+	mlruns/439417783239917210/08c505d368944a75aae92c1ebcadd881/
+	mlruns/439417783239917210/0ab24c0d65c5426d843d91cb1f8dc1bd/
+	mlruns/439417783239917210/135b4783bcbe49f5a850ef81865fd75e/
+	mlruns/439417783239917210/30d67277ea07438785c506a3f0e68a74/
+	mlruns/439417783239917210/460aa69b8ab64fbebbfdee1c61513c36/
+	mlruns/439417783239917210/53fe6f60c362406884484140fa2e9e61/
+	mlruns/439417783239917210/5ed2a3a02d2241808cce31f457ab499c/
+	mlruns/439417783239917210/6324cf9a5b904d5086fb75153e11c610/
+	mlruns/439417783239917210/6b10fc0f4a84459bb63f9e6a73d29bc3/
+	mlruns/439417783239917210/6b29a058946b4a2e8cd611603acd5bc5/
+	mlruns/439417783239917210/6f521a7500d943e795468a4a5698ba89/
+	mlruns/439417783239917210/819f4860443d4acb874d1ad0fa968edb/
+	mlruns/439417783239917210/845c412ca0254d89a52d35ff11226033/
+	mlruns/439417783239917210/8d281075e6e64cfe9a50eb4a526bd223/
+	mlruns/439417783239917210/985d2bf1b49b4e86bb99ed747b8f5bcb/
+	mlruns/439417783239917210/9a72422c6f444d948b6ec13134a7b1d2/
+	mlruns/439417783239917210/a911e21912d64e83924626d320f1cafe/
+	mlruns/439417783239917210/c288e6dad2d24985b641b7f1c85e3d78/
+	mlruns/439417783239917210/d7a3ec3f430c4988a909f99079adabca/
+	mlruns/439417783239917210/de83795ac16a4ee9878d926f961cb7ea/
+	mlruns/439417783239917210/ff843c4210b547f1a5b7f7edce7ae008/
+	mlruns/850909500982444246/
+	mlruns/924076380671048533/
+	scripts/verify_phase2f_experiment.py
+	tests/research_data/test_phase2f_experiment.py
+	../docs/data/phase2/06_experiment_reproducibility.md
+
+no changes added to commit (use "git add" and/or "git commit -a")

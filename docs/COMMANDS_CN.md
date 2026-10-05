@@ -140,6 +140,16 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 Phase 2E 说明：[docs/data/phase2/05_prediction_signal.md](data/phase2/05_prediction_signal.md)。
 
+验证 Phase 2F Experiment & Reproducibility（双跑复现 / manifest / MLflow）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_phase2f_experiment.py
+```
+
+Phase 2F 说明：[docs/data/phase2/06_experiment_reproducibility.md](data/phase2/06_experiment_reproducibility.md)。Phase 2 到此结束；下一阶段为 Phase 3A Backtest Contract。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

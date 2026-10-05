@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Optional
@@ -11,7 +10,6 @@ from typing import Any, Optional
 import pandas as pd
 
 from app.services.research_data.contracts import (
-    ExperimentDefinition,
     ModelArtifact,
     ModelDefinition,
     ModelVersionRecord,
@@ -29,6 +27,16 @@ from .artifact_store import (
 )
 from .specs import ModelTrainSpec
 from .version import MODEL_TRAINER_VERSION
+
+
+def _end_qlib_recorder() -> None:
+    """结束 Qlib Recorder，避免后续 qlib.init 因 Recorder 仍激活而失败。"""
+    try:
+        from qlib.workflow import R
+
+        R.end_exp()
+    except Exception:
+        pass
 
 
 def from_qlib_instrument(qlib_id: str) -> str:
@@ -131,39 +139,9 @@ def _predictions_parquet_bytes(records: list[PredictionRecord]) -> bytes:
     return buf.getvalue()
 
 
-def _maybe_mlflow_log(
-    *,
-    experiment_name: str,
-    params: dict[str, Any],
-    metrics: dict[str, Any],
-) -> Optional[str]:
-    """可选 MLflow；不可用则跳过（完整编排留给 Phase 2F）。"""
-    import os
-
-    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
-    os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
-    try:
-        import mlflow
-    except ImportError:
-        return None
-    try:
-        tracking = os.environ.get("MLFLOW_TRACKING_URI") or "file:./mlruns"
-        mlflow.set_tracking_uri(tracking)
-        mlflow.set_experiment(experiment_name)
-        with mlflow.start_run() as run:
-            for k, v in params.items():
-                mlflow.log_param(k, str(v)[:250])
-            for k, v in metrics.items():
-                if isinstance(v, (int, float)) and v == v:  # 非 NaN
-                    mlflow.log_metric(k, float(v))
-            return run.info.run_id
-    except Exception:
-        return None
-
-
 @dataclass
 class ModelTrainResult:
-    """训练产物摘要。"""
+    """训练产物摘要（Experiment 登记由 Phase 2F ExperimentRunner 负责）。"""
 
     artifact_id: str
     model_version_ref: str
@@ -174,6 +152,7 @@ class ModelTrainResult:
     metrics: dict[str, Any] = field(default_factory=dict)
     predictions: list[PredictionRecord] = field(default_factory=list)
     artifact_uri: str = ""
+    # 兼容旧字段；正式 experiment_id / mlflow 由 ExperimentRunner 写入
     experiment_id: str = ""
     mlflow_run_id: Optional[str] = None
 
@@ -312,32 +291,7 @@ class ModelTrainer:
             )
         )
 
-        experiment_id = f"exp_{artifact_id[:16]}"
-        exp_params = dict(metadata)
-        mlflow_run_id = _maybe_mlflow_log(
-            experiment_name=spec.experiment_name,
-            params={
-                "dataset_hash": bundle.dataset_hash,
-                "bundle_hash": bundle.bundle_hash,
-                "model_version": model_ref,
-                "artifact_id": artifact_id,
-            },
-            metrics=metrics,
-        )
-        self._registry.upsert_experiment(
-            ExperimentDefinition(
-                experiment_id=experiment_id,
-                name=spec.experiment_name,
-                dataset_ref=spec.dataset_spec.dataset_ref,
-                snapshot_id=bundle.snapshot_id,
-                dataset_hash=bundle.dataset_hash,
-                model_version_ref=model_ref,
-                mlflow_run_id=mlflow_run_id,
-                parameters=exp_params,
-            )
-        )
-
-        # 兼容已有 ModelArtifact 形状
+        # 兼容已有 ModelArtifact 形状（Experiment 登记见 ExperimentRunner）
         _ = ModelArtifact(
             model_code=model_def.code,
             version=model_def.version,
@@ -347,6 +301,9 @@ class ModelTrainer:
             artifact_uri=artifact_rec.storage_uri,
             metrics=metrics,
         )
+
+        # LGB fit 会激活 Qlib Recorder；结束以免下一次 qlib.init 报错
+        _end_qlib_recorder()
 
         return ModelTrainResult(
             artifact_id=artifact_id,
@@ -358,6 +315,4 @@ class ModelTrainer:
             metrics=metrics,
             predictions=predictions,
             artifact_uri=artifact_rec.storage_uri,
-            experiment_id=experiment_id,
-            mlflow_run_id=mlflow_run_id,
         )

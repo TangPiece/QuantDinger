@@ -183,6 +183,8 @@ class ModelArtifact(_ContractModel):
 
 
 class ExperimentDefinition(_ContractModel):
+    """研究实验顶层对象（Domain 元数据 + 引用；大数据在 artifact/manifest）。"""
+
     experiment_id: str
     name: str
     dataset_ref: str
@@ -191,6 +193,47 @@ class ExperimentDefinition(_ContractModel):
     model_version_ref: Optional[str] = None
     mlflow_run_id: Optional[str] = None
     parameters: dict[str, Any] = Field(default_factory=dict)
+    feature_refs: list[str] = Field(default_factory=list)
+    processor_ref: Optional[str] = None
+    strategy_version: Optional[str] = None
+    model_artifact_id: Optional[str] = None
+    signal_artifact_id: Optional[str] = None
+    signal_run_id: Optional[str] = None
+    bundle_hash: Optional[str] = None
+    prediction_fingerprint: Optional[str] = None
+    repro_fingerprint: Optional[str] = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    manifest_uri: str = ""
+    status: Literal["COMPLETED", "FAILED"] = "COMPLETED"
+    segments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExperimentManifest(_ContractModel):
+    """实验快照（落盘 JSON）；非 SSOT，定义仍以 Registry 为准。"""
+
+    experiment_id: str
+    name: str
+    experiment_pipeline_version: str
+    repro_fingerprint: str
+    dataset_ref: str
+    dataset_hash: str
+    bundle_hash: str
+    snapshot_id: str
+    feature_refs: list[str] = Field(default_factory=list)
+    processor_ref: Optional[str] = None
+    model: dict[str, Any] = Field(default_factory=dict)
+    strategy: dict[str, Any] = Field(default_factory=dict)
+    portfolio: dict[str, Any] = Field(default_factory=dict)
+    segments: dict[str, Any] = Field(default_factory=dict)
+    model_artifact_id: str = ""
+    model_artifact_uri: str = ""
+    signal_artifact_id: str = ""
+    signal_artifact_uri: str = ""
+    signal_run_id: str = ""
+    prediction_fingerprint: str = ""
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    mlflow_run_id: Optional[str] = None
+    seed: int = 42
 
 
 class Signal(_ContractModel):

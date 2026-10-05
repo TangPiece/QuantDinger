@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/439417783239917210/985d2bf1b49b4e86bb99ed747b8f5bcb/artifacts
+end_time: 1791222516988
+entry_point_name: ''
+experiment_id: '439417783239917210'
+lifecycle_stage: active
+run_id: 985d2bf1b49b4e86bb99ed747b8f5bcb
+run_name: mlflow_recorder
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222516922
+status: 3
+tags: []
+user_id: 900game

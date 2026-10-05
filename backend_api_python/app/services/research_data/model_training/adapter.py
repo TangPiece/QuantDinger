@@ -89,16 +89,24 @@ class LightGBMModelAdapter:
         return model.predict(dataset, segment=segment)
 
     def evaluate_valid(self, model: Any, dataset: Any) -> dict[str, float]:
-        """Valid 段 MSE / rank IC（不参与 refit）。"""
+        """Valid 段 MSE/MAE/RMSE / RankIC（Spearman）；不参与 refit。"""
         from qlib.data.dataset.handler import DataHandlerLP
 
+        empty = {
+            "valid_mse": float("nan"),
+            "valid_mae": float("nan"),
+            "valid_rmse": float("nan"),
+            "valid_ic": float("nan"),
+            "valid_rank_ic": float("nan"),
+            "valid_rows": 0.0,
+        }
         df = dataset.prepare(
             "valid",
             col_set=["feature", "label"],
             data_key=DataHandlerLP.DK_I,
         )
         if df is None or len(df) == 0:
-            return {"valid_mse": float("nan"), "valid_ic": float("nan"), "valid_rows": 0.0}
+            return empty
         x = df["feature"]
         y = df["label"]
         if hasattr(y, "values") and y.values.ndim == 2:
@@ -106,13 +114,20 @@ class LightGBMModelAdapter:
         else:
             y_arr = np.asarray(y).ravel()
         pred = model.model.predict(x.values)
-        mse = float(np.mean((pred - y_arr) ** 2))
-        ic = float(pd.Series(pred).corr(pd.Series(y_arr), method="spearman"))
-        if np.isnan(ic):
-            ic = 0.0
+        err = pred - y_arr
+        mse = float(np.mean(err ** 2))
+        mae = float(np.mean(np.abs(err)))
+        rmse = float(np.sqrt(mse))
+        # Spearman = RankIC；同时写 valid_ic 兼容 Phase 2D 断言
+        rank_ic = float(pd.Series(pred).corr(pd.Series(y_arr), method="spearman"))
+        if np.isnan(rank_ic):
+            rank_ic = 0.0
         return {
             "valid_mse": mse,
-            "valid_ic": ic,
+            "valid_mae": mae,
+            "valid_rmse": rmse,
+            "valid_ic": rank_ic,
+            "valid_rank_ic": rank_ic,
             "valid_rows": float(len(pred)),
         }
 

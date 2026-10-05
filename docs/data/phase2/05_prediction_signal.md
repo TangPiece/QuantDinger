@@ -1,7 +1,7 @@
 # Phase 2E — Prediction & Signal
 
 > **Status:** Phase 2E implemented.
-> Phase 2F Experiment & Reproducibility remains out of scope.
+> Phase 2F Experiment & Reproducibility — **implemented** → [06_experiment_reproducibility.md](06_experiment_reproducibility.md).
 
 ## 1. Goal
 
@@ -72,9 +72,10 @@ Exit codes: **0** PASS / **1** FAIL（合成 Prediction，无需 LightGBM）。
 ❌ 真实 T+1 交易日历与回测
 ❌ 复杂组合优化
 ❌ LongShort / Quantile 策略实现（仅留 Protocol）
-❌ Phase 2F Experiment 全量登记
 ```
 
 ## 6. Next
 
-Phase 2F — Experiment & Reproducibility（Dataset / Feature / Processor / Model / Prediction / Signal / MLflow 正式编排）。
+Phase 2F — Experiment & Reproducibility — **implemented** → [06_experiment_reproducibility.md](06_experiment_reproducibility.md).
+
+Next: Phase 3A — Backtest Contract.

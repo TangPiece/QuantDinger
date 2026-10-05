@@ -1,7 +1,7 @@
 # Phase 2 — Qlib Adapter & Research Engine
 
-> **Status:** Phase 2E implemented (Prediction & Signal).
-> 2F Experiment & Reproducibility remains next.
+> **Status:** Phase 2F implemented — **Phase 2 complete.**
+> Next: Phase 3A Backtest Contract.
 
 ## Reading order
 
@@ -10,6 +10,7 @@
 3. [03_processor_pipeline.md](03_processor_pipeline.md) — Processor whitelist / fit-on-train / pipeline digest
 4. [04_model_training.md](04_model_training.md) — LightGBM train / artifact / prediction traceability
 5. [05_prediction_signal.md](05_prediction_signal.md) — Prediction → Signal → TargetPosition（不下单）
+6. [06_experiment_reproducibility.md](06_experiment_reproducibility.md) — Experiment / manifest / MLflow / A==B
 
 ## Prerequisite
 

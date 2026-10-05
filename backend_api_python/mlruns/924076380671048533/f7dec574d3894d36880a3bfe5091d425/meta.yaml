@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/924076380671048533/f7dec574d3894d36880a3bfe5091d425/artifacts
+end_time: 1791222517001
+entry_point_name: ''
+experiment_id: '924076380671048533'
+lifecycle_stage: active
+run_id: f7dec574d3894d36880a3bfe5091d425
+run_name: mercurial-ant-900
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222516992
+status: 3
+tags: []
+user_id: unknown

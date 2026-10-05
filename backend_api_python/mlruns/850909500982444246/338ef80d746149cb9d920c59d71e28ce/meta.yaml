@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/850909500982444246/338ef80d746149cb9d920c59d71e28ce/artifacts
+end_time: 1791222408781
+entry_point_name: ''
+experiment_id: '850909500982444246'
+lifecycle_stage: active
+run_id: 338ef80d746149cb9d920c59d71e28ce
+run_name: gentle-bass-82
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222408771
+status: 3
+tags: []
+user_id: 900game

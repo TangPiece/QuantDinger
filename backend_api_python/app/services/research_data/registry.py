@@ -793,25 +793,47 @@ class D1ResearchRegistry:
         )
 
     def upsert_experiment(self, experiment: ExperimentDefinition) -> None:
+        """写入 D1 experiment；扩展字段塞进 parameters_json 以便回填。"""
+        params = dict(experiment.parameters or {})
+        params.update(
+            {
+                "dataset_ref": experiment.dataset_ref,
+                "model_version_ref": experiment.model_version_ref,
+                "processor_ref": experiment.processor_ref,
+                "strategy_version": experiment.strategy_version,
+                "manifest_uri": experiment.manifest_uri,
+                "repro_fingerprint": experiment.repro_fingerprint,
+                "bundle_hash": experiment.bundle_hash,
+                "prediction_fingerprint": experiment.prediction_fingerprint,
+                "model_artifact_id": experiment.model_artifact_id,
+                "signal_artifact_id": experiment.signal_artifact_id,
+                "signal_run_id": experiment.signal_run_id,
+                "feature_refs": experiment.feature_refs,
+                "segments": experiment.segments,
+                "status": experiment.status,
+            }
+        )
         d1_client.query(
             """
             INSERT INTO experiment (
               experiment_id, name, snapshot_id, dataset_hash, status,
               mlflow_run_id, parameters_json, metrics_json, created_at
-            ) VALUES (?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(experiment_id) DO UPDATE SET
               metrics_json=excluded.metrics_json,
               mlflow_run_id=excluded.mlflow_run_id,
-              parameters_json=excluded.parameters_json
+              parameters_json=excluded.parameters_json,
+              status=excluded.status
             """,
             [
                 experiment.experiment_id,
                 experiment.name,
                 experiment.snapshot_id,
                 experiment.dataset_hash,
+                experiment.status or "COMPLETED",
                 experiment.mlflow_run_id,
-                json.dumps(experiment.parameters or {}, ensure_ascii=False),
-                json.dumps({}, ensure_ascii=False),
+                json.dumps(params, ensure_ascii=False),
+                json.dumps(experiment.metrics or {}, ensure_ascii=False),
                 _utc_now(),
             ],
         )
@@ -823,15 +845,30 @@ class D1ResearchRegistry:
         if not rows:
             raise KeyError(f"experiment not found: {experiment_id!r}")
         row = rows[0]
+        params = json.loads(row.get("parameters_json") or "{}")
+        metrics = json.loads(row.get("metrics_json") or "{}")
         return ExperimentDefinition(
             experiment_id=row["experiment_id"],
             name=row["name"],
-            dataset_ref=str(row.get("dataset_ref") or ""),
+            dataset_ref=str(params.get("dataset_ref") or row.get("dataset_ref") or ""),
             snapshot_id=row.get("snapshot_id") or "",
             dataset_hash=row.get("dataset_hash") or "",
-            model_version_ref=None,
+            model_version_ref=params.get("model_version_ref"),
             mlflow_run_id=row.get("mlflow_run_id"),
-            parameters=json.loads(row.get("parameters_json") or "{}"),
+            parameters=params,
+            feature_refs=list(params.get("feature_refs") or []),
+            processor_ref=params.get("processor_ref"),
+            strategy_version=params.get("strategy_version"),
+            model_artifact_id=params.get("model_artifact_id"),
+            signal_artifact_id=params.get("signal_artifact_id"),
+            signal_run_id=params.get("signal_run_id"),
+            bundle_hash=params.get("bundle_hash"),
+            prediction_fingerprint=params.get("prediction_fingerprint"),
+            repro_fingerprint=params.get("repro_fingerprint"),
+            metrics=metrics if isinstance(metrics, dict) else {},
+            manifest_uri=str(params.get("manifest_uri") or ""),
+            status=row.get("status") or params.get("status") or "COMPLETED",
+            segments=dict(params.get("segments") or {}),
         )
 
     def upsert_signal_run(self, record: SignalRunRecord) -> None:

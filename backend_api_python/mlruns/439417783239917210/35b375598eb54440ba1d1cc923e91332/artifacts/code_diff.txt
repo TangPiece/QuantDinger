@@ -1,0 +1,429 @@
+diff --git a/backend_api_python/app/services/research_data/contracts.py b/backend_api_python/app/services/research_data/contracts.py
+index 0fda48c..ecf32d7 100644
+--- a/backend_api_python/app/services/research_data/contracts.py
++++ b/backend_api_python/app/services/research_data/contracts.py
+@@ -183,6 +183,8 @@ class ModelArtifact(_ContractModel):
+ 
+ 
+ class ExperimentDefinition(_ContractModel):
++    """研究实验顶层对象（Domain 元数据 + 引用；大数据在 artifact/manifest）。"""
++
+     experiment_id: str
+     name: str
+     dataset_ref: str
+@@ -191,6 +193,47 @@ class ExperimentDefinition(_ContractModel):
+     model_version_ref: Optional[str] = None
+     mlflow_run_id: Optional[str] = None
+     parameters: dict[str, Any] = Field(default_factory=dict)
++    feature_refs: list[str] = Field(default_factory=list)
++    processor_ref: Optional[str] = None
++    strategy_version: Optional[str] = None
++    model_artifact_id: Optional[str] = None
++    signal_artifact_id: Optional[str] = None
++    signal_run_id: Optional[str] = None
++    bundle_hash: Optional[str] = None
++    prediction_fingerprint: Optional[str] = None
++    repro_fingerprint: Optional[str] = None
++    metrics: dict[str, Any] = Field(default_factory=dict)
++    manifest_uri: str = ""
++    status: Literal["COMPLETED", "FAILED"] = "COMPLETED"
++    segments: dict[str, Any] = Field(default_factory=dict)
++
++
++class ExperimentManifest(_ContractModel):
++    """实验快照（落盘 JSON）；非 SSOT，定义仍以 Registry 为准。"""
++
++    experiment_id: str
++    name: str
++    experiment_pipeline_version: str
++    repro_fingerprint: str
++    dataset_ref: str
++    dataset_hash: str
++    bundle_hash: str
++    snapshot_id: str
++    feature_refs: list[str] = Field(default_factory=list)
++    processor_ref: Optional[str] = None
++    model: dict[str, Any] = Field(default_factory=dict)
++    strategy: dict[str, Any] = Field(default_factory=dict)
++    portfolio: dict[str, Any] = Field(default_factory=dict)
++    segments: dict[str, Any] = Field(default_factory=dict)
++    model_artifact_id: str = ""
++    model_artifact_uri: str = ""
++    signal_artifact_id: str = ""
++    signal_artifact_uri: str = ""
++    signal_run_id: str = ""
++    prediction_fingerprint: str = ""
++    metrics: dict[str, Any] = Field(default_factory=dict)
++    mlflow_run_id: Optional[str] = None
++    seed: int = 42
+ 
+ 
+ class Signal(_ContractModel):
+diff --git a/backend_api_python/app/services/research_data/model_training/adapter.py b/backend_api_python/app/services/research_data/model_training/adapter.py
+index 40eecf2..92ce57d 100644
+--- a/backend_api_python/app/services/research_data/model_training/adapter.py
++++ b/backend_api_python/app/services/research_data/model_training/adapter.py
+@@ -89,16 +89,24 @@ class LightGBMModelAdapter:
+         return model.predict(dataset, segment=segment)
+ 
+     def evaluate_valid(self, model: Any, dataset: Any) -> dict[str, float]:
+-        """Valid 段 MSE / rank IC（不参与 refit）。"""
++        """Valid 段 MSE/MAE/RMSE / RankIC（Spearman）；不参与 refit。"""
+         from qlib.data.dataset.handler import DataHandlerLP
+ 
++        empty = {
++            "valid_mse": float("nan"),
++            "valid_mae": float("nan"),
++            "valid_rmse": float("nan"),
++            "valid_ic": float("nan"),
++            "valid_rank_ic": float("nan"),
++            "valid_rows": 0.0,
++        }
+         df = dataset.prepare(
+             "valid",
+             col_set=["feature", "label"],
+             data_key=DataHandlerLP.DK_I,
+         )
+         if df is None or len(df) == 0:
+-            return {"valid_mse": float("nan"), "valid_ic": float("nan"), "valid_rows": 0.0}
++            return empty
+         x = df["feature"]
+         y = df["label"]
+         if hasattr(y, "values") and y.values.ndim == 2:
+@@ -106,13 +114,20 @@ class LightGBMModelAdapter:
+         else:
+             y_arr = np.asarray(y).ravel()
+         pred = model.model.predict(x.values)
+-        mse = float(np.mean((pred - y_arr) ** 2))
+-        ic = float(pd.Series(pred).corr(pd.Series(y_arr), method="spearman"))
+-        if np.isnan(ic):
+-            ic = 0.0
++        err = pred - y_arr
++        mse = float(np.mean(err ** 2))
++        mae = float(np.mean(np.abs(err)))
++        rmse = float(np.sqrt(mse))
++        # Spearman = RankIC；同时写 valid_ic 兼容 Phase 2D 断言
++        rank_ic = float(pd.Series(pred).corr(pd.Series(y_arr), method="spearman"))
++        if np.isnan(rank_ic):
++            rank_ic = 0.0
+         return {
+             "valid_mse": mse,
+-            "valid_ic": ic,
++            "valid_mae": mae,
++            "valid_rmse": rmse,
++            "valid_ic": rank_ic,
++            "valid_rank_ic": rank_ic,
+             "valid_rows": float(len(pred)),
+         }
+ 
+diff --git a/backend_api_python/app/services/research_data/model_training/runner.py b/backend_api_python/app/services/research_data/model_training/runner.py
+index 36d0178..5a576d2 100644
+--- a/backend_api_python/app/services/research_data/model_training/runner.py
++++ b/backend_api_python/app/services/research_data/model_training/runner.py
+@@ -3,7 +3,6 @@
+ from __future__ import annotations
+ 
+ import io
+-import uuid
+ from dataclasses import dataclass, field
+ from datetime import date
+ from typing import Any, Optional
+@@ -11,7 +10,6 @@ from typing import Any, Optional
+ import pandas as pd
+ 
+ from app.services.research_data.contracts import (
+-    ExperimentDefinition,
+     ModelArtifact,
+     ModelDefinition,
+     ModelVersionRecord,
+@@ -31,6 +29,16 @@ from .specs import ModelTrainSpec
+ from .version import MODEL_TRAINER_VERSION
+ 
+ 
++def _end_qlib_recorder() -> None:
++    """结束 Qlib Recorder，避免后续 qlib.init 因 Recorder 仍激活而失败。"""
++    try:
++        from qlib.workflow import R
++
++        R.end_exp()
++    except Exception:
++        pass
++
++
+ def from_qlib_instrument(qlib_id: str) -> str:
+     """sz000001 / sh600000 → CNStock:000001（研究层 instrument_key）。"""
+     text = str(qlib_id or "").strip().lower()
+@@ -131,39 +139,9 @@ def _predictions_parquet_bytes(records: list[PredictionRecord]) -> bytes:
+     return buf.getvalue()
+ 
+ 
+-def _maybe_mlflow_log(
+-    *,
+-    experiment_name: str,
+-    params: dict[str, Any],
+-    metrics: dict[str, Any],
+-) -> Optional[str]:
+-    """可选 MLflow；不可用则跳过（完整编排留给 Phase 2F）。"""
+-    import os
+-
+-    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+-    os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
+-    try:
+-        import mlflow
+-    except ImportError:
+-        return None
+-    try:
+-        tracking = os.environ.get("MLFLOW_TRACKING_URI") or "file:./mlruns"
+-        mlflow.set_tracking_uri(tracking)
+-        mlflow.set_experiment(experiment_name)
+-        with mlflow.start_run() as run:
+-            for k, v in params.items():
+-                mlflow.log_param(k, str(v)[:250])
+-            for k, v in metrics.items():
+-                if isinstance(v, (int, float)) and v == v:  # 非 NaN
+-                    mlflow.log_metric(k, float(v))
+-            return run.info.run_id
+-    except Exception:
+-        return None
+-
+-
+ @dataclass
+ class ModelTrainResult:
+-    """训练产物摘要。"""
++    """训练产物摘要（Experiment 登记由 Phase 2F ExperimentRunner 负责）。"""
+ 
+     artifact_id: str
+     model_version_ref: str
+@@ -174,6 +152,7 @@ class ModelTrainResult:
+     metrics: dict[str, Any] = field(default_factory=dict)
+     predictions: list[PredictionRecord] = field(default_factory=list)
+     artifact_uri: str = ""
++    # 兼容旧字段；正式 experiment_id / mlflow 由 ExperimentRunner 写入
+     experiment_id: str = ""
+     mlflow_run_id: Optional[str] = None
+ 
+@@ -312,32 +291,7 @@ class ModelTrainer:
+             )
+         )
+ 
+-        experiment_id = f"exp_{artifact_id[:16]}"
+-        exp_params = dict(metadata)
+-        mlflow_run_id = _maybe_mlflow_log(
+-            experiment_name=spec.experiment_name,
+-            params={
+-                "dataset_hash": bundle.dataset_hash,
+-                "bundle_hash": bundle.bundle_hash,
+-                "model_version": model_ref,
+-                "artifact_id": artifact_id,
+-            },
+-            metrics=metrics,
+-        )
+-        self._registry.upsert_experiment(
+-            ExperimentDefinition(
+-                experiment_id=experiment_id,
+-                name=spec.experiment_name,
+-                dataset_ref=spec.dataset_spec.dataset_ref,
+-                snapshot_id=bundle.snapshot_id,
+-                dataset_hash=bundle.dataset_hash,
+-                model_version_ref=model_ref,
+-                mlflow_run_id=mlflow_run_id,
+-                parameters=exp_params,
+-            )
+-        )
+-
+-        # 兼容已有 ModelArtifact 形状
++        # 兼容已有 ModelArtifact 形状（Experiment 登记见 ExperimentRunner）
+         _ = ModelArtifact(
+             model_code=model_def.code,
+             version=model_def.version,
+@@ -348,6 +302,9 @@ class ModelTrainer:
+             metrics=metrics,
+         )
+ 
++        # LGB fit 会激活 Qlib Recorder；结束以免下一次 qlib.init 报错
++        _end_qlib_recorder()
++
+         return ModelTrainResult(
+             artifact_id=artifact_id,
+             model_version_ref=model_ref,
+@@ -358,6 +315,4 @@ class ModelTrainer:
+             metrics=metrics,
+             predictions=predictions,
+             artifact_uri=artifact_rec.storage_uri,
+-            experiment_id=experiment_id,
+-            mlflow_run_id=mlflow_run_id,
+         )
+diff --git a/backend_api_python/app/services/research_data/registry.py b/backend_api_python/app/services/research_data/registry.py
+index fc6a965..8daaa5e 100644
+--- a/backend_api_python/app/services/research_data/registry.py
++++ b/backend_api_python/app/services/research_data/registry.py
+@@ -793,25 +793,47 @@ class D1ResearchRegistry:
+         )
+ 
+     def upsert_experiment(self, experiment: ExperimentDefinition) -> None:
++        """写入 D1 experiment；扩展字段塞进 parameters_json 以便回填。"""
++        params = dict(experiment.parameters or {})
++        params.update(
++            {
++                "dataset_ref": experiment.dataset_ref,
++                "model_version_ref": experiment.model_version_ref,
++                "processor_ref": experiment.processor_ref,
++                "strategy_version": experiment.strategy_version,
++                "manifest_uri": experiment.manifest_uri,
++                "repro_fingerprint": experiment.repro_fingerprint,
++                "bundle_hash": experiment.bundle_hash,
++                "prediction_fingerprint": experiment.prediction_fingerprint,
++                "model_artifact_id": experiment.model_artifact_id,
++                "signal_artifact_id": experiment.signal_artifact_id,
++                "signal_run_id": experiment.signal_run_id,
++                "feature_refs": experiment.feature_refs,
++                "segments": experiment.segments,
++                "status": experiment.status,
++            }
++        )
+         d1_client.query(
+             """
+             INSERT INTO experiment (
+               experiment_id, name, snapshot_id, dataset_hash, status,
+               mlflow_run_id, parameters_json, metrics_json, created_at
+-            ) VALUES (?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
++            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(experiment_id) DO UPDATE SET
+               metrics_json=excluded.metrics_json,
+               mlflow_run_id=excluded.mlflow_run_id,
+-              parameters_json=excluded.parameters_json
++              parameters_json=excluded.parameters_json,
++              status=excluded.status
+             """,
+             [
+                 experiment.experiment_id,
+                 experiment.name,
+                 experiment.snapshot_id,
+                 experiment.dataset_hash,
++                experiment.status or "COMPLETED",
+                 experiment.mlflow_run_id,
+-                json.dumps(experiment.parameters or {}, ensure_ascii=False),
+-                json.dumps({}, ensure_ascii=False),
++                json.dumps(params, ensure_ascii=False),
++                json.dumps(experiment.metrics or {}, ensure_ascii=False),
+                 _utc_now(),
+             ],
+         )
+@@ -823,15 +845,30 @@ class D1ResearchRegistry:
+         if not rows:
+             raise KeyError(f"experiment not found: {experiment_id!r}")
+         row = rows[0]
++        params = json.loads(row.get("parameters_json") or "{}")
++        metrics = json.loads(row.get("metrics_json") or "{}")
+         return ExperimentDefinition(
+             experiment_id=row["experiment_id"],
+             name=row["name"],
+-            dataset_ref=str(row.get("dataset_ref") or ""),
++            dataset_ref=str(params.get("dataset_ref") or row.get("dataset_ref") or ""),
+             snapshot_id=row.get("snapshot_id") or "",
+             dataset_hash=row.get("dataset_hash") or "",
+-            model_version_ref=None,
++            model_version_ref=params.get("model_version_ref"),
+             mlflow_run_id=row.get("mlflow_run_id"),
+-            parameters=json.loads(row.get("parameters_json") or "{}"),
++            parameters=params,
++            feature_refs=list(params.get("feature_refs") or []),
++            processor_ref=params.get("processor_ref"),
++            strategy_version=params.get("strategy_version"),
++            model_artifact_id=params.get("model_artifact_id"),
++            signal_artifact_id=params.get("signal_artifact_id"),
++            signal_run_id=params.get("signal_run_id"),
++            bundle_hash=params.get("bundle_hash"),
++            prediction_fingerprint=params.get("prediction_fingerprint"),
++            repro_fingerprint=params.get("repro_fingerprint"),
++            metrics=metrics if isinstance(metrics, dict) else {},
++            manifest_uri=str(params.get("manifest_uri") or ""),
++            status=row.get("status") or params.get("status") or "COMPLETED",
++            segments=dict(params.get("segments") or {}),
+         )
+ 
+     def upsert_signal_run(self, record: SignalRunRecord) -> None:
+diff --git a/docs/COMMANDS_CN.md b/docs/COMMANDS_CN.md
+index 12c00a2..3b9480d 100644
+--- a/docs/COMMANDS_CN.md
++++ b/docs/COMMANDS_CN.md
+@@ -140,6 +140,16 @@ QUANTDINGER_SKIP_APP_INIT=1 \
+ 
+ Phase 2E 说明：[docs/data/phase2/05_prediction_signal.md](data/phase2/05_prediction_signal.md)。
+ 
++验证 Phase 2F Experiment & Reproducibility（双跑复现 / manifest / MLflow）：
++
++```bash
++cd backend_api_python
++QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
++  python scripts/verify_phase2f_experiment.py
++```
++
++Phase 2F 说明：[docs/data/phase2/06_experiment_reproducibility.md](data/phase2/06_experiment_reproducibility.md)。Phase 2 到此结束；下一阶段为 Phase 3A Backtest Contract。
++
+ ## Level2 因子 D1 Worker
+ 
+ 在 `workers/l2-factors-d1`：
+diff --git a/docs/data/phase2/04_model_training.md b/docs/data/phase2/04_model_training.md
+index 708be28..b8eaa8a 100644
+--- a/docs/data/phase2/04_model_training.md
++++ b/docs/data/phase2/04_model_training.md
+@@ -87,4 +87,6 @@ Wheel 版 LightGBM 依赖 `@rpath/libomp.dylib`。若 `brew` 不可用，可把
+ 
+ Phase 2E — Prediction / Signal — **implemented** → [05_prediction_signal.md](05_prediction_signal.md).
+ 
+-Next: Phase 2F — Experiment & Reproducibility.
+\ No newline at end of file
++Next: Phase 2F — Experiment & Reproducibility — **implemented** → [06_experiment_reproducibility.md](06_experiment_reproducibility.md).
++
++Then: Phase 3A — Backtest Contract.
+\ No newline at end of file
+diff --git a/docs/data/phase2/05_prediction_signal.md b/docs/data/phase2/05_prediction_signal.md
+index 9c8df70..785e0ad 100644
+--- a/docs/data/phase2/05_prediction_signal.md
++++ b/docs/data/phase2/05_prediction_signal.md
+@@ -1,7 +1,7 @@
+ # Phase 2E — Prediction & Signal
+ 
+ > **Status:** Phase 2E implemented.
+-> Phase 2F Experiment & Reproducibility remains out of scope.
++> Phase 2F Experiment & Reproducibility — **implemented** → [06_experiment_reproducibility.md](06_experiment_reproducibility.md).
+ 
+ ## 1. Goal
+ 
+@@ -72,9 +72,10 @@ Exit codes: **0** PASS / **1** FAIL（合成 Prediction，无需 LightGBM）。
+ ❌ 真实 T+1 交易日历与回测
+ ❌ 复杂组合优化
+ ❌ LongShort / Quantile 策略实现（仅留 Protocol）
+-❌ Phase 2F Experiment 全量登记
+ ```
+ 
+ ## 6. Next
+ 
+-Phase 2F — Experiment & Reproducibility（Dataset / Feature / Processor / Model / Prediction / Signal / MLflow 正式编排）。
++Phase 2F — Experiment & Reproducibility — **implemented** → [06_experiment_reproducibility.md](06_experiment_reproducibility.md).
++
++Next: Phase 3A — Backtest Contract.
+\ No newline at end of file
+diff --git a/docs/data/phase2/README.md b/docs/data/phase2/README.md
+index e726bc9..704fc76 100644
+--- a/docs/data/phase2/README.md
++++ b/docs/data/phase2/README.md
+@@ -1,7 +1,7 @@
+ # Phase 2 — Qlib Adapter & Research Engine
+ 
+-> **Status:** Phase 2E implemented (Prediction & Signal).
+-> 2F Experiment & Reproducibility remains next.
++> **Status:** Phase 2F implemented — **Phase 2 complete.**
++> Next: Phase 3A Backtest Contract.
+ 
+ ## Reading order
+ 
+@@ -10,6 +10,7 @@
+ 3. [03_processor_pipeline.md](03_processor_pipeline.md) — Processor whitelist / fit-on-train / pipeline digest
+ 4. [04_model_training.md](04_model_training.md) — LightGBM train / artifact / prediction traceability
+ 5. [05_prediction_signal.md](05_prediction_signal.md) — Prediction → Signal → TargetPosition（不下单）
++6. [06_experiment_reproducibility.md](06_experiment_reproducibility.md) — Experiment / manifest / MLflow / A==B
+ 
+ ## Prerequisite
+ 

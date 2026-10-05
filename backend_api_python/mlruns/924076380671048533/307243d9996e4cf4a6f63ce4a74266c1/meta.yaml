@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/924076380671048533/307243d9996e4cf4a6f63ce4a74266c1/artifacts
+end_time: 1791222775971
+entry_point_name: ''
+experiment_id: '924076380671048533'
+lifecycle_stage: active
+run_id: 307243d9996e4cf4a6f63ce4a74266c1
+run_name: gentle-dolphin-416
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222775962
+status: 3
+tags: []
+user_id: unknown

@@ -87,4 +87,6 @@ Wheel 版 LightGBM 依赖 `@rpath/libomp.dylib`。若 `brew` 不可用，可把 
 
 Phase 2E — Prediction / Signal — **implemented** → [05_prediction_signal.md](05_prediction_signal.md).
 
-Next: Phase 2F — Experiment & Reproducibility.
+Next: Phase 2F — Experiment & Reproducibility — **implemented** → [06_experiment_reproducibility.md](06_experiment_reproducibility.md).
+
+Then: Phase 3A — Backtest Contract.

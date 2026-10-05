@@ -1,0 +1,14 @@
+artifact_uri: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/850909500982444246/a369820813db4c43ae5d9b68fb080e9b/artifacts
+end_time: 1791222927291
+entry_point_name: ''
+experiment_id: '850909500982444246'
+lifecycle_stage: active
+run_id: a369820813db4c43ae5d9b68fb080e9b
+run_name: likeable-rook-977
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1791222927283
+status: 3
+tags: []
+user_id: unknown
