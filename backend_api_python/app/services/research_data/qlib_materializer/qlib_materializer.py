@@ -117,17 +117,6 @@ class DefaultQlibMaterializer:
         definition = handle.definition
         dataset_hash = handle.dataset_hash
 
-        # Universe 必须来自 Snapshot，禁止 PG
-        knowledge_time = datetime.now(timezone.utc)
-        instruments = self._query.universe(
-            definition.universe_code,
-            knowledge_time,
-            snapshot_id=definition.snapshot_id,
-            universe_version=definition.universe_version,
-        )
-        if not instruments:
-            raise MaterializerError("universe snapshot returned empty instruments")
-
         # Feature 映射（不支持则硬失败，禁止漂移）
         try:
             feature_mapping = build_feature_mapping(definition.features)
@@ -142,13 +131,18 @@ class DefaultQlibMaterializer:
             fields = sorted(feature_mapping.keys())
 
         start = self._start or date(1970, 1, 1)
-        end = self._end or date(2100, 1, 1)
-        market = self._query.market(
-            instruments,
-            start,
-            end,
+        end_bound = self._end or date(2100, 1, 1)
+
+        # Universe as_of：禁止 wall-clock。先用窗口端点探测成员并集拉行情，
+        # 再以 self._end 或 market.max(trading_date) 作为历史 as_of 过滤成分。
+        as_of, instruments, market = self._resolve_universe_and_market(
+            definition=definition,
+            start=start,
+            end_bound=end_bound,
             price_policy=definition.price_policy,
         )
+        if not instruments:
+            raise MaterializerError("universe snapshot returned empty instruments")
         if market.empty:
             raise MaterializerError("DataQuery.market returned empty frame")
 
@@ -222,7 +216,94 @@ class DefaultQlibMaterializer:
             cache_hit=False,
             qlib_version=qlib_ver,
             materializer_version=MATERIALIZER_VERSION,
+            notes=[f"universe_as_of={as_of.isoformat()}"],
         )
+
+    def _resolve_universe_and_market(
+        self,
+        *,
+        definition,
+        start: date,
+        end_bound: date,
+        price_policy,
+    ):
+        """解析历史 Universe as_of，并返回过滤后的 instruments + market。
+
+        顺序：窗口端点并集探测 → market 推日历终点 → as_of 过滤成分 → 收紧行情。
+        禁止使用 datetime.now()，避免幸存者偏差。
+        """
+        # 低端/高端 as_of 并集：覆盖中途调出与调入成员，便于推 calendar
+        lo_members = set(
+            self._query.universe(
+                definition.universe_code,
+                start,
+                snapshot_id=definition.snapshot_id,
+                universe_version=definition.universe_version,
+            )
+        )
+        hi_members = set(
+            self._query.universe(
+                definition.universe_code,
+                end_bound,
+                snapshot_id=definition.snapshot_id,
+                universe_version=definition.universe_version,
+            )
+        )
+        provisional = sorted(lo_members | hi_members)
+        if not provisional:
+            return end_bound, [], _empty_market_frame()
+
+        probe = self._query.market(
+            provisional,
+            start,
+            end_bound,
+            price_policy=price_policy,
+        )
+        if probe.empty:
+            return end_bound, provisional, probe
+
+        # as_of = 显式窗口终点，否则取行情实际最大交易日
+        if self._end is not None:
+            as_of = self._end
+        else:
+            as_of = max(probe["trading_date"].tolist())
+            if hasattr(as_of, "date"):
+                as_of = as_of.date()
+
+        instruments = self._query.universe(
+            definition.universe_code,
+            as_of,
+            snapshot_id=definition.snapshot_id,
+            universe_version=definition.universe_version,
+        )
+        if not instruments:
+            return as_of, [], probe.iloc[0:0]
+
+        market = probe[probe["instrument_key"].isin(instruments)].copy()
+        market = market[market["trading_date"] <= as_of]
+        if self._start is not None:
+            market = market[market["trading_date"] >= self._start]
+        return as_of, instruments, market.reset_index(drop=True)
+
+
+def _empty_market_frame():
+    """探测失败时返回空行情框（列结构与 DataQuery.market 对齐）。"""
+    import pandas as pd
+
+    return pd.DataFrame(
+        columns=[
+            "instrument_key",
+            "trading_date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "vwap",
+            "data_version",
+        ]
+    )
 
 
 def _parse_created(value: str | None) -> datetime:

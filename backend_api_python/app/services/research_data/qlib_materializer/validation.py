@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Sequence
+
+import pandas as pd
+
+from .instrument_mapper import to_qlib_instrument
 
 
 class QlibValidationError(RuntimeError):
     """Qlib 读回失败或与预期不一致。"""
+
+
+OHLCV_FIELDS: tuple[str, ...] = ("open", "high", "low", "close", "volume", "amount")
 
 
 def validate_qlib_provider(
@@ -218,3 +226,173 @@ def compare_feature_values(
         bb = float(b)
         if abs(aa - bb) > atol + rtol * abs(aa):
             raise QlibValidationError(f"value mismatch at {i}: dq={aa} qlib={bb}")
+
+
+def _to_python_date(value: Any):
+    """把 Timestamp / datetime / date 统一为 date。"""
+    from datetime import date, datetime
+
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if hasattr(value, "date") and callable(value.date):
+        return value.date()
+    return value
+
+
+def qlib_features_to_frame(
+    feat: pd.DataFrame,
+    *,
+    fields: Sequence[str] = OHLCV_FIELDS,
+) -> pd.DataFrame:
+    """将 D.features MultiIndex 结果转为 (qlib_instrument, trading_date, fields)。"""
+    if feat is None or len(feat) == 0:
+        cols = ["qlib_instrument", "trading_date", *fields]
+        return pd.DataFrame(columns=cols)
+
+    rows: list[dict[str, Any]] = []
+    # 列可能是 $close 或 close；MultiIndex 列取末级
+    col_map: dict[str, Any] = {}
+    for c in feat.columns:
+        name = str(c[-1]) if isinstance(c, tuple) else str(c)
+        if name.startswith("$"):
+            name = name[1:]
+        col_map[name.lower()] = c
+
+    for idx, series in feat.iterrows():
+        if isinstance(idx, tuple) and len(idx) >= 2:
+            inst, dt = idx[0], idx[1]
+        else:
+            inst, dt = None, idx
+        row: dict[str, Any] = {
+            "qlib_instrument": str(inst).lower() if inst is not None else "",
+            "trading_date": _to_python_date(dt),
+        }
+        for f in fields:
+            src = col_map.get(f)
+            row[f] = float(series[src]) if src is not None else float("nan")
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def normalize_dq_market_panel(
+    market: pd.DataFrame,
+    *,
+    fields: Sequence[str] = OHLCV_FIELDS,
+) -> pd.DataFrame:
+    """DataQuery.market → 带 qlib_instrument 的标准面板。"""
+    if market is None or market.empty:
+        return pd.DataFrame(columns=["instrument_key", "qlib_instrument", "trading_date", *fields])
+    out = market.copy()
+    out["trading_date"] = out["trading_date"].map(_to_python_date)
+    out["qlib_instrument"] = out["instrument_key"].map(
+        lambda x: to_qlib_instrument(str(x)).lower()
+    )
+    keep = [
+        "instrument_key",
+        "qlib_instrument",
+        "trading_date",
+        *[f for f in fields if f in out.columns],
+    ]
+    return out[keep].reset_index(drop=True)
+
+
+def compare_ohlcv_panels(
+    dq_df: pd.DataFrame,
+    qlib_df: pd.DataFrame,
+    *,
+    fields: Sequence[str] = OHLCV_FIELDS,
+    atol: float = 1e-8,
+    rtol: float = 1e-6,
+) -> dict[str, Any]:
+    """对齐 (qlib_instrument, trading_date)，比较 OHLCV+amount；校验行数与集合一致。"""
+    left = normalize_dq_market_panel(dq_df, fields=fields)
+    right = qlib_df.copy()
+    if "qlib_instrument" not in right.columns:
+        right = qlib_features_to_frame(right, fields=fields)
+    right["trading_date"] = right["trading_date"].map(_to_python_date)
+    right["qlib_instrument"] = right["qlib_instrument"].astype(str).str.lower()
+
+    left_keys = set(zip(left["qlib_instrument"], left["trading_date"]))
+    right_keys = set(zip(right["qlib_instrument"], right["trading_date"]))
+    if left_keys != right_keys:
+        only_l = sorted(left_keys - right_keys)[:5]
+        only_r = sorted(right_keys - left_keys)[:5]
+        raise QlibValidationError(
+            f"panel key set mismatch: dq={len(left_keys)} qlib={len(right_keys)}; "
+            f"only_dq={only_l} only_qlib={only_r}"
+        )
+    if len(left) != len(right):
+        raise QlibValidationError(f"row count mismatch: dq={len(left)} qlib={len(right)}")
+
+    merged = left.merge(
+        right,
+        on=["qlib_instrument", "trading_date"],
+        suffixes=("_dq", "_qlib"),
+        how="inner",
+    )
+    for f in fields:
+        dq_col = f if f in merged.columns else f"{f}_dq"
+        q_col = f"{f}_qlib" if f"{f}_qlib" in merged.columns else f
+        if dq_col not in merged.columns or q_col not in merged.columns:
+            raise QlibValidationError(f"missing field {f} after merge")
+        compare_feature_values(
+            [None if pd.isna(x) else float(x) for x in merged[dq_col].tolist()],
+            [None if pd.isna(x) else float(x) for x in merged[q_col].tolist()],
+            atol=atol,
+            rtol=rtol,
+        )
+
+    inst_l = set(left["qlib_instrument"])
+    inst_r = set(right["qlib_instrument"])
+    dates_l = set(left["trading_date"])
+    dates_r = set(right["trading_date"])
+    if inst_l != inst_r:
+        raise QlibValidationError(
+            f"instrument set mismatch: dq={sorted(inst_l)} qlib={sorted(inst_r)}"
+        )
+    if dates_l != dates_r:
+        raise QlibValidationError(
+            f"calendar set mismatch: dq_n={len(dates_l)} qlib_n={len(dates_r)}"
+        )
+    return {
+        "rows": len(merged),
+        "instruments": sorted(inst_l),
+        "dates": len(dates_l),
+        "fields": list(fields),
+    }
+
+
+def compare_universe_sets(
+    dq_instrument_keys: Sequence[str],
+    qlib_ids: Sequence[str],
+) -> None:
+    """DataQuery universe keys 与 Qlib instrument id（小写）集合一致。"""
+    expected = {to_qlib_instrument(str(k)).lower() for k in dq_instrument_keys}
+    actual = {str(x).lower() for x in qlib_ids}
+    if expected != actual:
+        raise QlibValidationError(
+            f"universe set mismatch: dq={sorted(expected)} qlib={sorted(actual)}"
+        )
+
+
+def directory_sha256(root: Path) -> str:
+    """目录内容稳定校验和（路径相对 + 文件字节）。"""
+    root = Path(root)
+    h = hashlib.sha256()
+    if not root.exists():
+        return h.hexdigest()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        h.update(rel.encode("utf-8"))
+        h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def assert_canonical_raw_unchanged(before_checksum: str, after_checksum: str) -> None:
+    """Materialize 不得改写 Canonical raw。"""
+    if before_checksum != after_checksum:
+        raise QlibValidationError(
+            f"canonical raw mutated by materializer: before={before_checksum} after={after_checksum}"
+        )

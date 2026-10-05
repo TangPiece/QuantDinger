@@ -72,16 +72,40 @@ def fixture_universe_table(
     instrument_keys: Sequence[str],
     snapshot_id: str,
     valid_from: date,
+    include_survivor_bias_rows: bool = True,
 ) -> pa.Table:
-    """本地合成 CSI300 成分快照（CI 不连 PG）。"""
-    n = len(instrument_keys)
+    """本地合成 CSI300 成分快照（CI 不连 PG）。
+
+    核心成分 valid_from 使用传入值；默认附加幸存者偏差检验行：
+    - CNStock:999999：valid_from=2020-01-01, valid_to=2023-12-31（历史成员）
+    - CNStock:688001：valid_from=2024-04-01（后期调入）
+    """
+    # 核心成员从足够早的日期生效，便于历史 as_of 探测
+    core_from = min(valid_from, date(2020, 1, 1))
+    keys = list(instrument_keys)
+    vfs = [core_from] * len(keys)
+    vts: list[date | None] = [None] * len(keys)
+
+    if include_survivor_bias_rows:
+        # 历史调出：仅 knowledge_time <= 2023-12-31 可见
+        if "CNStock:999999" not in keys:
+            keys.append("CNStock:999999")
+            vfs.append(date(2020, 1, 1))
+            vts.append(date(2023, 12, 31))
+        # 后期调入：仅 knowledge_time >= 2024-04-01 可见
+        if "CNStock:688001" not in keys:
+            keys.append("CNStock:688001")
+            vfs.append(date(2024, 4, 1))
+            vts.append(None)
+
+    n = len(keys)
     return pa.table(
         {
             "universe_code": pa.array([universe_code] * n),
             "universe_version": pa.array([universe_version] * n),
-            "instrument_key": pa.array(list(instrument_keys)),
-            "valid_from": pa.array([valid_from] * n, type=pa.date32()),
-            "valid_to": pa.array([None] * n, type=pa.date32()),
+            "instrument_key": pa.array(keys),
+            "valid_from": pa.array(vfs, type=pa.date32()),
+            "valid_to": pa.array(vts, type=pa.date32()),
             "weight": pa.array([1.0 / max(n, 1)] * n, type=pa.float64()),
             "member_rank": pa.array(list(range(1, n + 1)), type=pa.int32()),
             "source_version": pa.array(["fixture"] * n),
@@ -115,6 +139,13 @@ def build_golden_dataset(
         instrument_keys
         or ["CNStock:000001", "CNStock:000002", "CNStock:600000"]
     )
+    # fixture 幸存者成员也需要行情，避免物化后 D.features 全 NaN 日历行
+    market_instruments = list(instruments)
+    if use_fixture:
+        for extra in ("CNStock:999999", "CNStock:688001"):
+            if extra not in market_instruments:
+                market_instruments.append(extra)
+
     uv = universe_version or f"golden-{date.today().isoformat()}"
     snap_id = snapshot_id or f"snap_cn_stock_daily_v1_{uv}"
     data_ver = GOLDEN_DATASET_VERSION
@@ -123,7 +154,7 @@ def build_golden_dataset(
     if market_records is not None:
         market_meta = ingest_market_daily(
             store,
-            instrument_keys=instruments,
+            instrument_keys=market_instruments,
             start=start,
             end=end,
             version=data_ver,
@@ -133,13 +164,13 @@ def build_golden_dataset(
     elif use_fixture:
         market_meta = ingest_market_daily(
             store,
-            instrument_keys=instruments,
+            instrument_keys=market_instruments,
             start=start,
             end=end,
             version=data_ver,
             registry=registry,
             preloaded_records=fixture_market_records(
-                instruments, start=start, end=end, data_version=data_ver
+                market_instruments, start=start, end=end, data_version=data_ver
             ),
         )
     else:
@@ -167,7 +198,7 @@ def build_golden_dataset(
     # 2) PIT / CA / trading_status
     pit_meta = ingest_pit_fundamental(
         store,
-        instrument_keys=instruments,
+        instrument_keys=market_instruments if use_fixture else instruments,
         version=data_ver,
         registry=registry,
         allow_synthetic=True,

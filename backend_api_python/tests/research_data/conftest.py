@@ -156,18 +156,20 @@ def seeded_research(research_env):
 
 @pytest.fixture
 def golden_qlib_env(tmp_path):
-    """Phase 1C：fixture Golden + Materializer（不访问外网）。"""
+    """Phase 1C/1D：fixture Golden + Materializer（不访问外网；窗口绑定 as_of）。"""
     from app.services.research_data.ingest.build_golden import build_golden_dataset
     from app.services.research_data.qlib_materializer import DefaultQlibMaterializer
 
     store = LocalCanonicalStore(root=tmp_path / "canonical")
     registry = LocalJsonRegistry(root=tmp_path / "registry")
+    start = date(2024, 1, 1)
+    end = date(2024, 6, 30)
     result = build_golden_dataset(
         store,
         registry,
         instrument_keys=["CNStock:000001", "CNStock:000002", "CNStock:600000"],
-        start=date(2024, 1, 1),
-        end=date(2024, 6, 30),
+        start=start,
+        end=end,
         universe_version="2024.06",
         snapshot_id="snap_qlib_test_001",
         use_fixture=True,
@@ -175,7 +177,8 @@ def golden_qlib_env(tmp_path):
     )
     query = DataQuery(store, registry)
     cache_root = tmp_path / "research_cache"
-    materializer = DefaultQlibMaterializer(query, cache_root=cache_root)
+    # 显式绑定窗口终点，避免 wall-clock universe as_of
+    materializer = DefaultQlibMaterializer(query, cache_root=cache_root, start=start, end=end)
     return {
         "store": store,
         "registry": registry,
@@ -184,4 +187,6 @@ def golden_qlib_env(tmp_path):
         "cache_root": cache_root,
         "golden": result,
         "dataset_ref": result["dataset_ref"],
+        "start": start,
+        "end": end,
     }

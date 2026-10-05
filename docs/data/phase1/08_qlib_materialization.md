@@ -72,6 +72,11 @@ Mapping table: `metadata/instrument_mapping.parquet`
 Calendar is derived from **DataQuery.market** trading dates for the Dataset universe/window
 (`DataQuery.trading_calendar` is a thin helper). Never use Qlib’s default calendar as SSOT.
 
+## 5.1 Universe as_of
+
+Materializer binds universe membership to the **dataset window end** (`end=` or
+`max(trading_date)`), never `datetime.now()`. See [09_qlib_read_validation.md](09_qlib_read_validation.md).
+
 ## 6. Feature Mapping
 
 Phase 1C allows only: `open/high/low/close/volume/amount/vwap`.
@@ -148,10 +153,10 @@ QUANTDINGER_SKIP_APP_INIT=1 python scripts/materialize_qlib_dataset.py \
   --wipe
 
 QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
-  python scripts/verify_qlib_cache_readback.py
+  python scripts/verify_phase1d_consistency.py
 ```
 
-Tests: `python -m pytest tests/research_data/test_qlib_*.py -q`
+Tests: `python -m pytest tests/research_data/test_qlib_*.py tests/research_data/test_phase1d_*.py -q`
 
 ## 12. Known Limitations
 
@@ -164,8 +169,7 @@ Backtest 尚未实现
 pre 复权尚未实现
 非 CNStock market 映射尚未实现
 不做 Qlib 性能优化 / 全 A 十年 benchmark
-pyqlib 依赖链很重（mlflow/jupyter 等）；未安装时 Materializer 仍写出兼容目录，
-并以文件系统层校验 calendar/instruments；安装 pyqlib 后走 D.calendar / D.features 读回
+pyqlib 依赖链很重（mlflow/jupyter 等）；Phase 1D 验收要求真实 D.features（未安装 → 退出码 2）
 ```
 
 ### Architecture conflicts resolved
@@ -175,7 +179,9 @@ pyqlib 依赖链很重（mlflow/jupyter 等）；未安装时 Materializer 仍�
 | Package path | Under `research_data/qlib_materializer/` (not new `app/research/`) |
 | Cache dir name | `qlib-cache/{materialization_id}` (docs prefix + task identity) |
 | InstrumentKey | Keep `CNStock:code` → map to `SH/SZ` |
+| Universe as_of | Dataset window end — never wall-clock |
 
 ## Stop
 
-Phase 1C stops here. Do not auto-start Phase 2 Adapter.
+Phase 1C materializer stops here. Phase 1D read validation: [09_qlib_read_validation.md](09_qlib_read_validation.md).
+Do not auto-start Phase 2 Adapter.

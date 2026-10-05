@@ -14,7 +14,9 @@ def test_materialize_ready_fields(golden_qlib_env):
     assert result.cache_path
     assert result.manifest_path
     assert result.checksum
-    assert result.instrument_count == 3
+    # fixture 含后期调入 688001：窗口终点 as_of 下应为 4 只
+    assert result.instrument_count == 4
+    assert "universe_as_of=" in (result.notes[0] if result.notes else "")
     assert result.calendar_count >= 1
     assert result.feature_count >= 1
     assert result.cache_hit is False

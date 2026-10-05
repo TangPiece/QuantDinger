@@ -72,18 +72,20 @@ QUANTDINGER_SKIP_APP_INIT=1 python scripts/materialize_qlib_dataset.py \
   --dataset-ref cn_stock_daily@v1 --wipe
 ```
 
-验证 Qlib Cache 真读回（Calendar / Instruments / D.features / DataHandler / DataQuery 一致性）：
+验证 Qlib Cache 真读回 / Phase 1D 六项一致性（Canonical → Materializer → pyqlib）：
 
 ```bash
 cd backend_api_python
 QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
-  python scripts/verify_qlib_cache_readback.py
+  python scripts/verify_phase1d_consistency.py
+# 兼容别名：python scripts/verify_qlib_cache_readback.py
 ```
 
 本地单测：`cd workers/qd-research-d1 && npm test`；`cd backend_api_python && python -m pytest tests/research_data -q`。
 
 Phase 1B 验收报告：[docs/data/phase1/07_phase1b_validation.md](data/phase1/07_phase1b_validation.md)。
 Phase 1C 物化说明：[docs/data/phase1/08_qlib_materialization.md](data/phase1/08_qlib_materialization.md)。
+Phase 1D 读回一致性：[docs/data/phase1/09_qlib_read_validation.md](data/phase1/09_qlib_read_validation.md)。
 
 ## Level2 因子 D1 Worker
 
