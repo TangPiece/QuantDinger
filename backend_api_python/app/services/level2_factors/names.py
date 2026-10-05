@@ -7,6 +7,7 @@ BASE_FACTORS: tuple[str, ...] = (
     "l2_depth_bid",
     "l2_depth_ask",
     "l2_obi",
+    "l2_ofi",
     "l2_order_ratio",
     "l2_active_net_buy",
     "l2_big_net_inflow_rate",

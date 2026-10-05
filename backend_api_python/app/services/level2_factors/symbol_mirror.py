@@ -1,8 +1,7 @@
-"""把本地按日宽表收成每只股票一个 Parquet，再上传到 R2。
+"""股票镜像工具（遗留）。
 
-按日文件仍是主布局，键保持 ``l2_factors/{年}/{年月}/{YYYYMMDD}.parquet``。
-股票文件是 ``l2_factors/symbol/{代码}.parquet``，只含基础列，供指标页和 CTA 读长序列。
-周中新交易日不在这里追加；读取时从按日宽表抽出这一只补上。
+因子真源已改为 D1（按 ``symbol, trade_date`` 索引），默认不再上传 R2 股票镜像。
+传入测试用 ``uploader`` 时仍可按旧逻辑打包上传，便于单测。
 """
 from __future__ import annotations
 
@@ -60,11 +59,17 @@ def rebuild_symbol_mirrors(
     *,
     uploader=None,
 ) -> tuple[int, int]:
-    """上传每只股票一份基础因子历史。返回 ``(成功只数, 应上传只数)``。"""
+    """上传每只股票一份基础因子历史。返回 ``(成功只数, 应上传只数)``。
+
+    未注入 ``uploader`` 时直接跳过：D1 已覆盖单股查询，无需 R2 镜像。
+    """
+    if uploader is None:
+        print("D1 已按 symbol 索引，跳过股票镜像上传", flush=True)
+        return 0, 0
     grouped = collect_symbol_frames(factors_dir)
     if not grouped:
         return 0, 0
-    send = uploader or _upload
+    send = uploader
     workers = min(_UPLOAD_WORKERS, len(grouped))
     done = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -98,8 +103,8 @@ def _upload(key: str, payload: bytes) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """从本地按日因子目录重建股票镜像。默认目录是 staging 的 factors。"""
-    parser = argparse.ArgumentParser(description="从按日因子文件重建每只股票的 R2 镜像")
+    """默认 no-op（D1 模式）。保留 CLI 以免旧脚本报错。"""
+    parser = argparse.ArgumentParser(description="股票镜像（D1 模式下跳过）")
     parser.add_argument("--factors-dir", default="", help="YYYYMMDD.parquet 所在目录")
     args = parser.parse_args(argv)
     if args.factors_dir:
@@ -109,8 +114,11 @@ def main(argv: list[str] | None = None) -> int:
 
         root = default_output_dir()
     done, total = rebuild_symbol_mirrors(root)
+    if total == 0:
+        print(f"已跳过股票镜像，目录 {root}", flush=True)
+        return 0
     print(f"已上传 {done}/{total} 只股票，目录 {root}", flush=True)
-    return 0 if total and done == total else 1
+    return 0 if done == total else 1
 
 
 if __name__ == "__main__":

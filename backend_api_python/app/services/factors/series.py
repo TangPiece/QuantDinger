@@ -24,6 +24,7 @@ _LEVEL2_FETCHING = "factorLibrary.level2Fetching"
 # 这些基础列围绕 0。均值和偏度仍用柱，标准差是非负波动，改回折线。
 _SIGNED_LEVEL2 = frozenset({
     "l2_obi",
+    "l2_ofi",
     "l2_order_ratio",
     "l2_active_net_buy",
     "l2_big_net_inflow_rate",
@@ -86,7 +87,8 @@ def build_factor_plot(
     """返回指标 ``output`` 结构：一条因子一条副图线，多输出仍放在同一副图。
 
     ``level2_enricher`` / ``fundamental_enricher`` 缺省时走现有面板。
-    面板里没有这只股票时，``level2_filler`` 在后台补明细，测试可注入替身。
+    Level2 存库因子默认只展示已有数据，缺日为 null，不自动补算；
+    仅当调用方显式传入 ``level2_filler`` 时才走后台补数（测试/兼容）。
     """
     key = str(factor_id or "").strip()
     if frame is None or frame.empty:
@@ -107,15 +109,14 @@ def build_factor_plot(
             notice_key = _LEVEL2_NOTICE
         values = _column_series(working, key) if notice_key is None else [None] * len(working)
         if notice_key is None:
-            # 临时表里只要有一天有值，整段就不是空的。仍要补近一年，否则下载会停在第一天。
-            # 测试换成了面板替身、又没注入补数函数时，不去连网盘。
-            filler = level2_filler
-            if filler is None and level2_enricher is None:
-                filler = _schedule_level2_fill
-            if filler is not None:
-                started = bool(filler(symbol, _trade_dates(frame)))
+            # 生产路径不再自动 schedule_symbol_fill；缺数由批量脚本手动补。
+            # 显式注入 level2_filler 时保留旧补数语义（测试用）。
+            if level2_filler is not None:
+                started = bool(level2_filler(symbol, _trade_dates(frame)))
                 if not any(item is not None for item in values):
                     notice_key = _LEVEL2_FETCHING if started else _LEVEL2_NOTICE
+            elif not any(item is not None for item in values):
+                notice_key = _LEVEL2_NOTICE
         return _plot_payload(key, values, notice_key, _level2_plot_type(key))
 
     if definition.factor_type == "fundamental":

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从百度网盘按日下载 Level2 明细，算因子并上传 R2。
+# 从百度网盘按日下载 Level2 明细，算因子并写入 D1（经 Worker）。
 # 日内先并行下完全市场，再计算、上传；成功后清本地明细，再进下一日。
 set -euo pipefail
 
@@ -25,7 +25,7 @@ usage() {
   run_level2_baidu_factors.sh --start YYYYMMDD --end YYYYMMDD start [选项]
   run_level2_baidu_factors.sh status | tail | stop
 
-  按日历日从早到晚：并行下载当日全部股票 → 计算日频因子 → 上传 R2 → 清本地明细。
+  按日历日从早到晚：并行下载当日全部股票 → 计算日频因子 → 写入 D1 → 清本地明细。
   已上传日期默认跳过。上传失败会停止后续日期。
 
 示例:
@@ -40,13 +40,18 @@ usage() {
 选项:
   --start YYYYMMDD        起始日（含）
   --end YYYYMMDD          结束日（含）
-  --download-workers N    百度并行下载数，默认 8
+  --download-workers N    百度并行下载数，默认 1，按批提交；连续连接失败会熔断休眠
   --workers N             因子计算并行度，默认 8
   --force                 已上传的日期也重算并覆盖上传
   --dry-run               只打印将处理的日历日
   --mirror                全部日期成功后再重建股票镜像
   --books-dir PATH        明细临时目录，默认 data/level2_parquet
   --output PATH           因子输出目录，默认 staging/factors
+
+说明:
+  同一时刻只打一个百度 HTTP。连续连接失败 5 次会熔断休眠 60 秒。
+  股票按批提交，已齐全的本地明细会跳过。成功率低于 90% 时不算、不上传。
+  令牌过期刷新后会写回 .env。连不上 pan.baidu.com 时仍需先修本机网络。
 USAGE
 }
 

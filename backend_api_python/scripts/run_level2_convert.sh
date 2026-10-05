@@ -23,10 +23,10 @@ usage() {
   run_level2_convert.sh all [start 选项] | status | tail | stop
   run_level2_convert.sh DATE [start 选项] | status | tail | stop
 
-  all     扫描 data/level2_raw 下全部 .7z 与已解压目录，串行解压+转换。
-          不算因子。算完后另跑 run_level2_factors.sh。
-          --dry-run 只调度，不转换。
-  DATE    单日 YYYYMMDD（走 convert_local）
+  all     扫描 data/level2_raw 下全部 .7z 与已解压目录，串行解压后
+          直接从 CSV 算日频因子并写入 D1，不落明细 Parquet。
+          达标后删 CSV 与 .7z。--dry-run 只调度，不算不写。
+  DATE    单日 YYYYMMDD（仍走 convert_local：CSV→明细 Parquet）
 
   start   后台启动（默认）
   status  查看 PID / 进度
@@ -44,10 +44,10 @@ usage() {
   ./scripts/run_level2_convert.sh 20260506 stop
 
 all 的 start 选项（传给 convert_all）:
-  --workers N
+  --workers N              因子计算并行度（默认 8）
   --dry-run
-  --no-skip
-  --no-delete              转完不删 CSV 目录与 .7z（默认会删）
+  --no-skip                已写入 D1 的日期也重算并覆盖
+  --no-delete              写完不删 CSV 目录与 .7z（默认会删）
   --all-symbols
   --local-only
   --7z-only

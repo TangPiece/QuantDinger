@@ -38,13 +38,17 @@ def test_momentum_series_matches_visible_history_and_warmup_is_null():
 
 
 def test_level2_series_joins_the_session_without_forward_fill(tmp_path, monkeypatch):
-    monkeypatch.setenv("LEVEL2_FACTOR_PANEL_DIR", str(tmp_path))
     clear_panel_cache()
     pd.DataFrame([{
         "trade_date": "20251104",
         "symbol": "600519.SH",
         "l2_spread": 0.02,
     }]).to_parquet(tmp_path / "20251104.parquet", index=False)
+    from app.services.level2_factor_panel import enrich_panel
+
+    def enricher(frames, members=None):
+        return enrich_panel(frames, members, directory=tmp_path)
+
     # 上海 11-03 / 11-04 / 11-05 的 UTC 午夜，中间那天才有面板。
     start = int(pd.Timestamp("2025-11-03", tz="UTC").timestamp() * 1000)
     payload = build_factor_plot(
@@ -53,6 +57,8 @@ def test_level2_series_joins_the_session_without_forward_fill(tmp_path, monkeypa
         market="CNStock",
         symbol="600519",
         timeframe="1d",
+        level2_enricher=enricher,
+        level2_filler=lambda *_args: False,
     )
     assert payload["plots"][0]["data"][0] is None
     assert payload["plots"][0]["data"][1] == pytest.approx(0.02)
@@ -62,13 +68,17 @@ def test_level2_series_joins_the_session_without_forward_fill(tmp_path, monkeypa
 
 def test_level2_series_matches_shanghai_local_midnight(tmp_path, monkeypatch):
     """腾讯日线是上海当地午夜。图表改写之前的这个时间必须对上同一交易日。"""
-    monkeypatch.setenv("LEVEL2_FACTOR_PANEL_DIR", str(tmp_path))
     clear_panel_cache()
     pd.DataFrame([{
         "trade_date": "20251104",
         "symbol": "600519.SH",
         "l2_active_net_buy": 0.15,
     }]).to_parquet(tmp_path / "20251104.parquet", index=False)
+    from app.services.level2_factor_panel import enrich_panel
+
+    def enricher(frames, members=None):
+        return enrich_panel(frames, members, directory=tmp_path)
+
     # 11-04 00:00 上海 = 11-03 16:00 UTC。前后两个当地午夜没有面板。
     start = int(pd.Timestamp("2025-11-03", tz="Asia/Shanghai").timestamp() * 1000)
     payload = build_factor_plot(
@@ -77,6 +87,8 @@ def test_level2_series_matches_shanghai_local_midnight(tmp_path, monkeypatch):
         market="CNStock",
         symbol="SH600519",
         timeframe="1D",
+        level2_enricher=enricher,
+        level2_filler=lambda *_args: False,
     )
     data = payload["plots"][0]["data"]
     assert data[0] is None
@@ -88,13 +100,17 @@ def test_level2_series_matches_shanghai_local_midnight(tmp_path, monkeypatch):
 
 def test_level2_series_repeats_the_same_session_on_duplicate_bars(tmp_path, monkeypatch):
     """同一上海交易日的两根 K 线都取到当日因子，不能因重复日期把接口打成 500。"""
-    monkeypatch.setenv("LEVEL2_FACTOR_PANEL_DIR", str(tmp_path))
     clear_panel_cache()
     pd.DataFrame([{
         "trade_date": "20251104",
         "symbol": "600519.SH",
         "l2_spread": 0.02,
     }]).to_parquet(tmp_path / "20251104.parquet", index=False)
+    from app.services.level2_factor_panel import enrich_panel
+
+    def enricher(frames, members=None):
+        return enrich_panel(frames, members, directory=tmp_path)
+
     same_day = int(pd.Timestamp("2025-11-04", tz="UTC").timestamp() * 1000)
     earlier = int(pd.Timestamp("2025-11-03 16:00", tz="UTC").timestamp() * 1000)
     payload = build_factor_plot(
@@ -106,12 +122,29 @@ def test_level2_series_repeats_the_same_session_on_duplicate_bars(tmp_path, monk
         market="CNStock",
         symbol="600519.SH",
         timeframe="1d",
+        level2_enricher=enricher,
+        level2_filler=lambda *_args: False,
     )
     assert payload["plots"][0]["data"] == pytest.approx([0.02, 0.02])
 
 
-def test_missing_level2_symbol_asks_for_a_background_fill():
-    """面板没有这只股票时，返回正在下载，并把图表上的交易日交给补数。"""
+def test_missing_level2_symbol_does_not_auto_fill():
+    """缺数默认只展示空点 + 面板说明，不自动后台补算。"""
+    start = int(pd.Timestamp("2026-06-01", tz="Asia/Shanghai").timestamp() * 1000)
+    payload = build_factor_plot(
+        "l2_active_net_buy",
+        bars_to_frame(_bars(2, start_ms=start)),
+        market="CNStock",
+        symbol="002074",
+        timeframe="1D",
+        level2_enricher=lambda frames, _members: frames,
+    )
+    assert payload["notice_key"] == "factorLibrary.level2PanelNotice"
+    assert all(item is None for item in payload["plots"][0]["data"])
+
+
+def test_explicit_level2_filler_still_reports_fetching():
+    """显式注入 filler 时保留旧补数语义（测试/兼容）。"""
     seen: list[tuple[str, tuple[str, ...]]] = []
 
     def filler(symbol, dates):
@@ -133,19 +166,13 @@ def test_missing_level2_symbol_asks_for_a_background_fill():
     assert seen[0][1] == ("20260601", "20260602")
 
 
-def test_partial_level2_values_still_request_the_year_fill():
-    """临时表里已经有一天时，仍要继续补这只股票，否则明细会停在第一天。"""
-    seen: list[str] = []
-
+def test_partial_level2_values_show_without_auto_fill():
+    """已有部分点时只展示已有数据，默认不触发后台补数。"""
     def enrich(frames, _members):
         key = next(iter(frames))
         frame = frames[key].copy()
         frame["l2_active_net_buy"] = [0.2, None]
         return {key: frame}
-
-    def filler(symbol, dates):
-        seen.append(symbol)
-        return True
 
     start = int(pd.Timestamp("2026-06-01", tz="Asia/Shanghai").timestamp() * 1000)
     payload = build_factor_plot(
@@ -155,11 +182,10 @@ def test_partial_level2_values_still_request_the_year_fill():
         symbol="002074",
         timeframe="1D",
         level2_enricher=enrich,
-        level2_filler=filler,
     )
-    assert seen == ["002074"]
     assert payload["notice_key"] is None
     assert payload["plots"][0]["data"][0]["value"] == pytest.approx(0.2)
+    assert payload["plots"][0]["data"][1] is None
 
 
 def test_level2_series_uses_cache_before_the_panel():

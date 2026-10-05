@@ -53,7 +53,9 @@ def write_trade_date(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     if not force and _is_done(output_dir, date):
-        return output_dir / f"{date}.parquet"
+        existing = output_dir / f"{date}.parquet"
+        if existing.is_file():
+            return existing
 
     if codes is not None:
         selected = list(codes)
@@ -95,16 +97,25 @@ def write_trade_date(
         if column not in today.columns:
             today[column] = float("nan")
     panel = today[columns]
-    destination = output_dir / f"{date}.parquet"
-    temporary = output_dir / f".{date}.parquet.tmp"
-    panel.to_parquet(temporary, index=False)
-    temporary.replace(destination)
+    # 生产直写 D1；本地只留断点标记，不再保留日宽表文件。
+    from . import d1_client, d1_factors
     from .factor_cache import publish_factor_file
 
-    publish_factor_file(destination)
+    destination = output_dir / f"{date}.parquet"
+    if d1_client.configured():
+        d1_factors.upsert_rows(d1_factors.dataframe_to_rows(panel, trade_date=str(date)))
+    else:
+        temporary = output_dir / f".{date}.parquet.tmp"
+        panel.to_parquet(temporary, index=False)
+        temporary.replace(destination)
+        publish_factor_file(destination)
     if errors == 0:
         _mark_done(output_dir, date, rows=len(panel))
-    return destination
+    # D1 模式下不保留日宽表，返回断点标记路径供调用方判断成功。
+    if destination.is_file():
+        return destination
+    done = _done_path(output_dir, date)
+    return done if done.is_file() else None
 
 
 def recent_weekdays(today=None, span_days: int = 365) -> list[str]:
@@ -272,7 +283,8 @@ def _done_path(output_dir: Path, date: str) -> Path:
 
 
 def _is_done(output_dir: Path, date: str) -> bool:
-    return _done_path(output_dir, date).is_file() and (output_dir / f"{date}.parquet").is_file()
+    """只看断点标记；日文件发布到 D1 后不再保留。"""
+    return _done_path(output_dir, date).is_file()
 
 
 def _mark_done(output_dir: Path, date: str, *, rows: int) -> None:

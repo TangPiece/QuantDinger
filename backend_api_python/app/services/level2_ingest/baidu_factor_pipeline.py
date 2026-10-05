@@ -1,7 +1,9 @@
-"""从百度网盘按日下载 Level2 明细，算因子并上传 R2。
+"""从百度网盘按日下载 Level2 明细，算因子并写入 D1。
 
-按日历日从早到晚串行：先并行下完该日全部股票，再本地计算日宽表并上传；
-上传成功后删除当日本地明细，再进入下一日。已上传日期默认跳过，可断点续跑。
+按日历日从早到晚串行：先并行下完该日全部股票，再本地计算日宽表并写入 D1；
+成功后删除当日本地明细，再进入下一日。已写入日期默认跳过，可断点续跑。
+
+默认下载并发为 1，按批提交，避免一次挂起全市场任务；当日下载成功率低于 90% 时不算不写。
 """
 from __future__ import annotations
 
@@ -11,7 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import requests
+
 from app.services.level2_factors.book import (
+    books_ready,
     default_parquet_directory,
     discard_symbol_books,
     download_books,
@@ -20,8 +25,10 @@ from app.services.level2_factors.book import (
 
 from . import config, factor_batch
 
-# 百度接口并发不宜过大，默认与图表补数下载一致。
-DEFAULT_DOWNLOAD_WORKERS = 8
+# 百度开放接口同一时刻只宜一路，默认串行。
+DEFAULT_DOWNLOAD_WORKERS = 1
+# 当日三类明细齐全的股票占比低于该值则不算、不上传，保留本地便于续跑。
+MIN_DOWNLOAD_SUCCESS_RATIO = 0.9
 _PROGRESS_EVERY = 100
 
 
@@ -60,7 +67,7 @@ def process_date(
     """
     day = str(date).strip()
     if not force and factor_batch._is_done(output_dir, day) and factor_batch._is_uploaded(output_dir, day):
-        print(f"[{day}] 因子已上传，跳过", flush=True)
+        print(f"[{day}] 因子已写入 D1，跳过", flush=True)
         return "skipped"
 
     codes = list_remote_equity_codes(day)
@@ -68,14 +75,24 @@ def process_date(
         print(f"[{day}] 网盘无 A 股目录，跳过", flush=True)
         return "empty"
 
-    print(f"[{day}] 开始下载，共 {len(codes)} 只，workers={max(1, int(download_workers))}", flush=True)
+    print(
+        f"[{day}] 开始下载，共 {len(codes)} 只，workers={max(1, int(download_workers))}（默认 1，按批提交）",
+        flush=True,
+    )
     downloaded = _download_all_codes(
         day,
         codes,
         books_dir,
         max(1, int(download_workers)),
     )
-    print(f"[{day}] 下载结束，成功 {downloaded}/{len(codes)}", flush=True)
+    ratio = downloaded / len(codes) if codes else 0.0
+    print(f"[{day}] 下载结束，成功 {downloaded}/{len(codes)} ({ratio:.1%})", flush=True)
+    if downloaded <= 0 or ratio < MIN_DOWNLOAD_SUCCESS_RATIO:
+        print(
+            f"[{day}] 下载成功率低于 {MIN_DOWNLOAD_SUCCESS_RATIO:.0%}，跳过计算与上传，保留本地明细",
+            flush=True,
+        )
+        return "failed"
 
     print(f"[{day}] 开始计算因子，workers={max(1, int(workers))}", flush=True)
     path = factor_batch.write_trade_date(
@@ -89,18 +106,18 @@ def process_date(
         print(f"[{day}] 没有可算的明细", flush=True)
         return "failed"
 
-    print(f"[{day}] 正在上传 {config.factor_object_key(day)}", flush=True)
+    print(f"[{day}] 正在写入 D1 l2_factors", flush=True)
     try:
         factor_batch._upload_factor_file(path, uploader)
     except Exception as exc:
         # 保留本地明细和日宽表，便于下次重试；不再进下一日。
         raise UploadFailed(day) from exc
-    # 有成功行就落了日文件；上传成功后一律记上传标记，便于断点续跑。
+    # 有成功行就落了日文件；写入 D1 成功后一律记上传标记，便于断点续跑。
     if not factor_batch._is_done(output_dir, day):
         factor_batch._mark_done(output_dir, day, rows=_row_count(path))
     factor_batch._mark_uploaded(output_dir, day)
     _cleanup_day_books(books_dir, day)
-    print(f"[{day}] 因子已上传 {config.factor_object_key(day)}，本地明细已清理", flush=True)
+    print(f"[{day}] 因子已写入 D1，本地明细已清理", flush=True)
     return "ok"
 
 
@@ -156,28 +173,47 @@ def run_range(
 
 
 def _download_all_codes(date: str, codes: list[str], books_dir: Path, workers: int) -> int:
-    """并行下载；单股失败不中断。返回成功只数。"""
+    """按批下载；单股失败不中断。返回三类明细齐全的只数。
+
+    不一次提交全部股票，这样中断只卡住当前这一小批。本地已经齐全的股票直接跳过。
+    """
     total = len(codes)
     if total == 0:
         return 0
-    success = 0
-    done = 0
-    with ThreadPoolExecutor(max_workers=min(workers, total)) as pool:
-        futures = {pool.submit(download_books, books_dir, date, code): code for code in codes}
-        for future in as_completed(futures):
-            code = futures[future]
-            done += 1
-            try:
-                future.result()
-                success += 1
-            except FileNotFoundError:
-                print(f"[{date}] 明细不存在，跳过 {code}", flush=True)
-            except Exception as exc:
-                print(f"[{date}] 下载失败 {code}: {exc}", flush=True)
-            if done == total or done % _PROGRESS_EVERY == 0:
-                print(f"[{date}] 下载进度 {done}/{total}", flush=True)
+    pending = [code for code in codes if not books_ready(books_dir, date, code)]
+    success = total - len(pending)
+    done = success
+    if success:
+        print(f"[{date}] 已齐全 {success} 只，跳过下载", flush=True)
+    batch_size = max(1, int(workers))
+    index = 0
+    while index < len(pending):
+        batch = pending[index:index + batch_size]
+        index += batch_size
+        pool = ThreadPoolExecutor(max_workers=len(batch))
+        try:
+            futures = {pool.submit(download_books, books_dir, date, code): code for code in batch}
+            for future in as_completed(futures):
+                code = futures[future]
+                done += 1
+                try:
+                    future.result()
+                    if books_ready(books_dir, date, code):
+                        success += 1
+                    else:
+                        print(f"[{date}] 明细不完整，跳过 {code}", flush=True)
+                except FileNotFoundError:
+                    print(f"[{date}] 明细不存在，跳过 {code}", flush=True)
+                except (requests.exceptions.RequestException, OSError, TimeoutError) as exc:
+                    print(f"[{date}] 网络下载失败 {code}: {exc}", flush=True)
+                except Exception as exc:
+                    print(f"[{date}] 下载失败 {code}: {exc}", flush=True)
+                if done == total or done % _PROGRESS_EVERY == 0:
+                    print(f"[{date}] 下载进度 {done}/{total}", flush=True)
+        finally:
+            # 未开始的任务直接取消，避免 Ctrl+C / stop 卡在当前请求的超时上。
+            pool.shutdown(wait=False, cancel_futures=True)
     return success
-
 
 def _cleanup_day_books(books_dir: Path, date: str) -> None:
     """删除项目缓存里这一天的全部明细目录。"""
@@ -224,10 +260,15 @@ def _parse_day(value: str):
 
 def main(argv: list[str] | None = None) -> int:
     """命令行入口：``--start`` / ``--end`` 闭区间，先下载后算因子再上传。"""
-    parser = argparse.ArgumentParser(description="从百度网盘按日下载明细、计算因子并上传 R2")
+    parser = argparse.ArgumentParser(description="从百度网盘按日下载明细、计算因子并写入 D1")
     parser.add_argument("--start", required=True, help="起始交易日 YYYYMMDD")
     parser.add_argument("--end", required=True, help="结束交易日 YYYYMMDD")
-    parser.add_argument("--download-workers", type=int, default=DEFAULT_DOWNLOAD_WORKERS)
+    parser.add_argument(
+        "--download-workers",
+        type=int,
+        default=DEFAULT_DOWNLOAD_WORKERS,
+        help="百度并行下载数，默认 1；按批提交，已齐全的股票会跳过",
+    )
     parser.add_argument("--workers", type=int, default=factor_batch.DEFAULT_FACTOR_WORKERS, help="因子计算并行度")
     parser.add_argument("--force", action="store_true", help="已上传的日期也重算并覆盖上传")
     parser.add_argument("--dry-run", action="store_true", help="只打印将处理的日历日")

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import requests
 
 from app.services.level2_factors.book import set_book_downloader, set_remote_lister
 from app.services.level2_ingest import baidu_factor_pipeline as pipeline
@@ -276,3 +277,106 @@ def test_dry_run_prints_dates_without_download(tmp_path: Path, capsys: pytest.Ca
     assert called == []
     out = capsys.readouterr().out
     assert "20260601" in out and "20260602" in out
+
+
+def test_low_download_success_skips_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """下载成功率低于 90% 时不算因子、不上传，已成功的本地明细保留。"""
+    books = tmp_path / "books"
+    output = tmp_path / "factors"
+    date = "20260601"
+    codes = [f"60000{i}.SH" for i in range(10)]
+    payload = _book_payload()
+    uploaded: list[str] = []
+
+    def fake_download(day: str, code: str, ftype: str) -> bytes | None:
+        # 只有第一只成功，成功率 10%。
+        if code == codes[0]:
+            return payload[ftype]
+        raise requests.exceptions.ConnectTimeout("slow")
+
+    set_remote_lister(lambda day: codes if day == date else [])
+    set_book_downloader(fake_download)
+
+    # download_books 需要把异常传出；注入的 downloader 抛错时 book._fetch 会抛。
+    status = pipeline.process_date(
+        date,
+        books_dir=books,
+        output_dir=output,
+        download_workers=1,
+        workers=1,
+        uploader=lambda key, body: uploaded.append(key),
+    )
+    assert status == "failed"
+    assert uploaded == []
+    assert (books / date / codes[0] / "行情.parquet").is_file()
+    assert not (output / f"{date}.parquet").exists()
+
+
+def test_download_submits_in_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """按批提交，不会一次把全部股票挂进同一个线程池。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    books = tmp_path / "books"
+    output = tmp_path / "factors"
+    date = "20260601"
+    codes = [f"60000{i}.SH" for i in range(5)]
+    payload = _book_payload()
+    created: list = []
+    real = ThreadPoolExecutor
+
+    class SpyPool(real):
+        def __init__(self, max_workers=None, *args, **kwargs):
+            super().__init__(max_workers=max_workers, *args, **kwargs)
+            self.submitted = 0
+            created.append(self)
+
+        def submit(self, fn, *args, **kwargs):
+            self.submitted += 1
+            return super().submit(fn, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "ThreadPoolExecutor", SpyPool)
+    set_remote_lister(lambda day: codes if day == date else [])
+    set_book_downloader(lambda day, code, ftype: payload[ftype])
+    status = pipeline.process_date(
+        date,
+        books_dir=books,
+        output_dir=output,
+        download_workers=2,
+        workers=1,
+        uploader=lambda key, body: None,
+    )
+    assert status == "ok"
+    assert [pool.submitted for pool in created] == [2, 2, 1]
+
+
+def test_ready_symbol_skips_download(tmp_path: Path):
+    """本地三类明细已齐的股票不再下载。"""
+    books = tmp_path / "books"
+    output = tmp_path / "factors"
+    date = "20260601"
+    ready = "600000.SH"
+    missing = "000001.SZ"
+    payload = _book_payload()
+    folder = books / date / ready
+    folder.mkdir(parents=True)
+    for name, blob in payload.items():
+        (folder / f"{name}.parquet").write_bytes(blob)
+    called: list[str] = []
+
+    def fake(day: str, code: str, ftype: str) -> bytes:
+        called.append(code)
+        return payload[ftype]
+
+    set_remote_lister(lambda day: [ready, missing] if day == date else [])
+    set_book_downloader(fake)
+    status = pipeline.process_date(
+        date,
+        books_dir=books,
+        output_dir=output,
+        download_workers=1,
+        workers=1,
+        uploader=lambda key, body: None,
+    )
+    assert status == "ok"
+    assert ready not in called
+    assert missing in called

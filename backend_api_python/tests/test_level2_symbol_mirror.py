@@ -1,10 +1,21 @@
-"""按日宽表收成每只股票一个文件，只上传基础列。"""
+"""按日宽表收成每只股票一个文件；D1 模式下默认跳过。"""
 from io import BytesIO
 
 import pandas as pd
 
 
-def test_rebuild_uploads_each_symbol_once(tmp_path, monkeypatch):
+def test_rebuild_skips_without_uploader(tmp_path):
+    from app.services.level2_factors.symbol_mirror import rebuild_symbol_mirrors
+
+    pd.DataFrame({
+        "trade_date": ["20251103"],
+        "symbol": ["600519.SH"],
+        "l2_obi": [0.2],
+    }).to_parquet(tmp_path / "20251103.parquet", index=False)
+    assert rebuild_symbol_mirrors(tmp_path) == (0, 0)
+
+
+def test_rebuild_uploads_each_symbol_once_when_uploader_injected(tmp_path, monkeypatch):
     from app.services.level2_factors.names import stored_columns
     from app.services.level2_factors.symbol_mirror import rebuild_symbol_mirrors
 

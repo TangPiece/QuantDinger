@@ -14,6 +14,14 @@ def _hide_host_staging(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest
     monkeypatch.setenv("LEVEL2_STAGING_PARQUET_DIR", str(tmp_path_factory.mktemp("no-staging")))
 
 
+@pytest.fixture
+def disable_d1(monkeypatch: pytest.MonkeyPatch) -> None:
+    """需要本地日 parquet 的用例关掉 Worker，避免读到本机 .env 去连网。"""
+    from app.services.level2_factors import d1_client
+
+    monkeypatch.setattr(d1_client, "configured", lambda: False)
+
+
 def _write_book(root: Path, date: str, code: str) -> None:
     day = root / date / code
     day.mkdir(parents=True)
@@ -55,7 +63,7 @@ def test_load_book_reads_parquet_only(tmp_path: Path):
         load_frame(tmp_path, "20251103", "600000.SH", "行情.csv")
 
 
-def test_build_writes_factor_panel_from_parquet(tmp_path: Path):
+def test_build_writes_factor_panel_from_parquet(tmp_path: Path, disable_d1):
     books = tmp_path / "books"
     output = tmp_path / "factors"
     _write_book(books, "20251103", "600000.SH")
@@ -112,7 +120,7 @@ def test_missing_book_is_downloaded_once(tmp_path: Path):
         set_book_downloader(None)
 
 
-def test_empty_local_day_uses_remote_codes(tmp_path: Path):
+def test_empty_local_day_uses_remote_codes(tmp_path: Path, disable_d1):
     from app.services.level2_factors.book import set_book_downloader, set_remote_lister
 
     books = tmp_path / "books"
@@ -181,7 +189,7 @@ def test_remote_book_path_inserts_year_and_month(monkeypatch: pytest.MonkeyPatch
     )
 
 
-def test_finished_day_still_fetches_a_new_symbol(tmp_path: Path):
+def test_finished_day_still_fetches_a_new_symbol(tmp_path: Path, disable_d1):
     """日期已经给别的股票写过面板时，新标的仍要下载，并写入临时表。"""
     from app.services.level2_factors.book import set_book_downloader
     from app.services.level2_factors.build import ensure_symbol
@@ -431,48 +439,51 @@ def test_books_prefer_project_cache_then_staging_then_baidu(tmp_path: Path, monk
         set_book_downloader(None)
 
 
-def test_factor_day_reads_local_before_r2(tmp_path: Path):
-    """因子文件先读本地。本地没有时才用 R2，并把对象写回本地。"""
+def test_factor_day_reads_d1_when_no_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """生产路径不传 directory 时只读 D1；显式 directory 仅供单测。"""
     from app.services.level2_factor_panel import clear_panel_cache, enrich_panel
-    from app.services.level2_factors.r2_factors import set_factor_remote
+    from app.services.level2_factors import d1_client, d1_factors
 
     clear_panel_cache()
-    local = pd.DataFrame({
-        "trade_date": ["20260929"],
-        "symbol": ["002074.SZ"],
-        "l2_active_net_buy": [0.1],
-    })
-    local.to_parquet(tmp_path / "20260929.parquet", index=False)
-    remote = pd.DataFrame({
-        "trade_date": ["20260929"],
-        "symbol": ["002074.SZ"],
-        "l2_active_net_buy": [0.9],
-    })
     fetched: list[str] = []
 
-    def download(date: str) -> bytes | None:
-        fetched.append(date)
-        return _parquet_bytes(remote)
+    def fetch_symbols(symbols, dates):
+        fetched.append(("symbols", list(symbols), list(dates)))
+        return [{
+            "trade_date": "20260929",
+            "symbol": "002074.SZ",
+            "l2_active_net_buy": 0.9,
+        }]
+
+    def warmup_dates(symbol, before, limit=19):
+        del symbol, before, limit
+        return []
 
     index = pd.to_datetime(["2026-09-29"])
     frame = pd.DataFrame({
         "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "volume": [1.0],
     }, index=index)
     members = [{"key": "CNStock:002074.SZ", "market": "CNStock", "symbol": "002074"}]
-    set_factor_remote(lambda *_args: None, download)
+    monkeypatch.setattr(d1_client, "configured", lambda: True)
+    monkeypatch.setattr(d1_factors, "fetch_symbols", fetch_symbols)
+    monkeypatch.setattr(d1_factors, "warmup_dates", warmup_dates)
     try:
-        enriched = enrich_panel({"CNStock:002074.SZ": frame}, members, directory=tmp_path)
-        assert enriched["CNStock:002074.SZ"]["l2_active_net_buy"].iloc[0] == pytest.approx(0.1)
-        assert fetched == []
+        enriched = enrich_panel({"CNStock:002074.SZ": frame}, members)
+        assert fetched
+        assert enriched["CNStock:002074.SZ"]["l2_active_net_buy"].iloc[0] == pytest.approx(0.9)
 
         clear_panel_cache()
-        (tmp_path / "20260929.parquet").unlink()
+        fetched.clear()
+        local = pd.DataFrame({
+            "trade_date": ["20260929"],
+            "symbol": ["002074.SZ"],
+            "l2_active_net_buy": [0.1],
+        })
+        local.to_parquet(tmp_path / "20260929.parquet", index=False)
         enriched = enrich_panel({"CNStock:002074.SZ": frame}, members, directory=tmp_path)
-        assert fetched == ["20260929"]
-        assert enriched["CNStock:002074.SZ"]["l2_active_net_buy"].iloc[0] == pytest.approx(0.9)
-        assert (tmp_path / "20260929.parquet").is_file()
+        assert fetched == []
+        assert enriched["CNStock:002074.SZ"]["l2_active_net_buy"].iloc[0] == pytest.approx(0.1)
     finally:
-        set_factor_remote(None, None)
         clear_panel_cache()
 
 

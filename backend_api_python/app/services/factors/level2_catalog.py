@@ -51,6 +51,14 @@ _BASE_SPECS: tuple[tuple[str, str, str, str, str, str], ...] = (
         "higher_is_bullish",
     ),
     (
+        "l2_ofi",
+        "订单流不平衡",
+        "Order flow imbalance",
+        "连续竞价相邻快照的十档加权订单流不平衡，除以十档买卖量之和的均值。正值表示买盘压力增加。间隔超过 60 秒的快照不连。",
+        "Depth-normalized ten-level order-flow imbalance between consecutive snapshots. Positive means rising bid pressure. Gaps over 60 seconds are skipped.",
+        "higher_is_bullish",
+    ),
+    (
         "l2_order_ratio",
         "委比",
         "Order-book ratio",

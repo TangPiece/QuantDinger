@@ -1,18 +1,15 @@
-"""图表补下来的 Level2 因子，按日写成 Parquet。
+"""图表补数用的 Level2 因子缓存：读写都走 D1（经 Worker）。
 
-``{目录}/{YYYYMMDD}.parquet`` 里一行是一只股票。超过 ``LEVEL2_FACTOR_CACHE_MAX_MB``
-（默认 512）或早于 ``LEVEL2_FACTOR_CACHE_MAX_DAYS``（默认 370）的交易日会被删掉。
-设为 0 表示该项目不淘汰。测试可以换 ``MemoryFactorCache``，不写文件、不连数据库。
+``MemoryFactorCache`` 仍供单测注入，不连网。
+本地日 parquet 不再作为生产缓存。
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import math
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -24,17 +21,17 @@ _table_dropped = False
 
 
 def factor_limit_bytes() -> int | None:
-    """临时表容量。未设置时 512MB，小于等于 0 不按容量删。"""
-    return _limit(os.getenv("LEVEL2_FACTOR_CACHE_MAX_MB", ""), default=512.0, unit=_MB)
+    """本地 SQLite 读缓存体积上限（字节）。默认 2048MB，约单股三年 + 多标的余量。"""
+    return _limit(os.getenv("LEVEL2_FACTOR_CACHE_MAX_MB", ""), default=2048.0, unit=_MB)
 
 
 def factor_max_days() -> int | None:
-    """临时表保留天数。未设置时 370，覆盖近一年；小于等于 0 不过期。"""
-    return _days(os.getenv("LEVEL2_FACTOR_CACHE_MAX_DAYS", ""), default=370)
+    """本地 SQLite 读缓存保留天数。默认 1200（约三年日历日）。"""
+    return _days(os.getenv("LEVEL2_FACTOR_CACHE_MAX_DAYS", ""), default=1200)
 
 
 def cutoff_date(max_days: int | None, *, today: datetime | None = None) -> str | None:
-    """上海日期往前 ``max_days`` 天，得到 YYYYMMDD。早于这个值的交易日过期。"""
+    """上海日期往前 ``max_days`` 天，得到 YYYYMMDD。"""
     if max_days is None or max_days <= 0:
         return None
     current = today or datetime.now(_SHANGHAI)
@@ -73,7 +70,7 @@ def dates_to_evict(
 
 
 class MemoryFactorCache:
-    """测试用的内存临时表。接口和数据库实现一致。"""
+    """测试用的内存临时表。接口和 D1 实现一致。"""
 
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], dict[str, Any]] = {}
@@ -116,99 +113,109 @@ class MemoryFactorCache:
         self.rows = {key: value for key, value in self.rows.items() if key[1] not in victims}
 
 
-class ParquetFactorStore:
-    """``data/level2_factors/{YYYYMMDD}.parquet``。同一天其他股票的行会保留。"""
-
-    def __init__(self, directory: Path | None = None) -> None:
-        from app.services.level2_factor_panel import default_factor_directory
-
-        self.directory = Path(directory) if directory is not None else default_factor_directory()
-        self.directory.mkdir(parents=True, exist_ok=True)
+class D1FactorStore:
+    """生产缓存：读写都经 Worker 访问 D1 ``l2_factors``。"""
 
     def has(self, symbol: str, date: str) -> bool:
-        """这一天的文件里已经有这只股票。文件不在本地时先试 R2。"""
-        frame = _load_day(self.directory, str(date))
-        return _symbol_present(frame, symbol)
+        from . import d1_client, d1_factors
+
+        if not d1_client.configured():
+            return False
+        code = str(symbol).upper()
+        day = str(date)
+        rows = d1_factors.fetch_symbols([code], [day])
+        return any(str(row.get("symbol", "")).upper() == code for row in rows)
 
     def upsert(self, symbol: str, date: str, factors: dict[str, Any]) -> None:
-        """替换该日文件中这一只股票的行，再上传 R2 并按容量和保留天数收口。"""
-        day = str(date)
-        code = str(symbol).upper()
+        """单行写入 D1；未配置 Worker 时只打日志。"""
+        from . import d1_client, d1_factors
+        from .names import stored_columns
+
+        if not d1_client.configured():
+            _log.warning("D1 Worker 未配置，跳过因子 upsert %s %s", symbol, date)
+            return
         ready = _json_ready(factors)
-        lock_path = self.directory / f".{day}.write.lock"
-        with lock_path.open("a", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                _replace_symbol_row(self.directory, code, day, ready)
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        publish_factor_file(self.directory / f"{day}.parquet", keep_date=day)
+        row = {"trade_date": str(date), "symbol": str(symbol).upper()}
+        for column in stored_columns():
+            if column in {"trade_date", "symbol"}:
+                continue
+            row[column] = ready.get(column)
+        d1_factors.upsert_rows([row])
+        from app.services.level2_factor_panel import clear_panel_cache
+        from . import local_d1_cache
+
+        # 写 D1 后丢掉本地该行，下次读会重新回填，避免脏缓存。
+        local_d1_cache.invalidate([str(symbol).upper()], [str(date)])
+        clear_panel_cache()
 
     def history(self, symbol: str, before: str, limit: int) -> list[dict[str, Any]]:
-        """更早的因子行，先读本地，缺的日期再从 R2 拉回本地。"""
-        code = str(symbol).upper()
-        chosen = _history_dates(self.directory, code, str(before), int(limit))
-        output = []
-        for date in chosen:
-            frame = _load_day(self.directory, date)
-            row = _symbol_row(frame, code)
-            if row is None:
-                continue
-            output.append({"trade_date": date, "symbol": code, **row})
-        return output
+        from . import d1_client, d1_factors
+
+        if not d1_client.configured():
+            return []
+        return d1_factors.fetch_symbol_history(str(symbol).upper(), str(before), int(limit))
 
     def fetch(self, symbol: str, dates: list[str]) -> dict[str, dict[str, Any]]:
-        """读出这只股票在给定交易日上的因子。没有的日期不出现。"""
+        from . import d1_client, d1_factors
+
         code = str(symbol).upper()
+        wanted = sorted({str(item) for item in dates if str(item)})
         found: dict[str, dict[str, Any]] = {}
-        for date in sorted({str(item) for item in dates if str(item)}):
-            row = _symbol_row(_load_day(self.directory, date), code)
-            if row is not None:
-                found[date] = row
+        if not d1_client.configured() or not wanted:
+            return found
+        for row in d1_factors.fetch_symbols([code], wanted):
+            day = str(row.get("trade_date") or "")
+            if day:
+                found[day] = {
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"trade_date", "symbol"}
+                }
         return found
 
     def enforce(self, keep_date: str) -> None:
-        """删掉过期或超出容量的日期文件。``keep_date`` 正在写入，不删。"""
-        from app.services.level2_factor_panel import clear_panel_cache
-
-        days = _factor_files(self.directory)
-        sizes = {path.stem: path.stat().st_size for path in days}
-        victims = dates_to_evict(
-            list(sizes),
-            sizes,
-            cutoff=cutoff_date(factor_max_days()),
-            limit=factor_limit_bytes(),
-            keep=str(keep_date),
-        )
-        for date in victims:
-            if date == str(keep_date):
-                continue
-            path = self.directory / f"{date}.parquet"
-            if path.is_file():
-                path.unlink()
-        if victims:
-            clear_panel_cache()
+        """D1 不在本地淘汰。"""
+        del keep_date
 
 
-def publish_factor_file(path: Path, *, keep_date: str | None = None) -> None:
-    """把已经写好的日频文件上传到 R2，并按本地上限收口。"""
+# 旧名兼容：图表补数与测试里可能仍引用 ParquetFactorStore。
+ParquetFactorStore = D1FactorStore
+
+
+def publish_factor_file(path, *, keep_date: str | None = None) -> None:
+    """把已经写好的日频文件写入 D1；成功后删除本地日文件。"""
+    from pathlib import Path
+
     path = Path(path)
     if not path.is_file():
         return
-    from .r2_factors import upload_factor_file
+    from . import d1_client, d1_factors
 
-    upload_factor_file(path.stem, path.read_bytes())
-    ParquetFactorStore(path.parent).enforce(keep_date=keep_date or path.stem)
+    if d1_client.configured():
+        try:
+            d1_factors.upsert_day(path.stem, path)
+            path.unlink(missing_ok=True)
+            from . import local_d1_cache
+
+            local_d1_cache.invalidate(dates=[path.stem])
+            from app.services.level2_factor_panel import clear_panel_cache
+
+            clear_panel_cache()
+        except Exception:
+            _log.warning("Level2 因子写入 D1 失败 %s", path.stem, exc_info=True)
+    else:
+        _log.warning("D1 Worker 未配置，跳过因子发布 %s", path.stem)
+    del keep_date
 
 
-def get_factor_cache() -> ParquetFactorStore:
-    """图表和后台补数用的日频 Parquet。顺手删掉不再使用的数据库临时表。"""
+def get_factor_cache() -> D1FactorStore:
+    """图表和后台补数用的 D1 存储。顺手删掉不再使用的数据库临时表。"""
     _drop_factor_table()
-    return ParquetFactorStore()
+    return D1FactorStore()
 
 
 def _drop_factor_table() -> None:
-    """只尝试一次。数据库不可用时忽略，因子仍写在本地 Parquet。"""
+    """只尝试一次。数据库不可用时忽略。"""
     global _table_dropped
     if _table_dropped:
         return
@@ -222,100 +229,6 @@ def _drop_factor_table() -> None:
             db.commit()
     except Exception:
         _log.warning("删除 Level2 因子临时表失败", exc_info=True)
-
-
-def _replace_symbol_row(directory: Path, symbol: str, date: str, factors: dict[str, Any]) -> None:
-    """重写当天文件，只换这一只股票，并丢掉已落盘的滚动列。"""
-    import pandas as pd
-
-    from app.services.level2_factor_panel import clear_panel_cache
-
-    from .names import stored_columns
-
-    clear_panel_cache()
-    path = directory / f"{date}.parquet"
-    columns = stored_columns()
-    current = pd.read_parquet(path) if path.is_file() else pd.DataFrame(columns=columns)
-    if not current.empty and "symbol" in current.columns:
-        kept = current.loc[current["symbol"].astype(str).str.upper() != symbol]
-    else:
-        kept = current.iloc[0:0]
-    row = {"trade_date": date, "symbol": symbol}
-    row.update({column: factors.get(column, float("nan")) for column in columns if column not in row})
-    merged = pd.concat([kept, pd.DataFrame([row])], ignore_index=True)
-    for column in columns:
-        if column not in merged.columns:
-            merged[column] = float("nan")
-    merged = merged[columns]
-    temporary = directory / f".{date}.parquet.tmp"
-    merged.to_parquet(temporary, index=False)
-    temporary.replace(path)
-    clear_panel_cache()
-
-
-def _load_day(directory: Path, date: str):
-    from app.services.level2_factor_panel import _read_day
-
-    return _read_day(directory, date)
-
-
-def _symbol_present(frame, symbol: str) -> bool:
-    return _symbol_row(frame, symbol) is not None
-
-
-def _symbol_row(frame, symbol: str) -> dict[str, Any] | None:
-    if frame is None or getattr(frame, "empty", True) or "symbol" not in frame.columns:
-        return None
-    code = str(symbol).upper()
-    matched = frame.loc[frame["symbol"].astype(str).str.upper() == code]
-    if matched.empty:
-        return None
-    record = matched.iloc[-1]
-    return {
-        str(column): record[column]
-        for column in matched.columns
-        if str(column) not in {"trade_date", "symbol"}
-    }
-
-
-def _history_dates(directory: Path, symbol: str, before: str, limit: int) -> list[str]:
-    """本地已有的更早日期优先。数量不够时，把 R2 上缺的日期拉下来再选。"""
-    local = [path.stem for path in _factor_files(directory) if path.stem < before]
-    if len(local) >= limit:
-        return local[-limit:]
-    _pull_missing_history(directory, local, before, limit)
-    refreshed = [path.stem for path in _factor_files(directory) if path.stem < before]
-    return refreshed[-limit:]
-
-
-def _pull_missing_history(directory: Path, local: list[str], before: str, limit: int) -> None:
-    """本地更早的日子不够滚动窗口时，从 R2 把缺的日期拉回本地。"""
-    from .r2_factors import download_factor_file, list_factor_dates
-
-    have = {date for date in local if date < before}
-    if len(have) >= limit:
-        return
-    remote = [date for date in list_factor_dates() if date < before and date not in have]
-    for date in reversed(remote):
-        if len(have) >= limit:
-            break
-        payload = download_factor_file(date)
-        if not payload:
-            continue
-        path = directory / f"{date}.parquet"
-        temporary = path.with_suffix(".parquet.part")
-        temporary.write_bytes(payload)
-        temporary.replace(path)
-        have.add(date)
-
-
-def _factor_files(directory: Path) -> list[Path]:
-    if not directory.is_dir():
-        return []
-    return sorted(
-        path for path in directory.glob("*.parquet")
-        if path.stem.isdigit() and len(path.stem) == 8
-    )
 
 
 def _json_ready(factors: dict[str, Any]) -> dict[str, Any]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 只根据 data/level2_staging/parquet 计算日频因子并上传，不重新转换。
+# 只根据 data/level2_staging/parquet 计算日频因子并写入 D1，不重新转换。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -1,5 +1,7 @@
 """Factor catalog and research APIs."""
 
+import re
+
 from flask import jsonify, request
 
 from app.openapi.blueprint import HumanBlueprint as Blueprint
@@ -21,6 +23,9 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 factors_blp = Blueprint("factors", __name__)
 
+# 临时：因子库 API 不返回 Level2 滚动 mean/std/skew（计算/按 id 取数仍可用）
+_HIDDEN_L2_ROLLUP_ID = re.compile(r"_(mean|std|skew)_(5|10|20)$")
+
 
 @factors_blp.route("", methods=["GET"])
 @login_required
@@ -29,10 +34,14 @@ def factor_catalog():
         factor_type = str(request.args.get("type") or request.args.get("factor_type") or "").strip()
         category = str(request.args.get("category") or "").strip()
         provider = str(request.args.get("provider") or "").strip().lower()
-        data = list_factors(
-            category=category,
-            factor_type=factor_type,
-        )
+        data = [
+            item
+            for item in list_factors(
+                category=category,
+                factor_type=factor_type,
+            )
+            if not _HIDDEN_L2_ROLLUP_ID.search(str(item.get("factor_id") or ""))
+        ]
         talib_data = []
         if provider in ("", "ta-lib", "talib") and is_talib_available() and factor_type != "fundamental":
             talib_data = [
