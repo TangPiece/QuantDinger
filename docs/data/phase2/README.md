@@ -1,13 +1,14 @@
 # Phase 2 — Qlib Adapter & Research Engine
 
-> **Status:** Phase 2C implemented (Processor Pipeline).
-> 2D Model → 2E Signal → 2F Experiment.
+> **Status:** Phase 2C implemented (Processor Pipeline); Phase 2D (LightGBM training) implemented.
+> 2E Signal → 2F Experiment.
 
 ## Reading order
 
 1. [01_qlib_adapter_core.md](01_qlib_adapter_core.md) — QlibRuntime / Dataset / Feature / Processor / VersionResolver
 2. [02_dataset_handler.md](02_dataset_handler.md) — QuantDingerQLibHandler / segments / label / dataset cache
 3. [03_processor_pipeline.md](03_processor_pipeline.md) — Processor whitelist / fit-on-train / pipeline digest
+4. [04_model_training.md](04_model_training.md) — LightGBM train / artifact / prediction traceability
 
 ## Prerequisite
 

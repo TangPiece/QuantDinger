@@ -85,4 +85,4 @@ MLFLOW_DISABLE_AGENT_HINT=1 \
 
 ## 7. Next
 
-Phase 2D — Model Training (LightGBM end-to-end: Dataset → Processor → Prediction → MLflow).
+Phase 2D — [Model Training](04_model_training.md) (LightGBM: Dataset → Processor → Artifact → Prediction).

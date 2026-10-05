@@ -124,6 +124,50 @@ class DatasetHandle(_ContractModel):
     manifest_uri: str = ""
 
 
+class ModelDefinition(_ContractModel):
+    """可版本化的模型资产（Phase 2D：仅 LightGBM 引擎）。"""
+
+    code: str
+    version: str
+    name: str
+    engine: Literal["lightgbm"] = "lightgbm"
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class PredictionRecord(_ContractModel):
+    """Test 段预测行；不含 Signal / 订单语义。"""
+
+    instrument_key: str
+    trading_date: str
+    prediction: float
+    model_version: str
+    dataset_hash: str
+    bundle_hash: str
+
+
+class ArtifactRecord(_ContractModel):
+    """D1 / Registry 中的 artifact 索引（大文件在 R2 或本地 cache）。"""
+
+    artifact_id: str
+    artifact_type: str
+    storage_uri: str
+    checksum: Optional[str] = None
+    size_bytes: Optional[int] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelVersionRecord(_ContractModel):
+    """model_version 行：挂 dataset / processor / artifact。"""
+
+    model_code: str
+    version: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    artifact_id: Optional[str] = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    dataset_ref: Optional[str] = None
+    processor_ref: Optional[str] = None
+
+
 class ModelArtifact(_ContractModel):
     model_code: str
     version: str

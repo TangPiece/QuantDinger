@@ -11,10 +11,14 @@ from typing import Any, Optional, Protocol
 
 from . import config, d1_client
 from .contracts import (
+    ArtifactRecord,
     DataVersionRef,
     DatasetDefinition,
     DatasetHandle,
+    ExperimentDefinition,
     FeatureDefinition,
+    ModelDefinition,
+    ModelVersionRecord,
     PricePolicy,
     ProcessorDefinition,
     SnapshotRef,
@@ -24,6 +28,24 @@ from .hashing import canonical_json, compute_dataset_hash
 
 class ProcessorImmutabilityError(ValueError):
     """同一 code@version 禁止修改 pipeline；须 bump version。"""
+
+
+class ModelImmutabilityError(ValueError):
+    """同一 model code@version 禁止修改 config；须 bump version。"""
+
+
+def _assert_model_version_immutable(
+    existing_raw: dict[str, Any],
+    record: ModelVersionRecord,
+) -> None:
+    """已存在的 model_version 若 config 变化则拒绝。"""
+    old_cfg = existing_raw.get("config") if isinstance(existing_raw, dict) else None
+    new_cfg = record.model_dump(mode="json").get("config")
+    if canonical_json(old_cfg or {}) != canonical_json(new_cfg or {}):
+        raise ModelImmutabilityError(
+            f"model version {record.model_code}@{record.version} is immutable; "
+            "bump version to change config"
+        )
 
 
 def _assert_processor_immutable(
@@ -91,6 +113,22 @@ class ResearchRegistry(Protocol):
 
     def get_snapshot(self, snapshot_id: str) -> SnapshotRef: ...
 
+    def upsert_model(self, model: ModelDefinition) -> None: ...
+
+    def get_model(self, model_code: str) -> ModelDefinition: ...
+
+    def upsert_model_version(self, record: ModelVersionRecord) -> None: ...
+
+    def get_model_version(self, model_version_ref: str) -> ModelVersionRecord: ...
+
+    def upsert_artifact(self, record: ArtifactRecord) -> None: ...
+
+    def get_artifact(self, artifact_id: str) -> ArtifactRecord: ...
+
+    def upsert_experiment(self, experiment: ExperimentDefinition) -> None: ...
+
+    def get_experiment(self, experiment_id: str) -> ExperimentDefinition: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -108,6 +146,10 @@ class LocalJsonRegistry:
                     "datasets": {},
                     "features": {},
                     "processors": {},
+                    "models": {},
+                    "model_versions": {},
+                    "artifacts": {},
+                    "experiments": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -278,6 +320,85 @@ class LocalJsonRegistry:
             for item in (raw.get("items") or [])
         ]
         return SnapshotRef(snapshot_id=snapshot_id, items=items)
+
+    def upsert_model(self, model: ModelDefinition) -> None:
+        """登记 ModelDefinition（engine 等元数据）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("models", {})
+            key = model.code
+            existing = data["models"].get(key)
+            payload = model.model_dump(mode="json")
+            if existing is not None and existing != payload:
+                raise ModelImmutabilityError(
+                    f"model {key!r} metadata conflict; bump code or align definition"
+                )
+            data["models"][key] = payload
+            self._write(data)
+
+    def get_model(self, model_code: str) -> ModelDefinition:
+        data = self._read()
+        raw = (data.get("models") or {}).get(model_code)
+        if not raw:
+            raise KeyError(f"model not found: {model_code!r}")
+        return ModelDefinition.model_validate(raw)
+
+    def upsert_model_version(self, record: ModelVersionRecord) -> None:
+        """登记 model_version；同 code@version 禁止改 config。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("model_versions", {})
+            key = f"{record.model_code}@{record.version}"
+            existing = data["model_versions"].get(key)
+            if existing is not None:
+                _assert_model_version_immutable(existing, record)
+                # 允许更新 artifact_id / metrics（训练产物）
+                merged = dict(existing)
+                merged.update(record.model_dump(mode="json"))
+                data["model_versions"][key] = merged
+            else:
+                data["model_versions"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_model_version(self, model_version_ref: str) -> ModelVersionRecord:
+        code, version = _split_ref(model_version_ref)
+        data = self._read()
+        raw = (data.get("model_versions") or {}).get(f"{code}@{version}")
+        if not raw:
+            raise KeyError(f"model_version not found: {model_version_ref}")
+        return ModelVersionRecord.model_validate(raw)
+
+    def upsert_artifact(self, record: ArtifactRecord) -> None:
+        """登记 artifact 索引（内容寻址 id）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("artifacts", {})
+            existing = data["artifacts"].get(record.artifact_id)
+            if existing is not None and existing != record.model_dump(mode="json"):
+                raise ValueError(f"artifact_id conflict: {record.artifact_id!r}")
+            data["artifacts"][record.artifact_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_artifact(self, artifact_id: str) -> ArtifactRecord:
+        data = self._read()
+        raw = (data.get("artifacts") or {}).get(artifact_id)
+        if not raw:
+            raise KeyError(f"artifact not found: {artifact_id!r}")
+        return ArtifactRecord.model_validate(raw)
+
+    def upsert_experiment(self, experiment: ExperimentDefinition) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("experiments", {})
+            data["experiments"][experiment.experiment_id] = experiment.model_dump(mode="json")
+            self._write(data)
+
+    def get_experiment(self, experiment_id: str) -> ExperimentDefinition:
+        data = self._read()
+        raw = (data.get("experiments") or {}).get(experiment_id)
+        if not raw:
+            raise KeyError(f"experiment not found: {experiment_id!r}")
+        return ExperimentDefinition.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -520,6 +641,177 @@ class D1ResearchRegistry:
             raise KeyError(f"processor not found: {processor_ref}")
         raw = json.loads(rows[0]["definition_json"])
         return ProcessorDefinition.model_validate(raw)
+
+    def upsert_model(self, model: ModelDefinition) -> None:
+        d1_client.query(
+            """
+            INSERT INTO model (code, name, engine, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(code) DO NOTHING
+            """,
+            [model.code, model.name, model.engine, _utc_now()],
+        )
+
+    def get_model(self, model_code: str) -> ModelDefinition:
+        rows = d1_client.query("SELECT * FROM model WHERE code=?", [model_code])
+        if not rows:
+            raise KeyError(f"model not found: {model_code!r}")
+        row = rows[0]
+        return ModelDefinition(
+            code=row["code"],
+            version="1",
+            name=row["name"],
+            engine=row["engine"],
+            config={},
+        )
+
+    def upsert_model_version(self, record: ModelVersionRecord) -> None:
+        self.upsert_model(
+            ModelDefinition(
+                code=record.model_code,
+                version=record.version,
+                name=record.model_code,
+                engine="lightgbm",
+                config=record.config,
+            )
+        )
+        rows = d1_client.query(
+            """
+            SELECT mv.model_version_id FROM model_version mv
+            JOIN model m ON m.model_id = mv.model_id
+            WHERE m.code=? AND mv.version=?
+            """,
+            [record.model_code, record.version],
+        )
+        payload = json.dumps(record.model_dump(mode="json"), ensure_ascii=False)
+        if rows:
+            d1_client.query(
+                """
+                UPDATE model_version SET config_json=?, artifact_id=?, metrics_json=?
+                WHERE model_version_id=?
+                """,
+                [
+                    payload,
+                    record.artifact_id,
+                    json.dumps(record.metrics or {}, ensure_ascii=False),
+                    rows[0]["model_version_id"],
+                ],
+            )
+            return
+        model_rows = d1_client.query(
+            "SELECT model_id FROM model WHERE code=?", [record.model_code]
+        )
+        d1_client.query(
+            """
+            INSERT INTO model_version (
+              model_id, version, config_json, artifact_id, metrics_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                model_rows[0]["model_id"],
+                record.version,
+                payload,
+                record.artifact_id,
+                json.dumps(record.metrics or {}, ensure_ascii=False),
+                _utc_now(),
+            ],
+        )
+
+    def get_model_version(self, model_version_ref: str) -> ModelVersionRecord:
+        code, version = _split_ref(model_version_ref)
+        rows = d1_client.query(
+            """
+            SELECT mv.config_json FROM model_version mv
+            JOIN model m ON m.model_id = mv.model_id
+            WHERE m.code=? AND mv.version=?
+            """,
+            [code, version],
+        )
+        if not rows:
+            raise KeyError(f"model_version not found: {model_version_ref}")
+        return ModelVersionRecord.model_validate(json.loads(rows[0]["config_json"]))
+
+    def upsert_artifact(self, record: ArtifactRecord) -> None:
+        d1_client.query(
+            """
+            INSERT INTO artifact (
+              artifact_id, artifact_type, storage_uri, checksum, size_bytes,
+              metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(artifact_id) DO UPDATE SET
+              storage_uri=excluded.storage_uri,
+              checksum=excluded.checksum,
+              size_bytes=excluded.size_bytes,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.artifact_id,
+                record.artifact_type,
+                record.storage_uri,
+                record.checksum,
+                record.size_bytes,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+                _utc_now(),
+            ],
+        )
+
+    def get_artifact(self, artifact_id: str) -> ArtifactRecord:
+        rows = d1_client.query(
+            "SELECT * FROM artifact WHERE artifact_id=?", [artifact_id]
+        )
+        if not rows:
+            raise KeyError(f"artifact not found: {artifact_id!r}")
+        row = rows[0]
+        return ArtifactRecord(
+            artifact_id=row["artifact_id"],
+            artifact_type=row["artifact_type"],
+            storage_uri=row["storage_uri"],
+            checksum=row.get("checksum"),
+            size_bytes=row.get("size_bytes"),
+            metadata=json.loads(row.get("metadata_json") or "{}"),
+        )
+
+    def upsert_experiment(self, experiment: ExperimentDefinition) -> None:
+        d1_client.query(
+            """
+            INSERT INTO experiment (
+              experiment_id, name, snapshot_id, dataset_hash, status,
+              mlflow_run_id, parameters_json, metrics_json, created_at
+            ) VALUES (?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
+            ON CONFLICT(experiment_id) DO UPDATE SET
+              metrics_json=excluded.metrics_json,
+              mlflow_run_id=excluded.mlflow_run_id,
+              parameters_json=excluded.parameters_json
+            """,
+            [
+                experiment.experiment_id,
+                experiment.name,
+                experiment.snapshot_id,
+                experiment.dataset_hash,
+                experiment.mlflow_run_id,
+                json.dumps(experiment.parameters or {}, ensure_ascii=False),
+                json.dumps({}, ensure_ascii=False),
+                _utc_now(),
+            ],
+        )
+
+    def get_experiment(self, experiment_id: str) -> ExperimentDefinition:
+        rows = d1_client.query(
+            "SELECT * FROM experiment WHERE experiment_id=?", [experiment_id]
+        )
+        if not rows:
+            raise KeyError(f"experiment not found: {experiment_id!r}")
+        row = rows[0]
+        return ExperimentDefinition(
+            experiment_id=row["experiment_id"],
+            name=row["name"],
+            dataset_ref=str(row.get("dataset_ref") or ""),
+            snapshot_id=row.get("snapshot_id") or "",
+            dataset_hash=row.get("dataset_hash") or "",
+            model_version_ref=None,
+            mlflow_run_id=row.get("mlflow_run_id"),
+            parameters=json.loads(row.get("parameters_json") or "{}"),
+        )
 
     def upsert_universe_ref(
         self,
