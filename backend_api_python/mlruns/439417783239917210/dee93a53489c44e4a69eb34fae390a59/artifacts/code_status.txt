@@ -1,0 +1,29 @@
+On branch feature/20261005-qlib
+Your branch is ahead of 'origin/feature/20261005-qlib' by 12 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   app/services/research_data/backtest/fingerprint.py
+	modified:   app/services/research_data/backtest/request.py
+	modified:   ../docs/COMMANDS_CN.md
+	modified:   ../docs/backtest/README.md
+	modified:   ../docs/data/phase3/README.md
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	app/services/research_data/backtest_qlib/
+	mlruns/288172671885447707/
+	mlruns/439417783239917210/48b1f1c06ecc4824b08c7380227452e4/
+	mlruns/439417783239917210/9f79886dbd5c421e97e436ed1ac622b5/
+	mlruns/439417783239917210/a833c5153f5643e5a3124e664a5284ad/
+	mlruns/439417783239917210/afcbee43c0b24ab89661dc13c479833d/
+	mlruns/439417783239917210/d86a1c5109e64373aabddb79a96e3cfc/
+	mlruns/439417783239917210/dee93a53489c44e4a69eb34fae390a59/
+	mlruns/439538954804449822/
+	scripts/verify_phase3b_qlib_backtest.py
+	tests/research_data/test_phase3b_qlib_backtest.py
+	../docs/backtest/07_qlib_research_backtest.md
+
+no changes added to commit (use "git add" and/or "git commit -a")

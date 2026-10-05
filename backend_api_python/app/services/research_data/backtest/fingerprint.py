@@ -16,6 +16,7 @@ def compute_request_fingerprint(request: BacktestRequest) -> str:
         "contract_version": request.contract_version or BACKTEST_CONTRACT_VERSION,
         "experiment_id": request.experiment_id,
         "dataset_hash": request.dataset_hash,
+        "dataset_ref": request.dataset_ref,
         "strategy_version": request.strategy_version,
         "signal_run_id": request.signal_run_id,
         "target_positions_artifact_id": request.target_positions_artifact_id,

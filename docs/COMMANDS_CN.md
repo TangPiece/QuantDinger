@@ -164,6 +164,20 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 Phase 3A 说明：[docs/backtest/README.md](backtest/README.md)、[docs/data/phase3/README.md](data/phase3/README.md)。
 
+验证 Phase 3B Qlib Research Backtest（需 pyqlib + LightGBM；缺依赖退出码 2）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_phase3b_qlib_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase3b_*.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 3B 说明：[docs/backtest/07_qlib_research_backtest.md](backtest/07_qlib_research_backtest.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

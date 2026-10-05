@@ -32,6 +32,8 @@ class BacktestRequest(_ContractModel):
     cost_policy: CostPolicy = Field(default_factory=CostPolicy)
     trading_rule: TradingRule = Field(default_factory=TradingRule)
     contract_version: str = BACKTEST_CONTRACT_VERSION
+    # 可选 dataset_ref：便于不经 Experiment 直接跑；from_experiment 会填入
+    dataset_ref: Optional[str] = None
     signal_run_id: Optional[str] = None
     target_positions_artifact_id: Optional[str] = None
     universe_code: Optional[str] = None
@@ -59,6 +61,7 @@ class BacktestRequest(_ContractModel):
         return cls(
             experiment_id=experiment.experiment_id,
             dataset_hash=experiment.dataset_hash,
+            dataset_ref=experiment.dataset_ref or None,
             strategy_version=experiment.strategy_version or "",
             start_date=start_date,
             end_date=end_date,

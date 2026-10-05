@@ -1,0 +1,138 @@
+diff --git a/backend_api_python/app/services/research_data/backtest/fingerprint.py b/backend_api_python/app/services/research_data/backtest/fingerprint.py
+index 632a3ce..b18d408 100644
+--- a/backend_api_python/app/services/research_data/backtest/fingerprint.py
++++ b/backend_api_python/app/services/research_data/backtest/fingerprint.py
+@@ -16,6 +16,7 @@ def compute_request_fingerprint(request: BacktestRequest) -> str:
+         "contract_version": request.contract_version or BACKTEST_CONTRACT_VERSION,
+         "experiment_id": request.experiment_id,
+         "dataset_hash": request.dataset_hash,
++        "dataset_ref": request.dataset_ref,
+         "strategy_version": request.strategy_version,
+         "signal_run_id": request.signal_run_id,
+         "target_positions_artifact_id": request.target_positions_artifact_id,
+diff --git a/backend_api_python/app/services/research_data/backtest/request.py b/backend_api_python/app/services/research_data/backtest/request.py
+index 573674e..533c866 100644
+--- a/backend_api_python/app/services/research_data/backtest/request.py
++++ b/backend_api_python/app/services/research_data/backtest/request.py
+@@ -32,6 +32,8 @@ class BacktestRequest(_ContractModel):
+     cost_policy: CostPolicy = Field(default_factory=CostPolicy)
+     trading_rule: TradingRule = Field(default_factory=TradingRule)
+     contract_version: str = BACKTEST_CONTRACT_VERSION
++    # 可选 dataset_ref：便于不经 Experiment 直接跑；from_experiment 会填入
++    dataset_ref: Optional[str] = None
+     signal_run_id: Optional[str] = None
+     target_positions_artifact_id: Optional[str] = None
+     universe_code: Optional[str] = None
+@@ -59,6 +61,7 @@ class BacktestRequest(_ContractModel):
+         return cls(
+             experiment_id=experiment.experiment_id,
+             dataset_hash=experiment.dataset_hash,
++            dataset_ref=experiment.dataset_ref or None,
+             strategy_version=experiment.strategy_version or "",
+             start_date=start_date,
+             end_date=end_date,
+diff --git a/docs/COMMANDS_CN.md b/docs/COMMANDS_CN.md
+index ac38d31..c8334a0 100644
+--- a/docs/COMMANDS_CN.md
++++ b/docs/COMMANDS_CN.md
+@@ -164,6 +164,20 @@ QUANTDINGER_SKIP_APP_INIT=1 \
+ 
+ Phase 3A 说明：[docs/backtest/README.md](backtest/README.md)、[docs/data/phase3/README.md](data/phase3/README.md)。
+ 
++验证 Phase 3B Qlib Research Backtest（需 pyqlib + LightGBM；缺依赖退出码 2）：
++
++```bash
++cd backend_api_python
++QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
++  python scripts/verify_phase3b_qlib_backtest.py
++
++QUANTDINGER_SKIP_APP_INIT=1 \
++  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase3b_*.py -q \
++  --confcutdir=tests/research_data
++```
++
++Phase 3B 说明：[docs/backtest/07_qlib_research_backtest.md](backtest/07_qlib_research_backtest.md)。
++
+ ## Level2 因子 D1 Worker
+ 
+ 在 `workers/l2-factors-d1`：
+diff --git a/docs/backtest/README.md b/docs/backtest/README.md
+index 74db485..2b7e713 100644
+--- a/docs/backtest/README.md
++++ b/docs/backtest/README.md
+@@ -1,13 +1,13 @@
+ # QuantDinger Backtest — Phase 3
+ 
+-> **Status:** Phase 3A Backtest Contract implemented.
+-> No Qlib or Production engine execution in 3A.
++> **Status:** Phase 3A Contract + Phase 3B Qlib Research Backtest implemented.
++> Production engine and dual-engine consistency remain later phases.
+ 
+ ## Roadmap
+ 
+ ```text
+-Phase 3A  Backtest Contract          ← current
+-Phase 3B  Qlib Research Backtest
++Phase 3A  Backtest Contract          ← done
++Phase 3B  Qlib Research Backtest      ← done
+ Phase 3C  Cost / Slippage / Rules
+ Phase 3D  QuantDinger Production Backtest
+ Phase 3E  Dual-Engine Consistency
+@@ -17,9 +17,10 @@ Phase 3E  Dual-Engine Consistency
+ 
+ | Area | Role in Phase 3 |
+ | --- | --- |
+-| `research_data/backtest/` | Domain Contract (Request / Result / Ledger) |
++| `research_data/backtest/` | Domain Contract (Request / Result / Ledger); **no qlib import** |
++| `research_data/backtest_qlib/` | Qlib Research adapter (3B) |
+ | `research_data` Phase 2 | Experiment → Signal → TargetPosition inputs |
+-| `strategy_v2` / Agent backtest | Strategy API V2; **not** replaced by 3A |
++| `strategy_v2` / Agent backtest | Strategy API V2; **not** replaced by 3A/3B |
+ | Qlib | Research engine adapter (3B+) |
+ | `instrument_rules.py` | Live/crypto rules snapshots; Production 3D consumes |
+ 
+@@ -31,5 +32,6 @@ Phase 3E  Dual-Engine Consistency
+ 4. [04_trading_rules.md](04_trading_rules.md)
+ 5. [05_result_schema.md](05_result_schema.md)
+ 6. [06_dual_engine_consistency.md](06_dual_engine_consistency.md)
++7. [07_qlib_research_backtest.md](07_qlib_research_backtest.md)
+ 
+ Index from research data phases: [../data/phase3/README.md](../data/phase3/README.md).
+diff --git a/docs/data/phase3/README.md b/docs/data/phase3/README.md
+index ad4c129..51466f2 100644
+--- a/docs/data/phase3/README.md
++++ b/docs/data/phase3/README.md
+@@ -1,7 +1,6 @@
+ # Phase 3 — Research Backtest
+ 
+-> **Status:** Phase 3A Backtest Contract implemented.
+-> Phase 3B Qlib Research Backtest is next.
++> **Status:** Phase 3A Contract + Phase 3B Qlib Research Backtest implemented.
+ 
+ ## Reading order
+ 
+@@ -16,11 +15,14 @@ See [../../backtest/README.md](../../backtest/README.md):
+ 5. [05_result_schema.md](../../backtest/05_result_schema.md)
+ 6. [06_dual_engine_consistency.md](../../backtest/06_dual_engine_consistency.md)
+ 
+-### 3B–3E (planned)
++### 3B — Qlib Research Backtest (done)
++
++7. [07_qlib_research_backtest.md](../../backtest/07_qlib_research_backtest.md)
++
++### 3C–3E (planned)
+ 
+ | Phase | Topic |
+ | --- | --- |
+-| 3B | Qlib Research Backtest adapter |
+ | 3C | Cost / slippage / trading rule enforcement |
+ | 3D | QuantDinger Production Backtest |
+ | 3E | Dual-engine consistency analysis |
+@@ -34,4 +36,7 @@ Phase 2F Experiment & Reproducibility must PASS ([../phase2/06_experiment_reprod
+ ```bash
+ cd backend_api_python
+ QUANTDINGER_SKIP_APP_INIT=1 python scripts/verify_phase3a_backtest.py
++
++QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
++  python scripts/verify_phase3b_qlib_backtest.py
+ ```

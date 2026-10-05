@@ -1,7 +1,6 @@
 # Phase 3 — Research Backtest
 
-> **Status:** Phase 3A Backtest Contract implemented.
-> Phase 3B Qlib Research Backtest is next.
+> **Status:** Phase 3A Contract + Phase 3B Qlib Research Backtest implemented.
 
 ## Reading order
 
@@ -16,11 +15,14 @@ See [../../backtest/README.md](../../backtest/README.md):
 5. [05_result_schema.md](../../backtest/05_result_schema.md)
 6. [06_dual_engine_consistency.md](../../backtest/06_dual_engine_consistency.md)
 
-### 3B–3E (planned)
+### 3B — Qlib Research Backtest (done)
+
+7. [07_qlib_research_backtest.md](../../backtest/07_qlib_research_backtest.md)
+
+### 3C–3E (planned)
 
 | Phase | Topic |
 | --- | --- |
-| 3B | Qlib Research Backtest adapter |
 | 3C | Cost / slippage / trading rule enforcement |
 | 3D | QuantDinger Production Backtest |
 | 3E | Dual-engine consistency analysis |
@@ -34,4 +36,7 @@ Phase 2F Experiment & Reproducibility must PASS ([../phase2/06_experiment_reprod
 ```bash
 cd backend_api_python
 QUANTDINGER_SKIP_APP_INIT=1 python scripts/verify_phase3a_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_phase3b_qlib_backtest.py
 ```

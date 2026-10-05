@@ -1,0 +1,9 @@
+artifact_location: file:///Users/900game/Desktop/ai/QuantDinger/backend_api_python/mlruns/288172671885447707
+creation_time: 1791224236729
+effective_trace_archival_retention: null
+experiment_id: '288172671885447707'
+last_update_time: 1791224236729
+lifecycle_stage: active
+name: dbg
+trace_location: null
+workspace: default
