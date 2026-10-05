@@ -152,3 +152,36 @@ def seeded_research(research_env):
         "snapshot_id": snap_id,
         "dataset_ref": "CSI300_DAILY@1.0.0",
     }
+
+
+@pytest.fixture
+def golden_qlib_env(tmp_path):
+    """Phase 1C：fixture Golden + Materializer（不访问外网）。"""
+    from app.services.research_data.ingest.build_golden import build_golden_dataset
+    from app.services.research_data.qlib_materializer import DefaultQlibMaterializer
+
+    store = LocalCanonicalStore(root=tmp_path / "canonical")
+    registry = LocalJsonRegistry(root=tmp_path / "registry")
+    result = build_golden_dataset(
+        store,
+        registry,
+        instrument_keys=["CNStock:000001", "CNStock:000002", "CNStock:600000"],
+        start=date(2024, 1, 1),
+        end=date(2024, 6, 30),
+        universe_version="2024.06",
+        snapshot_id="snap_qlib_test_001",
+        use_fixture=True,
+        status="validated",
+    )
+    query = DataQuery(store, registry)
+    cache_root = tmp_path / "research_cache"
+    materializer = DefaultQlibMaterializer(query, cache_root=cache_root)
+    return {
+        "store": store,
+        "registry": registry,
+        "query": query,
+        "materializer": materializer,
+        "cache_root": cache_root,
+        "golden": result,
+        "dataset_ref": result["dataset_ref"],
+    }

@@ -1,7 +1,7 @@
 # Phase 1 — Research Data Platform Contracts
 
-> **Status:** Phase 1B complete (Golden Dataset `cn_stock_daily@v1` + DuckDB Repository + validation).
-> Qlib Adapter / Materializer still out of scope.
+> **Status:** Phase 1C complete (Qlib Materializer + derived cache validation).
+> Qlib Adapter / Factor Lab / Backtest still out of scope.
 >
 > **Audience:** Engineers implementing QuantDinger × Qlib research data foundation.
 >
@@ -25,6 +25,7 @@ This package locks the contracts for:
 5. [05_contracts.md](05_contracts.md)
 6. [06_research_consistency.md](06_research_consistency.md)
 7. [07_phase1b_validation.md](07_phase1b_validation.md) — Golden Dataset / DataQuery 验收
+8. [08_qlib_materialization.md](08_qlib_materialization.md) — Qlib Materializer / 派生缓存
 
 ## Layered SSOT (locked)
 

@@ -64,9 +64,26 @@ QUANTDINGER_SKIP_APP_INIT=1 python scripts/build_golden_dataset.py \
   --start 2020-01-01 --end 2025-12-31
 ```
 
+物化 Qlib 派生缓存（经 DataQuery；`--wipe` 删后重建）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 python scripts/materialize_qlib_dataset.py \
+  --dataset-ref cn_stock_daily@v1 --wipe
+```
+
+验证 Qlib Cache 真读回（Calendar / Instruments / D.features / DataHandler / DataQuery 一致性）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_qlib_cache_readback.py
+```
+
 本地单测：`cd workers/qd-research-d1 && npm test`；`cd backend_api_python && python -m pytest tests/research_data -q`。
 
 Phase 1B 验收报告：[docs/data/phase1/07_phase1b_validation.md](data/phase1/07_phase1b_validation.md)。
+Phase 1C 物化说明：[docs/data/phase1/08_qlib_materialization.md](data/phase1/08_qlib_materialization.md)。
 
 ## Level2 因子 D1 Worker
 

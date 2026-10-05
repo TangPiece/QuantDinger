@@ -247,6 +247,28 @@ class DataQuery:
     def dataset(self, dataset_ref: str) -> DatasetHandle:
         return self._registry.get_dataset(dataset_ref)
 
+    def trading_calendar(
+        self,
+        instrument_keys: Sequence[str],
+        start: date,
+        end: date,
+        *,
+        exchange: str = "CN",
+        price_policy: PricePolicy | None = None,
+    ) -> list[date]:
+        """从 market 派生研究日历（有序去重）；不引入外部 calendar 源。"""
+        market = self.market(
+            instrument_keys,
+            start,
+            end,
+            exchange=exchange,
+            price_policy=price_policy,
+        )
+        if market.empty or "trading_date" not in market.columns:
+            return []
+        dates = pd.to_datetime(market["trading_date"]).dt.date
+        return sorted(set(dates.tolist()))
+
     def feature(
         self,
         feature_refs: Sequence[str],
