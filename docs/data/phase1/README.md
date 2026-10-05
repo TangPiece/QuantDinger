@@ -1,7 +1,8 @@
 # Phase 1 — Research Data Platform Contracts
 
 > **Status:** Phase 1D complete (Qlib Read Validation / consistency suite).
-> Qlib Adapter / Factor Lab / Backtest still out of scope.
+> Phase 2A Qlib Adapter Core: see [../phase2/01_qlib_adapter_core.md](../phase2/01_qlib_adapter_core.md).
+> Factor Lab / Backtest still out of scope.
 >
 > **Audience:** Engineers implementing QuantDinger × Qlib research data foundation.
 >
@@ -27,6 +28,7 @@ This package locks the contracts for:
 7. [07_phase1b_validation.md](07_phase1b_validation.md) — Golden Dataset / DataQuery 验收
 8. [08_qlib_materialization.md](08_qlib_materialization.md) — Qlib Materializer / 派生缓存
 9. [09_qlib_read_validation.md](09_qlib_read_validation.md) — Phase 1D 读回一致性闭环
+10. [../phase2/01_qlib_adapter_core.md](../phase2/01_qlib_adapter_core.md) — Phase 2A Qlib Adapter Core
 
 ## Layered SSOT (locked)
 

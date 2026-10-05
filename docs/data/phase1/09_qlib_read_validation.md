@@ -94,4 +94,4 @@ Exit codes: `0` PASS, `1` FAIL, `2` pyqlib missing.
 
 ## 8. Next
 
-After Phase 1D PASS → Phase 2 Qlib Adapter (Dataset / Handler / Processor), still without claiming production PnL parity.
+After Phase 1D PASS → [Phase 2A Qlib Adapter Core](../phase2/01_qlib_adapter_core.md).

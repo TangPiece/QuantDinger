@@ -16,6 +16,7 @@ from .contracts import (
     DatasetHandle,
     FeatureDefinition,
     PricePolicy,
+    ProcessorDefinition,
     SnapshotRef,
 )
 from .hashing import compute_dataset_hash
@@ -58,6 +59,10 @@ class ResearchRegistry(Protocol):
 
     def get_feature(self, feature_ref: str) -> FeatureDefinition: ...
 
+    def upsert_processor(self, processor: ProcessorDefinition) -> None: ...
+
+    def get_processor(self, processor_ref: str) -> ProcessorDefinition: ...
+
     def upsert_universe_ref(
         self,
         *,
@@ -84,6 +89,7 @@ class LocalJsonRegistry:
                     "snapshots": {},
                     "datasets": {},
                     "features": {},
+                    "processors": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -199,6 +205,25 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"feature not found: {feature_ref}")
         return FeatureDefinition.model_validate(raw)
+
+    def upsert_processor(self, processor: ProcessorDefinition) -> None:
+        """登记 ProcessorDefinition（Local JSON `processors` 键）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("processors", {})
+            data["processors"][f"{processor.code}@{processor.version}"] = processor.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_processor(self, processor_ref: str) -> ProcessorDefinition:
+        """读取 `code@version` Processor。"""
+        code, version = _split_ref(processor_ref)
+        data = self._read()
+        raw = (data.get("processors") or {}).get(f"{code}@{version}")
+        if not raw:
+            raise KeyError(f"processor not found: {processor_ref}")
+        return ProcessorDefinition.model_validate(raw)
 
     def upsert_universe_ref(
         self,
@@ -439,6 +464,35 @@ class D1ResearchRegistry:
             online_supported=bool(row.get("online_supported")),
             definition=json.loads(row.get("definition_json") or "{}"),
         )
+
+    def upsert_processor(self, processor: ProcessorDefinition) -> None:
+        """登记 Processor 到 D1 `processor` 表。"""
+        d1_client.query(
+            """
+            INSERT INTO processor (code, version, definition_json, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(code, version) DO UPDATE SET
+              definition_json=excluded.definition_json
+            """,
+            [
+                processor.code,
+                processor.version,
+                json.dumps(processor.model_dump(mode="json"), ensure_ascii=False),
+                _utc_now(),
+            ],
+        )
+
+    def get_processor(self, processor_ref: str) -> ProcessorDefinition:
+        """从 D1 读取 Processor。"""
+        code, version = _split_ref(processor_ref)
+        rows = d1_client.query(
+            "SELECT * FROM processor WHERE code=? AND version=?",
+            [code, version],
+        )
+        if not rows:
+            raise KeyError(f"processor not found: {processor_ref}")
+        raw = json.loads(rows[0]["definition_json"])
+        return ProcessorDefinition.model_validate(raw)
 
     def upsert_universe_ref(
         self,

@@ -87,6 +87,16 @@ Phase 1B 验收报告：[docs/data/phase1/07_phase1b_validation.md](data/phase1/
 Phase 1C 物化说明：[docs/data/phase1/08_qlib_materialization.md](data/phase1/08_qlib_materialization.md)。
 Phase 1D 读回一致性：[docs/data/phase1/09_qlib_read_validation.md](data/phase1/09_qlib_read_validation.md)。
 
+验证 Phase 2A Qlib Adapter Core（Runtime / Handler / bundle_hash）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  python scripts/verify_phase2a_adapter.py
+```
+
+Phase 2A 说明：[docs/data/phase2/01_qlib_adapter_core.md](data/phase2/01_qlib_adapter_core.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：
