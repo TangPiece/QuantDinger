@@ -1,6 +1,6 @@
 # Phase 4 — Factor Lab
 
-> **Status:** Phase 4A–4G implemented. 4H+ (Combination / …) not started.
+> **Status:** Phase 4A–4H implemented. 4I (Factor Portfolio) not started.
 
 ## Roadmap
 
@@ -12,7 +12,7 @@ Phase 4D  IC / RankIC / ICIR             ← done
 Phase 4E  Group Return / Turnover        ← done
 Phase 4F  Stability / Decay              ← done
 Phase 4G  Neutralization                 ← done
-Phase 4H  Factor Combination
+Phase 4H  Factor Combination             ← done
 Phase 4I  Factor Portfolio
 ```
 
@@ -25,32 +25,34 @@ Phase 4I  Factor Portfolio
 5. [05_factor_groups.md](05_factor_groups.md)
 6. [06_factor_stability.md](06_factor_stability.md)
 7. [07_factor_neutralization.md](07_factor_neutralization.md)
+8. [08_factor_combination.md](08_factor_combination.md)
 
 ## Commands
 
 ```bash
 cd backend_api_python
 
-# 4G
+# 4H
 QUANTDINGER_SKIP_APP_INIT=1 \
-  python scripts/verify_phase4g_factor_neutralization.py
+  python scripts/verify_phase4h_factor_combination.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
-  tests/research_data/test_phase4g_factor_neutralization.py -q \
+  tests/research_data/test_phase4h_factor_combination.py -q \
   --confcutdir=tests/research_data
 ```
 
-完整 4A–4G 命令见 [COMMANDS_CN.md](../../COMMANDS_CN.md)。
+完整 4A–4H 命令见 [COMMANDS_CN.md](../../COMMANDS_CN.md)。
 
-## Non-goals (4A–4G)
+## Non-goals (4A–4H)
 
 ```text
-❌ Combination / Portfolio / UI
+❌ Portfolio Optimization / UI / ML Combination
 ❌ Production Backtest / Order Execution
 ❌ Modify Phase 3 / l2_factors Worker
 ❌ Large detail rows in D1
 ❌ abs(IC) / guessed AUTO direction / Bull-Bear guess
 ❌ Weighted stability_score / decay curve fitting
 ❌ Compute Beta / new market_cap ingest / overwrite Raw Factor
+❌ Recompute IC inside Combination / auto full 4D–4G re-eval
 ```

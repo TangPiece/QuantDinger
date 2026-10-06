@@ -491,3 +491,21 @@ class FactorNeutralizationSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorCombinationSummary(_ContractModel):
+    """Phase 4H：因子组合汇总（明细在 R2；成员 Dataset 不可变）。"""
+
+    combination_hash: str
+    member_factor_dataset_ids_json: list[Any] = Field(default_factory=list)
+    normalize: str = "RANK"
+    weight_method: str = "EQUAL"
+    weights_json: dict[str, Any] = Field(default_factory=dict)
+    correlation_summary_json: dict[str, Any] = Field(default_factory=dict)
+    redundancy_pairs_json: list[Any] = Field(default_factory=list)
+    composite_factor_dataset_id: str = ""
+    combination_version: str = "qd_factor_combination@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

@@ -18,6 +18,7 @@ from .contracts import (
     DatasetHandle,
     EvaluationDatasetRecord,
     ExperimentDefinition,
+    FactorCombinationSummary,
     FactorDatasetRecord,
     FactorEvaluationSummary,
     FactorNeutralizationSummary,
@@ -189,6 +190,14 @@ class ResearchRegistry(Protocol):
         self, neutralization_hash: str
     ) -> FactorNeutralizationSummary: ...
 
+    def upsert_factor_combination(
+        self, record: FactorCombinationSummary
+    ) -> None: ...
+
+    def get_factor_combination(
+        self, combination_hash: str
+    ) -> FactorCombinationSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -218,6 +227,7 @@ class LocalJsonRegistry:
                     "factor_group_evaluations": {},
                     "factor_stability_evaluations": {},
                     "factor_neutralizations": {},
+                    "factor_combinations": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -641,6 +651,26 @@ class LocalJsonRegistry:
                 f"factor_neutralization not found: {neutralization_hash!r}"
             )
         return FactorNeutralizationSummary.model_validate(raw)
+
+    def upsert_factor_combination(
+        self, record: FactorCombinationSummary
+    ) -> None:
+        """登记 Combination Summary（Local JSON）。"""
+        key = record.combination_hash
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_combinations", {})
+            data["factor_combinations"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_factor_combination(
+        self, combination_hash: str
+    ) -> FactorCombinationSummary:
+        data = self._read()
+        raw = (data.get("factor_combinations") or {}).get(combination_hash)
+        if not raw:
+            raise KeyError(f"factor_combination not found: {combination_hash!r}")
+        return FactorCombinationSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1847,6 +1877,104 @@ class D1ResearchRegistry:
             or "",
             neutralization_version=row.get("neutralization_version")
             or "qd_factor_neutralization@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_factor_combination(
+        self, record: FactorCombinationSummary
+    ) -> None:
+        """D1：写 factor_combination；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_combination (
+                  combination_hash, member_factor_dataset_ids_json, normalize,
+                  weight_method, weights_json, correlation_summary_json,
+                  redundancy_pairs_json, composite_factor_dataset_id,
+                  combination_version, storage_uri, checksum, created_at,
+                  metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(combination_hash) DO UPDATE SET
+                  weights_json=excluded.weights_json,
+                  correlation_summary_json=excluded.correlation_summary_json,
+                  redundancy_pairs_json=excluded.redundancy_pairs_json,
+                  composite_factor_dataset_id=excluded.composite_factor_dataset_id,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.combination_hash,
+                    json.dumps(
+                        record.member_factor_dataset_ids_json or [], ensure_ascii=False
+                    ),
+                    record.normalize,
+                    record.weight_method,
+                    json.dumps(record.weights_json or {}, ensure_ascii=False),
+                    json.dumps(
+                        record.correlation_summary_json or {}, ensure_ascii=False
+                    ),
+                    json.dumps(
+                        record.redundancy_pairs_json or [], ensure_ascii=False
+                    ),
+                    record.composite_factor_dataset_id,
+                    record.combination_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_factor_combination(
+        self, combination_hash: str
+    ) -> FactorCombinationSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM factor_combination
+                WHERE combination_hash=?
+                """,
+                [combination_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"factor_combination not found: {combination_hash!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return FactorCombinationSummary(
+            combination_hash=row["combination_hash"],
+            member_factor_dataset_ids_json=_loads(
+                "member_factor_dataset_ids_json", []
+            ),
+            normalize=row.get("normalize") or "RANK",
+            weight_method=row.get("weight_method") or "EQUAL",
+            weights_json=_loads("weights_json", {}),
+            correlation_summary_json=_loads("correlation_summary_json", {}),
+            redundancy_pairs_json=_loads("redundancy_pairs_json", []),
+            composite_factor_dataset_id=row.get("composite_factor_dataset_id") or "",
+            combination_version=row.get("combination_version")
+            or "qd_factor_combination@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

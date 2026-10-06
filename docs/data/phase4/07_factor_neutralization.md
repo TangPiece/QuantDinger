@@ -68,7 +68,7 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 ## Non-goals
 
 ```text
-❌ Factor Combination / Portfolio / UI
+❌ Portfolio / UI（Combination 见 4H）
 ❌ Production Backtest / Order Execution
 ❌ Compute Beta from market bars
 ❌ New Level2 / market_cap ingest pipeline

@@ -25,6 +25,9 @@ SCHEMA_VERSION_REGIME = "regime_metrics@1"
 SCHEMA_VERSION_NEUTRALIZED = "neutralized_factor_daily@1"
 SCHEMA_VERSION_EXPOSURE = "exposure_daily@1"
 SCHEMA_VERSION_NEUT_DIAG = "neutralization_diagnostics@1"
+SCHEMA_VERSION_COMPOSITE = "composite_factor_daily@1"
+SCHEMA_VERSION_FACTOR_CORR = "factor_corr_matrix@1"
+SCHEMA_VERSION_COMB_WEIGHTS = "combination_weights@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -336,6 +339,42 @@ def neutralization_diagnostics_schema() -> pa.Schema:
             ("r_squared", pa.float64()),
             ("sample_count", pa.int32()),
             ("status", pa.string()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def composite_factor_daily_schema() -> pa.Schema:
+    """Phase 4H：合成因子审计行。"""
+    return pa.schema(
+        [
+            ("instrument_key", pa.string()),
+            ("trading_date", pa.date32()),
+            ("composite", pa.float64()),
+            ("combination_hash", pa.string()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def factor_corr_matrix_schema() -> pa.Schema:
+    """Phase 4H：因子相关矩阵。"""
+    return pa.schema(
+        [
+            ("factor_i", pa.string()),
+            ("factor_j", pa.string()),
+            ("corr", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def combination_weights_schema() -> pa.Schema:
+    """Phase 4H：组合权重。"""
+    return pa.schema(
+        [
+            ("factor_dataset_id", pa.string()),
+            ("weight", pa.float64()),
             ("data_version", pa.string()),
         ]
     )

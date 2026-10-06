@@ -1012,6 +1012,160 @@ def write_exposure_panel(
     return result
 
 
+def write_composite_factor_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    combination_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4H：审计用 composite（可含成员列）。"""
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        item.setdefault("combination_hash", combination_hash)
+        if item.get("composite") is None:
+            item["composite"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.combined_factor_key(
+        combination_hash=combination_hash,
+        kind="composite",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.composite_factor_daily_schema(),
+        required_columns=["instrument_key", "trading_date", "composite"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_COMPOSITE,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"comb_fac_{combination_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_COMPOSITE,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_factor_corr_matrix_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    combination_hash: str,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4H：相关矩阵（无年月分区）。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        if item.get("corr") is None:
+            item["corr"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.combined_factor_key(
+        combination_hash=combination_hash, kind="correlation", part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.factor_corr_matrix_schema(),
+        required_columns=["factor_i", "factor_j", "corr"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_FACTOR_CORR,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"comb_corr_{combination_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_FACTOR_CORR,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_combination_weights_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    combination_hash: str,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4H：组合权重。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        if item.get("weight") is None:
+            item["weight"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.combined_factor_key(
+        combination_hash=combination_hash, kind="weights", part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.combination_weights_schema(),
+        required_columns=["factor_dataset_id", "weight"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_COMB_WEIGHTS,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"comb_w_{combination_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_COMB_WEIGHTS,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_neutralization_diagnostics_panel(
     store: CanonicalStore,
     rows: list[dict[str, Any]],
