@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from datetime import date
 from typing import Any, Optional
 
 import pyarrow as pa
@@ -301,6 +302,62 @@ def write_factor_long(
             dataset_code=f"factor_set_{factor_set}",
             version=version,
             schema_version=schemas.SCHEMA_VERSION_FACTOR_LONG,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+        result["data_version_id"] = dv_id
+    return result
+
+
+def write_factor_wide(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    factor_set: str,
+    year: int,
+    month: int,
+    version: str,
+    factor_columns: list[str],
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """写入 Wide 因子面板（Phase 4B）。"""
+    # 规范化日期
+    norm: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        elif hasattr(td, "date") and not isinstance(td, date):
+            item["trading_date"] = td.date()
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    expected = schemas.factor_daily_wide_schema(factor_columns=factor_columns)
+    key = paths.factor_daily_key(factor_set=factor_set, year=year, month=month, part=part)
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=expected,
+        required_columns=["instrument_key", "trading_date"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_FACTOR_WIDE,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        dv_id = registry.upsert_data_version(
+            dataset_code=f"factor_set_{factor_set}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_FACTOR_WIDE,
             status="ACTIVE",
             checksum=checksum,
             r2_uri=uri,
