@@ -206,6 +206,20 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 Phase 3D 说明：[docs/backtest/09_production_backtest.md](backtest/09_production_backtest.md)。
 
+验证 Phase 3E Dual Engine Consistency（Golden；缺 pyqlib 时双引擎跳过，Production 阶梯仍跑）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase3e_consistency.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase3e_*.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 3E 说明：[docs/backtest/06_dual_engine_consistency.md](backtest/06_dual_engine_consistency.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

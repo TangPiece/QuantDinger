@@ -12,6 +12,7 @@ from typing import Any, Optional, Protocol
 from . import config, d1_client
 from .contracts import (
     ArtifactRecord,
+    ConsistencyRunRecord,
     DataVersionRef,
     DatasetDefinition,
     DatasetHandle,
@@ -134,6 +135,10 @@ class ResearchRegistry(Protocol):
 
     def get_signal_run(self, signal_run_id: str) -> SignalRunRecord: ...
 
+    def upsert_consistency_run(self, record: ConsistencyRunRecord) -> None: ...
+
+    def get_consistency_run(self, run_id: str) -> ConsistencyRunRecord: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -156,6 +161,7 @@ class LocalJsonRegistry:
                     "artifacts": {},
                     "experiments": {},
                     "signal_runs": {},
+                    "consistency_runs": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -420,6 +426,21 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"signal_run not found: {signal_run_id!r}")
         return SignalRunRecord.model_validate(raw)
+
+    def upsert_consistency_run(self, record: ConsistencyRunRecord) -> None:
+        """登记一次双引擎一致性运行（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("consistency_runs", {})
+            data["consistency_runs"][record.run_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_consistency_run(self, run_id: str) -> ConsistencyRunRecord:
+        data = self._read()
+        raw = (data.get("consistency_runs") or {}).get(run_id)
+        if not raw:
+            raise KeyError(f"consistency_run not found: {run_id!r}")
+        return ConsistencyRunRecord.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -890,6 +911,38 @@ class D1ResearchRegistry:
             artifact_id=str(meta.get("artifact_id") or art.artifact_id),
             storage_uri=art.storage_uri,
             cash_weight=float(meta.get("cash_weight") or 0.0),
+            metadata=meta,
+        )
+
+    def upsert_consistency_run(self, record: ConsistencyRunRecord) -> None:
+        """D1 无独立表：索引落在 consistency artifact metadata（由 artifact_store 写入）。"""
+        _ = record
+        return
+
+    def get_consistency_run(self, run_id: str) -> ConsistencyRunRecord:
+        """从 consistency artifact 元数据重建。"""
+        art = self.get_artifact(run_id)
+        meta = dict(art.metadata or {})
+        return ConsistencyRunRecord(
+            run_id=run_id,
+            dataset_hash=str(meta.get("dataset_hash") or ""),
+            qlib_result_id=meta.get("qlib_result_id"),
+            qd_result_id=meta.get("qd_result_id"),
+            status=meta.get("status") or "PASSED",
+            max_equity_diff=(
+                float(meta["max_equity_diff"])
+                if meta.get("max_equity_diff") is not None
+                else None
+            ),
+            max_position_diff=(
+                float(meta["max_position_diff"])
+                if meta.get("max_position_diff") is not None
+                else None
+            ),
+            artifact_uri=art.storage_uri,
+            level=str(meta.get("level") or ""),
+            semantic_fingerprint=meta.get("semantic_fingerprint"),
+            created_at=meta.get("created_at"),
             metadata=meta,
         )
 

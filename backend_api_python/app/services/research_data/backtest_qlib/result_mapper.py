@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
-import uuid
 from typing import Any
 
 import pandas as pd
@@ -206,13 +206,18 @@ def map_trades_from_indicator(
                 side = "SELL"
             elif isinstance(raw, (int, float)) and float(raw) < 0:
                 side = "SELL"
+        # 确定性 trade_id，便于 Phase 3E 跨跑对比（不用 uuid）
+        ik = _from_qlib_instrument(stock)
+        px = _safe_float(row[price_col]) if price_col else None
+        tid_src = f"{i}|{ik}|{side}|{abs(qty)}|{px}"
+        tid = "qlib_" + hashlib.sha256(tid_src.encode("utf-8")).hexdigest()[:16]
         trades.append(
             TradeRecord(
-                trade_id=f"qlib_{i}_{uuid.uuid4().hex[:8]}",
-                instrument_key=_from_qlib_instrument(stock),
+                trade_id=tid,
+                instrument_key=ik,
                 side=side,
                 quantity=abs(qty),
-                executed_price=_safe_float(row[price_col]) if price_col else None,
+                executed_price=px,
                 status="FILLED",
             )
         )

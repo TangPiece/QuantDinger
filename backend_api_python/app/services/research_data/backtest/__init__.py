@@ -1,7 +1,7 @@
 """Phase 3A/3C：回测 Domain Contract + Execution Rules（无 qlib）。"""
 
 from .engine import BacktestEngine
-from .fingerprint import compute_request_fingerprint
+from .fingerprint import compute_request_fingerprint, compute_semantic_fingerprint
 from .ledger import EquityPoint, PortfolioSnapshot, PositionSnapshot, TradeRecord
 from .policy import (
     BacktestMarketPricePolicy,
@@ -30,5 +30,6 @@ __all__ = [
     "TradingRule",
     "cn_equity_close_signal_next_open",
     "compute_request_fingerprint",
+    "compute_semantic_fingerprint",
     "research_qlib_relaxed",
 ]

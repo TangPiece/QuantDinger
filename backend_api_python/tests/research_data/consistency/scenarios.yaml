@@ -1,0 +1,31 @@
+# Phase 3E Golden scenarios → Level 映射
+levels:
+  L0:
+    scenario_id: ideal_buy_hold
+    description: T+0 close, zero cost, lot=1, no limits
+  L1:
+    scenario_id: with_commission
+    description: L0 + commission
+  L2:
+    scenario_id: with_slippage
+    description: L1 + slippage_bps
+  L3:
+    scenario_id: t_plus_delay
+    description: T+1 open execution
+  L4:
+    scenario_id: lot_floor
+    description: lot_size=100 floor (155→100)
+  L5:
+    scenario_id: real_constraints
+    description: limit up/down, suspension, cash, stamp tax
+
+instruments:
+  - CNStock:600000
+  - CNStock:600519
+  - CNStock:000001
+  - CNStock:000002
+  - CNStock:601318
+
+calendar:
+  start: "2024-05-06"
+  end: "2024-05-31"

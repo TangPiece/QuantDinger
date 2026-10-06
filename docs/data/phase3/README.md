@@ -1,6 +1,6 @@
 # Phase 3 — Research Backtest
 
-> **Status:** Phase 3A–3D implemented. Phase 3E dual-engine consistency is next.
+> **Status:** Phase 3A–3E implemented. Phase 4 Factor Lab is next (not in this tree yet).
 
 ## Reading order
 
@@ -27,11 +27,9 @@ See [../../backtest/README.md](../../backtest/README.md):
 
 9. [09_production_backtest.md](../../backtest/09_production_backtest.md)
 
-### 3E (planned)
+### 3E — Dual Engine Consistency (done)
 
-| Phase | Topic |
-| --- | --- |
-| 3E | Dual-engine consistency analysis |
+See [06_dual_engine_consistency.md](../../backtest/06_dual_engine_consistency.md) (implementation + Golden).
 
 ## Prerequisite
 
@@ -51,4 +49,7 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase3d_production_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase3e_consistency.py
 ```

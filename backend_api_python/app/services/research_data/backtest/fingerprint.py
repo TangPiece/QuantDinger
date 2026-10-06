@@ -10,8 +10,8 @@ from .request import BacktestRequest
 from .version import BACKTEST_CONTRACT_VERSION
 
 
-def compute_request_fingerprint(request: BacktestRequest) -> str:
-    """同请求语义 → 同 fingerprint（不含 result_id）。"""
+def _request_payload(request: BacktestRequest, *, include_engine: bool) -> dict:
+    """构造指纹 payload；Phase 3E 语义指纹排除 engine。"""
     payload = {
         "contract_version": request.contract_version or BACKTEST_CONTRACT_VERSION,
         "experiment_id": request.experiment_id,
@@ -26,13 +26,26 @@ def compute_request_fingerprint(request: BacktestRequest) -> str:
         "initial_capital": request.initial_capital,
         "benchmark": request.benchmark,
         "frequency": request.frequency,
-        "engine": request.engine,
         "seed": request.seed,
         "execution_policy": request.execution_policy.model_dump(mode="json"),
         "market_price_policy": request.market_price_policy.model_dump(mode="json"),
         "cost_policy": request.cost_policy.model_dump(mode="json"),
         "trading_rule": request.trading_rule.model_dump(mode="json"),
     }
+    if include_engine:
+        payload["engine"] = request.engine
+    return payload
+
+
+def compute_request_fingerprint(request: BacktestRequest) -> str:
+    """同请求（含 engine）→ 同 fingerprint（不含 result_id）。"""
     return hashlib.sha256(
-        canonical_json(payload).encode("utf-8")
+        canonical_json(_request_payload(request, include_engine=True)).encode("utf-8")
+    ).hexdigest()
+
+
+def compute_semantic_fingerprint(request: BacktestRequest) -> str:
+    """跨引擎可比语义指纹：同政策/信号/区间，排除 engine。"""
+    return hashlib.sha256(
+        canonical_json(_request_payload(request, include_engine=False)).encode("utf-8")
     ).hexdigest()

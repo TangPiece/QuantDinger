@@ -1,6 +1,6 @@
 # QuantDinger Backtest — Phase 3
 
-> **Status:** Phase 3A–3D implemented. Phase 3E dual-engine consistency remains next.
+> **Status:** Phase 3A–3E implemented. Next major stage is Factor Lab (Phase 4), not started here.
 
 ## Roadmap
 
@@ -9,7 +9,7 @@ Phase 3A  Backtest Contract          ← done
 Phase 3B  Qlib Research Backtest      ← done
 Phase 3C  Cost / Slippage / Rules     ← done
 Phase 3D  QuantDinger Production Backtest ← done
-Phase 3E  Dual-Engine Consistency
+Phase 3E  Dual-Engine Consistency     ← done
 ```
 
 ## Boundaries
@@ -20,6 +20,7 @@ Phase 3E  Dual-Engine Consistency
 | `research_data/backtest/execution/` | OrderIntent / Cost / Eligibility / Simulator (3C) |
 | `research_data/backtest_qlib/` | Qlib Research adapter (3B) |
 | `research_data/backtest_production/` | Production day-loop engine (3D) |
+| `research_data/backtest_consistency/` | Dual-engine compare + attribution (3E) |
 | `research_data` Phase 2 | Experiment → Signal → TargetPosition inputs |
 | `strategy_v2` / Agent backtest | Strategy API V2; **not** replaced |
 | Qlib | Research engine adapter (3B+) |

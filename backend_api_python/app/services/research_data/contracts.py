@@ -303,3 +303,20 @@ class SignalRunRecord(_ContractModel):
     storage_uri: str
     cash_weight: float = 0.0
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConsistencyRunRecord(_ContractModel):
+    """Phase 3E：双引擎一致性运行的 Registry 索引（大数据在 R2 artifact）。"""
+
+    run_id: str
+    dataset_hash: str
+    qlib_result_id: Optional[str] = None
+    qd_result_id: Optional[str] = None
+    status: Literal["PASSED", "FAILED", "SKIPPED_QLIB"] = "PASSED"
+    max_equity_diff: Optional[float] = None
+    max_position_diff: Optional[float] = None
+    artifact_uri: str = ""
+    level: str = ""
+    semantic_fingerprint: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

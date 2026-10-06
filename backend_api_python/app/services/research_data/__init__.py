@@ -5,6 +5,7 @@
 """
 
 from .contracts import (
+    ConsistencyRunRecord,
     DataVersionRef,
     DatasetDefinition,
     DatasetHandle,
@@ -26,6 +27,7 @@ from .hashing import compute_dataset_hash
 
 __all__ = [
     "CanonicalRepository",
+    "ConsistencyRunRecord",
     "DataQuery",
     "DataVersionRef",
     "DatasetDefinition",
