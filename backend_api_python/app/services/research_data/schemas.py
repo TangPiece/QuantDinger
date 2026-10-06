@@ -14,6 +14,7 @@ SCHEMA_VERSION_TRADING_STATUS = "trading_status@1"
 SCHEMA_VERSION_FACTOR_LONG = "factor_daily_long@1"
 SCHEMA_VERSION_FACTOR_WIDE = "factor_daily_wide@1"
 SCHEMA_VERSION_EVALUATION = "evaluation_panel@1"
+SCHEMA_VERSION_METRIC_IC = "metric_ic_daily@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -148,6 +149,21 @@ def evaluation_panel_schema(*, horizons: Iterable[int] | None = None) -> pa.Sche
     for h in horizons or ():
         fields.append((f"forward_return_{int(h)}d", pa.float64()))
     return pa.schema(fields)
+
+
+def metric_ic_daily_schema() -> pa.Schema:
+    """Phase 4D：按日 IC / RankIC 宽表。"""
+    return pa.schema(
+        [
+            ("evaluation_date", pa.date32()),
+            ("horizon", pa.int32()),
+            ("ic", pa.float64()),
+            ("rank_ic", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("valid", pa.bool_()),
+            ("data_version", pa.string()),
+        ]
+    )
 
 
 class SchemaValidationError(ValueError):

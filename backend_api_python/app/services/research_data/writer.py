@@ -431,6 +431,65 @@ def write_evaluation_panel(
     return result
 
 
+def write_metric_ic_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    metric_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """写入 IC 日度时间序列分区（Phase 4D）。"""
+    norm: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        ed = item.get("evaluation_date")
+        if isinstance(ed, str):
+            item["evaluation_date"] = date.fromisoformat(ed[:10])
+        elif hasattr(ed, "date") and not isinstance(ed, date):
+            item["evaluation_date"] = ed.date()
+        item.setdefault("data_version", version)
+        # None → NaN for float columns so Arrow accepts
+        for col in ("ic", "rank_ic"):
+            if item.get(col) is None:
+                item[col] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_metrics_ic_key(
+        metric_hash=metric_hash, year=year, month=month, part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.metric_ic_daily_schema(),
+        required_columns=["evaluation_date", "horizon", "sample_count", "valid"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_METRIC_IC,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        dv_id = registry.upsert_data_version(
+            dataset_code=f"metric_ic_{metric_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_METRIC_IC,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+        result["data_version_id"] = dv_id
+    return result
+
+
 def write_snapshot_manifest(
     store: CanonicalStore,
     *,

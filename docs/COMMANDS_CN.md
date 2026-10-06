@@ -258,6 +258,19 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+验证 Phase 4D IC / RankIC / ICIR（按日横截面；不重算 Forward Return）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase4d_factor_metrics.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase4d_factor_metrics.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 
 ## Level2 因子 D1 Worker

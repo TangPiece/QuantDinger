@@ -116,6 +116,36 @@ def evaluation_manifest_key(*, evaluation_hash: str) -> str:
     return f"{_root()}/evaluation/factor/{evaluation_hash}/manifest.json"
 
 
+def evaluation_metrics_ic_prefix(*, metric_hash: str, year: int, month: int) -> str:
+    """Phase 4D：``qd/evaluation/metrics/{hash}/ic/year=/month=``。"""
+    return (
+        f"{_root()}/evaluation/metrics/{metric_hash}/ic/"
+        f"year={int(year):04d}/month={int(month):02d}"
+    )
+
+
+def evaluation_metrics_ic_key(
+    *,
+    metric_hash: str,
+    year: int,
+    month: int,
+    part: str = "part-000.parquet",
+) -> str:
+    return (
+        f"{evaluation_metrics_ic_prefix(metric_hash=metric_hash, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def evaluation_metrics_manifest_key(*, metric_hash: str) -> str:
+    """Phase 4D：``qd/evaluation/metrics/{metric_hash}/manifest.json``。"""
+    return f"{_root()}/evaluation/metrics/{metric_hash}/manifest.json"
+
+
+def evaluation_metrics_summary_key(*, metric_hash: str) -> str:
+    return f"{_root()}/evaluation/metrics/{metric_hash}/summary.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

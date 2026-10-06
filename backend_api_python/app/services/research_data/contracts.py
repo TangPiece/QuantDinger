@@ -393,3 +393,36 @@ class EvaluationDatasetRecord(_ContractModel):
     status: Literal["ACTIVE", "FAILED"] = "ACTIVE"
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorEvaluationSummary(_ContractModel):
+    """Phase 4D：按 horizon 的 IC/RankIC 汇总（明细时间序列在 R2）。"""
+
+    metric_hash: str
+    evaluation_hash: str
+    factor_dataset_id: str = ""
+    horizon: int
+    mean_ic: Optional[float] = None
+    median_ic: Optional[float] = None
+    std_ic: Optional[float] = None
+    min_ic: Optional[float] = None
+    max_ic: Optional[float] = None
+    ic_ir: Optional[float] = None
+    ic_t_stat: Optional[float] = None
+    positive_ic_ratio: Optional[float] = None
+    mean_rank_ic: Optional[float] = None
+    median_rank_ic: Optional[float] = None
+    std_rank_ic: Optional[float] = None
+    min_rank_ic: Optional[float] = None
+    max_rank_ic: Optional[float] = None
+    rank_ic_ir: Optional[float] = None
+    rank_ic_t_stat: Optional[float] = None
+    positive_rank_ic_ratio: Optional[float] = None
+    valid_day_count: int = 0
+    total_day_count: int = 0
+    direction: Literal["AUTO", "POSITIVE", "NEGATIVE"] = "AUTO"
+    metric_version: str = "qd_factor_metrics@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

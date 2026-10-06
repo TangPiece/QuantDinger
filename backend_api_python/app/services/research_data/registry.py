@@ -19,6 +19,7 @@ from .contracts import (
     EvaluationDatasetRecord,
     ExperimentDefinition,
     FactorDatasetRecord,
+    FactorEvaluationSummary,
     FeatureDefinition,
     ModelDefinition,
     ModelVersionRecord,
@@ -153,6 +154,14 @@ class ResearchRegistry(Protocol):
 
     def get_evaluation_dataset(self, evaluation_hash: str) -> EvaluationDatasetRecord: ...
 
+    def upsert_factor_evaluation_summary(
+        self, record: FactorEvaluationSummary
+    ) -> None: ...
+
+    def get_factor_evaluation_summary(
+        self, metric_hash: str, horizon: int
+    ) -> FactorEvaluationSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -178,6 +187,7 @@ class LocalJsonRegistry:
                     "consistency_runs": {},
                     "factor_datasets": {},
                     "evaluation_datasets": {},
+                    "factor_evaluation_summaries": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -510,6 +520,29 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"evaluation_dataset not found: {evaluation_hash!r}")
         return EvaluationDatasetRecord.model_validate(raw)
+
+    def upsert_factor_evaluation_summary(
+        self, record: FactorEvaluationSummary
+    ) -> None:
+        """登记 IC Summary（Local JSON；key = metric_hash:horizon）。"""
+        key = f"{record.metric_hash}:{int(record.horizon)}"
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_evaluation_summaries", {})
+            data["factor_evaluation_summaries"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_factor_evaluation_summary(
+        self, metric_hash: str, horizon: int
+    ) -> FactorEvaluationSummary:
+        data = self._read()
+        key = f"{metric_hash}:{int(horizon)}"
+        raw = (data.get("factor_evaluation_summaries") or {}).get(key)
+        if not raw:
+            raise KeyError(
+                f"factor_evaluation_summary not found: {metric_hash!r} h={horizon}"
+            )
+        return FactorEvaluationSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1321,6 +1354,118 @@ class D1ResearchRegistry:
             checksum=art.checksum,
             schema_version=str(meta.get("schema_version") or "evaluation_panel@1"),
             metadata=meta,
+        )
+
+    def upsert_factor_evaluation_summary(
+        self, record: FactorEvaluationSummary
+    ) -> None:
+        """D1：写 factor_evaluation_summary；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_evaluation_summary (
+                  metric_hash, horizon, evaluation_hash, factor_dataset_id,
+                  mean_ic, median_ic, std_ic, min_ic, max_ic, ic_ir, ic_t_stat,
+                  positive_ic_ratio, mean_rank_ic, median_rank_ic, std_rank_ic,
+                  min_rank_ic, max_rank_ic, rank_ic_ir, rank_ic_t_stat,
+                  positive_rank_ic_ratio, valid_day_count, total_day_count,
+                  direction, metric_version, storage_uri, checksum,
+                  created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(metric_hash, horizon) DO UPDATE SET
+                  mean_ic=excluded.mean_ic,
+                  mean_rank_ic=excluded.mean_rank_ic,
+                  ic_ir=excluded.ic_ir,
+                  rank_ic_ir=excluded.rank_ic_ir,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.metric_hash,
+                    int(record.horizon),
+                    record.evaluation_hash,
+                    record.factor_dataset_id,
+                    record.mean_ic,
+                    record.median_ic,
+                    record.std_ic,
+                    record.min_ic,
+                    record.max_ic,
+                    record.ic_ir,
+                    record.ic_t_stat,
+                    record.positive_ic_ratio,
+                    record.mean_rank_ic,
+                    record.median_rank_ic,
+                    record.std_rank_ic,
+                    record.min_rank_ic,
+                    record.max_rank_ic,
+                    record.rank_ic_ir,
+                    record.rank_ic_t_stat,
+                    record.positive_rank_ic_ratio,
+                    record.valid_day_count,
+                    record.total_day_count,
+                    record.direction,
+                    record.metric_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_factor_evaluation_summary(
+        self, metric_hash: str, horizon: int
+    ) -> FactorEvaluationSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM factor_evaluation_summary
+                WHERE metric_hash=? AND horizon=?
+                """,
+                [metric_hash, int(horizon)],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(
+                f"factor_evaluation_summary not found: {metric_hash!r} h={horizon}"
+            )
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return FactorEvaluationSummary(
+            metric_hash=row["metric_hash"],
+            evaluation_hash=row["evaluation_hash"],
+            factor_dataset_id=row.get("factor_dataset_id") or "",
+            horizon=int(row["horizon"]),
+            mean_ic=row.get("mean_ic"),
+            median_ic=row.get("median_ic"),
+            std_ic=row.get("std_ic"),
+            min_ic=row.get("min_ic"),
+            max_ic=row.get("max_ic"),
+            ic_ir=row.get("ic_ir"),
+            ic_t_stat=row.get("ic_t_stat"),
+            positive_ic_ratio=row.get("positive_ic_ratio"),
+            mean_rank_ic=row.get("mean_rank_ic"),
+            median_rank_ic=row.get("median_rank_ic"),
+            std_rank_ic=row.get("std_rank_ic"),
+            min_rank_ic=row.get("min_rank_ic"),
+            max_rank_ic=row.get("max_rank_ic"),
+            rank_ic_ir=row.get("rank_ic_ir"),
+            rank_ic_t_stat=row.get("rank_ic_t_stat"),
+            positive_rank_ic_ratio=row.get("positive_rank_ic_ratio"),
+            valid_day_count=int(row.get("valid_day_count") or 0),
+            total_day_count=int(row.get("total_day_count") or 0),
+            direction=row.get("direction") or "AUTO",
+            metric_version=row.get("metric_version") or "qd_factor_metrics@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
         )
 
     def upsert_universe_ref(
