@@ -331,6 +331,48 @@ def factor_portfolio_metrics_key(*, portfolio_hash: str) -> str:
     return f"{_root()}/portfolio/{portfolio_hash}/metrics/summary.json"
 
 
+def strategy_research_prefix(
+    *,
+    strategy_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+) -> str:
+    """Phase 5A：``qd/strategy/{hash}/{kind}/[year=/month=]``。"""
+    base = f"{_root()}/strategy/{strategy_hash}/{kind}"
+    if year is None or month is None:
+        return base
+    return f"{base}/year={int(year):04d}/month={int(month):02d}"
+
+
+def strategy_research_key(
+    *,
+    strategy_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+    part: str = "part-000.parquet",
+) -> str:
+    if year is None or month is None:
+        return f"{strategy_research_prefix(strategy_hash=strategy_hash, kind=kind)}/{part}"
+    return (
+        f"{strategy_research_prefix(strategy_hash=strategy_hash, kind=kind, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def strategy_research_manifest_key(*, strategy_hash: str) -> str:
+    return f"{_root()}/strategy/{strategy_hash}/manifest.json"
+
+
+def strategy_research_summary_key(*, strategy_hash: str) -> str:
+    return f"{_root()}/strategy/{strategy_hash}/summary.json"
+
+
+def strategy_research_snapshot_key(*, strategy_hash: str) -> str:
+    return f"{_root()}/strategy/{strategy_hash}/snapshots/strategy_spec.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

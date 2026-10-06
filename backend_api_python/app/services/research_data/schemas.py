@@ -32,6 +32,8 @@ SCHEMA_VERSION_PORT_POSITION = "portfolio_position@1"
 SCHEMA_VERSION_PORT_WEIGHT = "portfolio_weight@1"
 SCHEMA_VERSION_PORT_RETURN = "portfolio_return_daily@1"
 SCHEMA_VERSION_PORT_TURNOVER = "portfolio_turnover_daily@1"
+SCHEMA_VERSION_STRAT_SIGNAL = "strategy_signal@1"
+SCHEMA_VERSION_STRAT_POSITION = "strategy_target_position@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -437,6 +439,44 @@ def portfolio_turnover_daily_schema() -> pa.Schema:
             ("trading_date", pa.date32()),
             ("turnover", pa.float64()),
             ("rebalanced", pa.bool_()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def strategy_signal_schema() -> pa.Schema:
+    """Phase 5A：策略 Signal（对齐 contracts.Signal）。"""
+    return pa.schema(
+        [
+            ("signal_id", pa.string()),
+            ("instrument_key", pa.string()),
+            ("trading_date", pa.string()),
+            ("direction", pa.string()),
+            ("score", pa.float64()),
+            ("signal_time", pa.timestamp("us", tz="UTC")),
+            ("knowledge_time", pa.timestamp("us", tz="UTC")),
+            ("execution_time", pa.timestamp("us", tz="UTC")),
+            ("rank", pa.int32()),
+            ("strategy_version", pa.string()),
+            ("dataset_hash", pa.string()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def strategy_target_position_schema() -> pa.Schema:
+    """Phase 5A：策略 TargetPosition。"""
+    return pa.schema(
+        [
+            ("instrument_key", pa.string()),
+            ("trading_date", pa.string()),
+            ("portfolio_id", pa.string()),
+            ("strategy_version", pa.string()),
+            ("dataset_hash", pa.string()),
+            ("timestamp", pa.timestamp("us", tz="UTC")),
+            ("target_weight", pa.float64()),
+            ("signal_id", pa.string()),
+            ("leg", pa.string()),
             ("data_version", pa.string()),
         ]
     )

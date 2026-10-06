@@ -1249,6 +1249,135 @@ def write_portfolio_turnover_panel(
     return result
 
 
+def write_strategy_signal_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    strategy_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5A：策略 Signal 分区。"""
+    from datetime import datetime, timezone
+
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        for col in ("signal_time", "knowledge_time", "execution_time"):
+            ts = item.get(col)
+            if isinstance(ts, str):
+                item[col] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            elif ts is None:
+                item[col] = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if item.get("score") is None:
+            item["score"] = float("nan")
+        if item.get("rank") is None:
+            item["rank"] = 0
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.strategy_research_key(
+        strategy_hash=strategy_hash,
+        kind="signals",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.strategy_signal_schema(),
+        required_columns=["signal_id", "instrument_key", "trading_date", "score"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_STRAT_SIGNAL,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"st_sig_{strategy_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_STRAT_SIGNAL,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_strategy_target_position_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    strategy_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5A：策略 TargetPosition 分区。"""
+    from datetime import datetime, timezone
+
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        ts = item.get("timestamp")
+        if isinstance(ts, str):
+            item["timestamp"] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        elif ts is None:
+            item["timestamp"] = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if item.get("target_weight") is None:
+            item["target_weight"] = float("nan")
+        item.setdefault("signal_id", "")
+        item.setdefault("leg", "")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.strategy_research_key(
+        strategy_hash=strategy_hash,
+        kind="target_positions",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.strategy_target_position_schema(),
+        required_columns=["instrument_key", "trading_date", "target_weight"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_STRAT_POSITION,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"st_pos_{strategy_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_STRAT_POSITION,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_composite_factor_panel(
     store: CanonicalStore,
     rows: list[dict[str, Any]],

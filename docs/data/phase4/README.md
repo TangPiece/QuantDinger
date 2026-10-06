@@ -1,6 +1,6 @@
 # Phase 4 — Factor Lab
 
-> **Status:** Phase 4A–4I implemented. Factor Lab research loop complete；下一步 5A Strategy Research。
+> **Status:** Phase 4A–4I implemented. Factor Lab research loop complete；下一步见 [Phase 5A](../phase5/01_strategy_research.md)。
 
 ## Roadmap
 

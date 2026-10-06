@@ -30,8 +30,10 @@ from .contracts import (
     ModelVersionRecord,
     PricePolicy,
     ProcessorDefinition,
+    ResearchStrategyRecord,
     SignalRunRecord,
     SnapshotRef,
+    StrategyResearchSummary,
 )
 from .hashing import canonical_json, compute_dataset_hash
 
@@ -207,6 +209,22 @@ class ResearchRegistry(Protocol):
         self, portfolio_hash: str
     ) -> FactorPortfolioSummary: ...
 
+    def upsert_research_strategy(
+        self, record: ResearchStrategyRecord
+    ) -> None: ...
+
+    def get_research_strategy(
+        self, strategy_code: str
+    ) -> ResearchStrategyRecord: ...
+
+    def upsert_strategy_research(
+        self, record: StrategyResearchSummary
+    ) -> None: ...
+
+    def get_strategy_research(
+        self, strategy_hash: str
+    ) -> StrategyResearchSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -238,6 +256,8 @@ class LocalJsonRegistry:
                     "factor_neutralizations": {},
                     "factor_combinations": {},
                     "factor_portfolios": {},
+                    "research_strategies": {},
+                    "strategy_research": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -697,6 +717,40 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"factor_portfolio not found: {portfolio_hash!r}")
         return FactorPortfolioSummary.model_validate(raw)
+
+    def upsert_research_strategy(self, record: ResearchStrategyRecord) -> None:
+        """登记研究策略名录（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("research_strategies", {})
+            data["research_strategies"][record.strategy_code] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_research_strategy(self, strategy_code: str) -> ResearchStrategyRecord:
+        data = self._read()
+        raw = (data.get("research_strategies") or {}).get(strategy_code)
+        if not raw:
+            raise KeyError(f"research_strategy not found: {strategy_code!r}")
+        return ResearchStrategyRecord.model_validate(raw)
+
+    def upsert_strategy_research(self, record: StrategyResearchSummary) -> None:
+        """登记冻结策略版本 Summary（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_research", {})
+            data["strategy_research"][record.strategy_hash] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_research(self, strategy_hash: str) -> StrategyResearchSummary:
+        data = self._read()
+        raw = (data.get("strategy_research") or {}).get(strategy_hash)
+        if not raw:
+            raise KeyError(f"strategy_research not found: {strategy_hash!r}")
+        return StrategyResearchSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -2084,6 +2138,151 @@ class D1ResearchRegistry:
             metrics_json=_loads("metrics_json", {}),
             portfolio_version=row.get("portfolio_version")
             or "qd_factor_portfolio@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_research_strategy(self, record: ResearchStrategyRecord) -> None:
+        """D1：写 research_strategy；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO research_strategy (
+                  strategy_code, name, description, status, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_code) DO UPDATE SET
+                  name=excluded.name,
+                  description=excluded.description,
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_code,
+                    record.name,
+                    record.description,
+                    record.status,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_research_strategy(self, strategy_code: str) -> ResearchStrategyRecord:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM research_strategy WHERE strategy_code=?
+                """,
+                [strategy_code],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"research_strategy not found: {strategy_code!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ResearchStrategyRecord(
+            strategy_code=row["strategy_code"],
+            name=row.get("name") or "",
+            description=row.get("description") or "",
+            status=row.get("status") or "ACTIVE",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_strategy_research(self, record: StrategyResearchSummary) -> None:
+        """D1：写 research_strategy_version；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO research_strategy_version (
+                  strategy_hash, strategy_code, strategy_version_label,
+                  factor_dataset_id, portfolio_hash, evaluation_hash,
+                  signal_definition_json, rebalance_rule_json, holding_rule_json,
+                  universe_code, snapshot_id, signal_row_count, position_row_count,
+                  storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(strategy_hash) DO UPDATE SET
+                  signal_row_count=excluded.signal_row_count,
+                  position_row_count=excluded.position_row_count,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_hash,
+                    record.strategy_code,
+                    record.strategy_version_label,
+                    record.factor_dataset_id,
+                    record.portfolio_hash,
+                    record.evaluation_hash,
+                    json.dumps(
+                        record.signal_definition_json or {}, ensure_ascii=False
+                    ),
+                    json.dumps(
+                        record.rebalance_rule_json or {}, ensure_ascii=False
+                    ),
+                    json.dumps(record.holding_rule_json or {}, ensure_ascii=False),
+                    record.universe_code,
+                    record.snapshot_id,
+                    int(record.signal_row_count),
+                    int(record.position_row_count),
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_strategy_research(self, strategy_hash: str) -> StrategyResearchSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM research_strategy_version
+                WHERE strategy_hash=?
+                """,
+                [strategy_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"strategy_research not found: {strategy_hash!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return StrategyResearchSummary(
+            strategy_hash=row["strategy_hash"],
+            strategy_code=row["strategy_code"],
+            strategy_version_label=row.get("strategy_version_label")
+            or "qd_strategy_research@1",
+            factor_dataset_id=row.get("factor_dataset_id") or "",
+            portfolio_hash=row.get("portfolio_hash") or "",
+            evaluation_hash=row.get("evaluation_hash") or "",
+            signal_definition_json=_loads("signal_definition_json", {}),
+            rebalance_rule_json=_loads("rebalance_rule_json", {}),
+            holding_rule_json=_loads("holding_rule_json", {}),
+            universe_code=row.get("universe_code") or "",
+            snapshot_id=row.get("snapshot_id") or "",
+            signal_row_count=int(row.get("signal_row_count") or 0),
+            position_row_count=int(row.get("position_row_count") or 0),
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

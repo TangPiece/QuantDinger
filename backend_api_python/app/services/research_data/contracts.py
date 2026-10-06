@@ -527,3 +527,36 @@ class FactorPortfolioSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchStrategyRecord(_ContractModel):
+    """Phase 5A：研究策略名录（逻辑 code，非交易 Strategy API V2）。"""
+
+    strategy_code: str
+    name: str = ""
+    description: str = ""
+    status: str = "ACTIVE"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyResearchSummary(_ContractModel):
+    """Phase 5A：冻结策略版本汇总；明细在 R2，不算收益。"""
+
+    strategy_hash: str
+    strategy_code: str
+    strategy_version_label: str = "qd_strategy_research@1"
+    factor_dataset_id: str = ""
+    portfolio_hash: str = ""
+    evaluation_hash: str = ""
+    signal_definition_json: dict[str, Any] = Field(default_factory=dict)
+    rebalance_rule_json: dict[str, Any] = Field(default_factory=dict)
+    holding_rule_json: dict[str, Any] = Field(default_factory=dict)
+    universe_code: str = ""
+    snapshot_id: str = ""
+    signal_row_count: int = 0
+    position_row_count: int = 0
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

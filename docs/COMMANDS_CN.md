@@ -336,7 +336,21 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
-Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
+验证 Phase 5A Strategy Research（Strategy Contract；Signal + TargetPosition；PIT/look-ahead；不算收益）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase5a_strategy_research.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase5a_strategy_research.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。  
+Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 
 ## Level2 因子 D1 Worker
 
