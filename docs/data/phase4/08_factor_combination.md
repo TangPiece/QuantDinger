@@ -68,7 +68,7 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 ```text
 ❌ ML Combination / Auto mining / RD-Agent
-❌ Portfolio Optimization / Risk budgeting
+❌ Portfolio Optimization / Risk budgeting（持仓组合见 4I）
 ❌ Recompute IC inside Combination (use member_ic)
 ❌ Auto full 4D–4G re-eval pipeline
 ❌ Overwrite member Factor Datasets

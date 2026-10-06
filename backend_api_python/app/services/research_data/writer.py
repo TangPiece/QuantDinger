@@ -1012,6 +1012,243 @@ def write_exposure_panel(
     return result
 
 
+def write_portfolio_position_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    portfolio_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4I：TargetPosition 兼容持仓分区。"""
+    from datetime import datetime, timezone
+
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        ts = item.get("timestamp")
+        if isinstance(ts, str):
+            item["timestamp"] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        elif ts is None:
+            item["timestamp"] = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if item.get("target_weight") is None:
+            item["target_weight"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.factor_portfolio_key(
+        portfolio_hash=portfolio_hash,
+        kind="positions",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.portfolio_position_schema(),
+        required_columns=["instrument_key", "trading_date", "target_weight"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_PORT_POSITION,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"pf_pos_{portfolio_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_PORT_POSITION,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_portfolio_weight_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    portfolio_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4I：权重审计分区。"""
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        if item.get("weight") is None:
+            item["weight"] = float("nan")
+        if item.get("factor_value") is None:
+            item["factor_value"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.factor_portfolio_key(
+        portfolio_hash=portfolio_hash,
+        kind="weights",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.portfolio_weight_schema(),
+        required_columns=["trading_date", "instrument_key", "weight"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_PORT_WEIGHT,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"pf_w_{portfolio_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_PORT_WEIGHT,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_portfolio_return_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    portfolio_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4I：理论组合日收益。"""
+    float_cols = (
+        "portfolio_return",
+        "long_return",
+        "short_return",
+        "long_short_return",
+    )
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        for col in float_cols:
+            if item.get(col) is None:
+                item[col] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.factor_portfolio_key(
+        portfolio_hash=portfolio_hash,
+        kind="returns",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.portfolio_return_daily_schema(),
+        required_columns=["trading_date", "sample_count"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_PORT_RETURN,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"pf_ret_{portfolio_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_PORT_RETURN,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_portfolio_turnover_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    portfolio_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4I：日换手。"""
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        if item.get("turnover") is None:
+            item["turnover"] = float("nan")
+        item["rebalanced"] = bool(item.get("rebalanced"))
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.factor_portfolio_key(
+        portfolio_hash=portfolio_hash,
+        kind="turnover",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.portfolio_turnover_daily_schema(),
+        required_columns=["trading_date", "rebalanced"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_PORT_TURNOVER,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"pf_to_{portfolio_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_PORT_TURNOVER,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_composite_factor_panel(
     store: CanonicalStore,
     rows: list[dict[str, Any]],

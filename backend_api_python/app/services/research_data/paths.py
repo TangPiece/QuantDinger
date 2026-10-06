@@ -289,6 +289,48 @@ def combined_factor_summary_key(*, combination_hash: str) -> str:
     return f"{_root()}/factor/combined/{combination_hash}/summary.json"
 
 
+def factor_portfolio_prefix(
+    *,
+    portfolio_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+) -> str:
+    """Phase 4I：``qd/portfolio/{hash}/{kind}/[year=/month=]``。"""
+    base = f"{_root()}/portfolio/{portfolio_hash}/{kind}"
+    if year is None or month is None:
+        return base
+    return f"{base}/year={int(year):04d}/month={int(month):02d}"
+
+
+def factor_portfolio_key(
+    *,
+    portfolio_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+    part: str = "part-000.parquet",
+) -> str:
+    if year is None or month is None:
+        return f"{factor_portfolio_prefix(portfolio_hash=portfolio_hash, kind=kind)}/{part}"
+    return (
+        f"{factor_portfolio_prefix(portfolio_hash=portfolio_hash, kind=kind, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def factor_portfolio_manifest_key(*, portfolio_hash: str) -> str:
+    return f"{_root()}/portfolio/{portfolio_hash}/manifest.json"
+
+
+def factor_portfolio_summary_key(*, portfolio_hash: str) -> str:
+    return f"{_root()}/portfolio/{portfolio_hash}/summary.json"
+
+
+def factor_portfolio_metrics_key(*, portfolio_hash: str) -> str:
+    return f"{_root()}/portfolio/{portfolio_hash}/metrics/summary.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

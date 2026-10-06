@@ -28,6 +28,10 @@ SCHEMA_VERSION_NEUT_DIAG = "neutralization_diagnostics@1"
 SCHEMA_VERSION_COMPOSITE = "composite_factor_daily@1"
 SCHEMA_VERSION_FACTOR_CORR = "factor_corr_matrix@1"
 SCHEMA_VERSION_COMB_WEIGHTS = "combination_weights@1"
+SCHEMA_VERSION_PORT_POSITION = "portfolio_position@1"
+SCHEMA_VERSION_PORT_WEIGHT = "portfolio_weight@1"
+SCHEMA_VERSION_PORT_RETURN = "portfolio_return_daily@1"
+SCHEMA_VERSION_PORT_TURNOVER = "portfolio_turnover_daily@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -375,6 +379,64 @@ def combination_weights_schema() -> pa.Schema:
         [
             ("factor_dataset_id", pa.string()),
             ("weight", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def portfolio_position_schema() -> pa.Schema:
+    """Phase 4I：TargetPosition 兼容持仓。"""
+    return pa.schema(
+        [
+            ("instrument_key", pa.string()),
+            ("trading_date", pa.string()),
+            ("portfolio_id", pa.string()),
+            ("strategy_version", pa.string()),
+            ("dataset_hash", pa.string()),
+            ("timestamp", pa.timestamp("us", tz="UTC")),
+            ("target_weight", pa.float64()),
+            ("leg", pa.string()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def portfolio_weight_schema() -> pa.Schema:
+    """Phase 4I：权重审计。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("instrument_key", pa.string()),
+            ("weight", pa.float64()),
+            ("leg", pa.string()),
+            ("factor_value", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def portfolio_return_daily_schema() -> pa.Schema:
+    """Phase 4I：理论组合日收益。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("portfolio_return", pa.float64()),
+            ("long_return", pa.float64()),
+            ("short_return", pa.float64()),
+            ("long_short_return", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def portfolio_turnover_daily_schema() -> pa.Schema:
+    """Phase 4I：日换手。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("turnover", pa.float64()),
+            ("rebalanced", pa.bool_()),
             ("data_version", pa.string()),
         ]
     )

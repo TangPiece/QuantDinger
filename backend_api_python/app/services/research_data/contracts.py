@@ -509,3 +509,21 @@ class FactorCombinationSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorPortfolioSummary(_ContractModel):
+    """Phase 4I：因子组合（持仓）汇总；明细在 R2，非 Production Backtest。"""
+
+    portfolio_hash: str
+    factor_dataset_id: str
+    evaluation_hash: str = ""
+    construction_method: str = "LONG_ONLY"
+    weight_method: str = "EQUAL_WEIGHT"
+    rebalance_frequency: str = "DAILY"
+    selection_json: dict[str, Any] = Field(default_factory=dict)
+    metrics_json: dict[str, Any] = Field(default_factory=dict)
+    portfolio_version: str = "qd_factor_portfolio@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

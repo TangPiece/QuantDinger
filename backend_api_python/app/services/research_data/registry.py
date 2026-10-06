@@ -20,6 +20,7 @@ from .contracts import (
     ExperimentDefinition,
     FactorCombinationSummary,
     FactorDatasetRecord,
+    FactorPortfolioSummary,
     FactorEvaluationSummary,
     FactorNeutralizationSummary,
     FactorStabilitySummary,
@@ -198,6 +199,14 @@ class ResearchRegistry(Protocol):
         self, combination_hash: str
     ) -> FactorCombinationSummary: ...
 
+    def upsert_factor_portfolio(
+        self, record: FactorPortfolioSummary
+    ) -> None: ...
+
+    def get_factor_portfolio(
+        self, portfolio_hash: str
+    ) -> FactorPortfolioSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -228,6 +237,7 @@ class LocalJsonRegistry:
                     "factor_stability_evaluations": {},
                     "factor_neutralizations": {},
                     "factor_combinations": {},
+                    "factor_portfolios": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -671,6 +681,22 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"factor_combination not found: {combination_hash!r}")
         return FactorCombinationSummary.model_validate(raw)
+
+    def upsert_factor_portfolio(self, record: FactorPortfolioSummary) -> None:
+        """登记 Portfolio Summary（Local JSON）。"""
+        key = record.portfolio_hash
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_portfolios", {})
+            data["factor_portfolios"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_factor_portfolio(self, portfolio_hash: str) -> FactorPortfolioSummary:
+        data = self._read()
+        raw = (data.get("factor_portfolios") or {}).get(portfolio_hash)
+        if not raw:
+            raise KeyError(f"factor_portfolio not found: {portfolio_hash!r}")
+        return FactorPortfolioSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1975,6 +2001,89 @@ class D1ResearchRegistry:
             composite_factor_dataset_id=row.get("composite_factor_dataset_id") or "",
             combination_version=row.get("combination_version")
             or "qd_factor_combination@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_factor_portfolio(self, record: FactorPortfolioSummary) -> None:
+        """D1：写 factor_portfolio；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_portfolio (
+                  portfolio_hash, factor_dataset_id, evaluation_hash,
+                  construction_method, weight_method, rebalance_frequency,
+                  selection_json, metrics_json, portfolio_version,
+                  storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(portfolio_hash) DO UPDATE SET
+                  selection_json=excluded.selection_json,
+                  metrics_json=excluded.metrics_json,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.portfolio_hash,
+                    record.factor_dataset_id,
+                    record.evaluation_hash,
+                    record.construction_method,
+                    record.weight_method,
+                    record.rebalance_frequency,
+                    json.dumps(record.selection_json or {}, ensure_ascii=False),
+                    json.dumps(record.metrics_json or {}, ensure_ascii=False),
+                    record.portfolio_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_factor_portfolio(self, portfolio_hash: str) -> FactorPortfolioSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM factor_portfolio
+                WHERE portfolio_hash=?
+                """,
+                [portfolio_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"factor_portfolio not found: {portfolio_hash!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return FactorPortfolioSummary(
+            portfolio_hash=row["portfolio_hash"],
+            factor_dataset_id=row["factor_dataset_id"],
+            evaluation_hash=row.get("evaluation_hash") or "",
+            construction_method=row.get("construction_method") or "LONG_ONLY",
+            weight_method=row.get("weight_method") or "EQUAL_WEIGHT",
+            rebalance_frequency=row.get("rebalance_frequency") or "DAILY",
+            selection_json=_loads("selection_json", {}),
+            metrics_json=_loads("metrics_json", {}),
+            portfolio_version=row.get("portfolio_version")
+            or "qd_factor_portfolio@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

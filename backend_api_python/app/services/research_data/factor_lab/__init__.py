@@ -93,6 +93,13 @@ from .combination import (
     FactorCombinationSummary,
     compute_combination_hash,
 )
+from .portfolio import (
+    PORTFOLIO_VERSION,
+    FactorPortfolioService,
+    FactorPortfolioSummary,
+    PortfolioSpec,
+    compute_portfolio_hash,
+)
 
 __all__ = [
     "DEPENDENCY_TYPES",
@@ -102,6 +109,7 @@ __all__ = [
     "GROUP_VERSION",
     "METRIC_VERSION",
     "NEUTRALIZATION_VERSION",
+    "PORTFOLIO_VERSION",
     "SCHEMA_LONG",
     "SCHEMA_WIDE",
     "STABILITY_VERSION",
@@ -115,6 +123,8 @@ __all__ = [
     "FactorCombinationService",
     "FactorCombinationSummary",
     "FactorComputeService",
+    "FactorPortfolioService",
+    "FactorPortfolioSummary",
     "FactorDatasetArtifactStore",
     "FactorDatasetManifest",
     "FactorDependency",
@@ -138,6 +148,7 @@ __all__ = [
     "MetricTimeSeries",
     "NeutralizationSpec",
     "PITComputeContext",
+    "PortfolioSpec",
     "ReturnSpec",
     "StabilitySpec",
     "assert_feature_immutable",
@@ -152,6 +163,7 @@ __all__ = [
     "compute_group_evaluation_hash",
     "compute_metric_hash",
     "compute_neutralization_hash",
+    "compute_portfolio_hash",
     "compute_result_dataset_hash",
     "compute_stability_hash",
     "ensure_factor_hash",
