@@ -1608,6 +1608,137 @@ def write_research_backtest_turnover_panel(
     return result
 
 
+def write_research_backtest_cost_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    backtest_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5C：写研究回测日成本分区。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        for col in (
+            "commission",
+            "stamp_tax",
+            "transfer_fee",
+            "slippage",
+            "total_cost",
+        ):
+            if item.get(col) is None:
+                item[col] = 0.0
+        item["n_fills"] = int(item.get("n_fills") or 0)
+        item["n_rejects"] = int(item.get("n_rejects") or 0)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.research_backtest_key(
+        backtest_hash=backtest_hash,
+        kind="costs",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.research_backtest_cost_schema(),
+        required_columns=["trading_date", "total_cost"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_BT_COST,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"bt_cost_{backtest_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_BT_COST,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_research_backtest_fill_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    backtest_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5C：写研究回测成交/拒单分区。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        if item.get("executed_price") is None:
+            item["executed_price"] = float("nan")
+        item.setdefault("reject_reason", "")
+        if item.get("reject_reason") is None:
+            item["reject_reason"] = ""
+        for col in ("commission", "tax", "slippage", "quantity"):
+            if item.get(col) is None:
+                item[col] = 0.0
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.research_backtest_key(
+        backtest_hash=backtest_hash,
+        kind="fills",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.research_backtest_fill_schema(),
+        required_columns=["trading_date", "instrument_key", "side", "status"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_BT_FILL,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"bt_fill_{backtest_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_BT_FILL,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_composite_factor_panel(
     store: CanonicalStore,
     rows: list[dict[str, Any]],

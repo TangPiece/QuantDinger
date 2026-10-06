@@ -84,9 +84,28 @@ class ResearchBacktestService:
                 ),
                 initial_nav=float(meta.get("initial_nav") or 1.0),
                 exchange=str(meta.get("exchange") or "CN"),
+                realism=str(meta.get("realism") or "GROSS"),  # type: ignore[arg-type]
+                market_rule=str(meta.get("market_rule") or "CN_A"),  # type: ignore[arg-type]
+                metadata={
+                    k: meta[k]
+                    for k in (
+                        "cost_policy_override",
+                        "trading_rule_override",
+                    )
+                    if k in meta
+                },
             )
         elif spec.strategy_hash != strategy_hash:
             spec = spec.model_copy(update={"strategy_hash": strategy_hash})
+
+        # 将费率/规则覆盖并入 Spec.metadata（进 hash）
+        merge_keys = ("cost_policy_override", "trading_rule_override")
+        if any(k in meta for k in merge_keys):
+            sm = dict(spec.metadata or {})
+            for k in merge_keys:
+                if k in meta:
+                    sm[k] = meta[k]
+            spec = spec.model_copy(update={"metadata": sm})
 
         bhash = compute_backtest_hash(spec)
         force = bool(meta.get("force_recompute"))

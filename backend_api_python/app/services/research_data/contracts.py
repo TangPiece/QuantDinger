@@ -563,7 +563,7 @@ class StrategyResearchSummary(_ContractModel):
 
 
 class ResearchBacktestSummary(_ContractModel):
-    """Phase 5B：研究回测汇总；日明细在 R2，D1 仅 Summary。"""
+    """Phase 5B/5C：研究回测汇总；日明细在 R2，D1 仅 Summary。"""
 
     backtest_hash: str
     strategy_hash: str
@@ -572,8 +572,12 @@ class ResearchBacktestSummary(_ContractModel):
     execution_policy: str = "NEXT_OPEN"
     benchmark_mode: str = "NONE"
     benchmark_instrument_key: str = ""
+    realism: str = "GROSS"
+    market_rule: str = ""
+    execution_profile_version: str = "qd_research_execution@1"
     metrics_json: dict[str, Any] = Field(default_factory=dict)
     benchmark_metrics_json: dict[str, Any] = Field(default_factory=dict)
+    attribution_json: dict[str, Any] = Field(default_factory=dict)
     engine_version: str = "qd_research_backtest@1"
     return_calculation_version: str = "research_nav@1"
     storage_uri: str = ""

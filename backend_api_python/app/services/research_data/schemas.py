@@ -38,6 +38,8 @@ SCHEMA_VERSION_BT_NAV = "research_backtest_nav@1"
 SCHEMA_VERSION_BT_RETURN = "research_backtest_return@1"
 SCHEMA_VERSION_BT_POSITION = "research_backtest_position@1"
 SCHEMA_VERSION_BT_TURNOVER = "research_backtest_turnover@1"
+SCHEMA_VERSION_BT_COST = "research_backtest_cost@1"
+SCHEMA_VERSION_BT_FILL = "research_backtest_fill@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -533,6 +535,43 @@ def research_backtest_turnover_schema() -> pa.Schema:
             ("trading_date", pa.date32()),
             ("turnover", pa.float64()),
             ("rebalanced", pa.bool_()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def research_backtest_cost_schema() -> pa.Schema:
+    """Phase 5C：日成本汇总。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("commission", pa.float64()),
+            ("stamp_tax", pa.float64()),
+            ("transfer_fee", pa.float64()),
+            ("slippage", pa.float64()),
+            ("total_cost", pa.float64()),
+            ("n_fills", pa.int32()),
+            ("n_rejects", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def research_backtest_fill_schema() -> pa.Schema:
+    """Phase 5C：成交/拒单明细。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("trade_id", pa.string()),
+            ("instrument_key", pa.string()),
+            ("side", pa.string()),
+            ("quantity", pa.float64()),
+            ("executed_price", pa.float64()),
+            ("commission", pa.float64()),
+            ("tax", pa.float64()),
+            ("slippage", pa.float64()),
+            ("status", pa.string()),
+            ("reject_reason", pa.string()),
             ("data_version", pa.string()),
         ]
     )

@@ -2324,15 +2324,20 @@ class D1ResearchRegistry:
                 INSERT INTO research_backtest_run (
                   backtest_hash, strategy_hash, start_date, end_date,
                   execution_policy, benchmark_mode, benchmark_instrument_key,
-                  metrics_json, benchmark_metrics_json,
+                  realism, market_rule, execution_profile_version,
+                  metrics_json, benchmark_metrics_json, attribution_json,
                   engine_version, return_calculation_version,
                   storage_uri, checksum, created_at, metadata_json
                 ) VALUES (
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(backtest_hash) DO UPDATE SET
+                  realism=excluded.realism,
+                  market_rule=excluded.market_rule,
+                  execution_profile_version=excluded.execution_profile_version,
                   metrics_json=excluded.metrics_json,
                   benchmark_metrics_json=excluded.benchmark_metrics_json,
+                  attribution_json=excluded.attribution_json,
                   storage_uri=excluded.storage_uri,
                   checksum=excluded.checksum,
                   metadata_json=excluded.metadata_json
@@ -2345,10 +2350,15 @@ class D1ResearchRegistry:
                     record.execution_policy,
                     record.benchmark_mode,
                     record.benchmark_instrument_key,
+                    record.realism or "GROSS",
+                    record.market_rule or "",
+                    record.execution_profile_version
+                    or "qd_research_execution@1",
                     json.dumps(record.metrics_json or {}, ensure_ascii=False),
                     json.dumps(
                         record.benchmark_metrics_json or {}, ensure_ascii=False
                     ),
+                    json.dumps(record.attribution_json or {}, ensure_ascii=False),
                     record.engine_version,
                     record.return_calculation_version,
                     record.storage_uri,
@@ -2395,8 +2405,13 @@ class D1ResearchRegistry:
             execution_policy=row.get("execution_policy") or "NEXT_OPEN",
             benchmark_mode=row.get("benchmark_mode") or "NONE",
             benchmark_instrument_key=row.get("benchmark_instrument_key") or "",
+            realism=row.get("realism") or "GROSS",
+            market_rule=row.get("market_rule") or "",
+            execution_profile_version=row.get("execution_profile_version")
+            or "qd_research_execution@1",
             metrics_json=_loads("metrics_json", {}),
             benchmark_metrics_json=_loads("benchmark_metrics_json", {}),
+            attribution_json=_loads("attribution_json", {}),
             engine_version=row.get("engine_version") or "qd_research_backtest@1",
             return_calculation_version=row.get("return_calculation_version")
             or "research_nav@1",

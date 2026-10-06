@@ -7,6 +7,7 @@ from .hash import compute_backtest_hash, normalize_backtest_spec
 from .orchestrator import BacktestResult, ResearchBacktestError, ResearchBacktestService
 from .protocol import (
     ENGINE_VERSION,
+    EXECUTION_PROFILE_VERSION,
     RETURN_CALCULATION_VERSION,
     BacktestFrames,
     BacktestManifest,
@@ -21,6 +22,7 @@ from .protocol import (
 
 __all__ = [
     "ENGINE_VERSION",
+    "EXECUTION_PROFILE_VERSION",
     "RETURN_CALCULATION_VERSION",
     "BacktestFrames",
     "BacktestManifest",

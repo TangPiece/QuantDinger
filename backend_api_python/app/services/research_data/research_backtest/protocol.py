@@ -11,10 +11,14 @@ from app.services.research_data.contracts import ResearchBacktestSummary, _Contr
 
 ENGINE_VERSION = "qd_research_backtest@1"
 RETURN_CALCULATION_VERSION = "research_nav@1"
+EXECUTION_PROFILE_VERSION = "qd_research_execution@1"
 
 ExecutionMode = Literal["NEXT_OPEN", "NEXT_CLOSE", "SAME_CLOSE"]
 BenchmarkMode = Literal["NONE", "INDEX", "CUSTOM"]
 MissingPricePolicy = Literal["SKIP_TO_CASH"]
+RealismMode = Literal["GROSS", "NET"]
+MarketRuleId = Literal["CN_A", "HK", "US"]
+PriceAdjustment = Literal["none"]
 
 
 class ResearchExecutionPolicy(_ContractModel):
@@ -35,7 +39,7 @@ class ResearchExecutionPolicy(_ContractModel):
 
 
 class BacktestSpec(_ContractModel):
-    """研究回测规格：钉住 strategy + 窗口 + 执行/基准策略。"""
+    """研究回测规格：钉住 strategy + 窗口 + 执行/基准/成本策略。"""
 
     strategy_hash: str
     start_date: date
@@ -48,6 +52,12 @@ class BacktestSpec(_ContractModel):
     initial_nav: float = 1.0
     missing_price_policy: MissingPricePolicy = "SKIP_TO_CASH"
     exchange: str = "CN"
+    # Phase 5C：GROSS=5B 理想路径；NET=执行仿真
+    realism: RealismMode = "GROSS"
+    market_rule: MarketRuleId = "CN_A"
+    cost_enabled: bool = False
+    execution_price_adjustment: PriceAdjustment = "none"
+    execution_profile_version: str = EXECUTION_PROFILE_VERSION
     engine_version: str = ENGINE_VERSION
     return_calculation_version: str = RETURN_CALCULATION_VERSION
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -77,6 +87,15 @@ class BacktestSpec(_ContractModel):
             raise ValueError(
                 "benchmark_instrument_key required when benchmark_mode=INDEX"
             )
+        if self.execution_price_adjustment != "none":
+            raise ValueError(
+                "execution_price_adjustment only 'none' in 5C v1"
+            )
+        # NET 自动开启成本；GROSS 强制关闭
+        if self.realism == "NET":
+            object.__setattr__(self, "cost_enabled", True)
+        else:
+            object.__setattr__(self, "cost_enabled", False)
         return self
 
 
@@ -140,8 +159,11 @@ class BacktestFrames(_ContractModel):
     returns: list[DailyReturnRow] = Field(default_factory=list)
     positions: list[BacktestPositionRow] = Field(default_factory=list)
     turnover: list[TurnoverRow] = Field(default_factory=list)
+    costs: list[dict[str, Any]] = Field(default_factory=list)
+    fills: list[dict[str, Any]] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     benchmark_metrics: dict[str, Any] = Field(default_factory=dict)
+    attribution: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -166,6 +188,7 @@ class BacktestManifest(_ContractModel):
 
 __all__ = [
     "ENGINE_VERSION",
+    "EXECUTION_PROFILE_VERSION",
     "RETURN_CALCULATION_VERSION",
     "BacktestFrames",
     "BacktestManifest",

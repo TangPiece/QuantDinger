@@ -55,6 +55,8 @@ class BacktestDatasetWriter:
         checksums += self._write_returns(frames, version)
         checksums += self._write_positions(frames, version)
         checksums += self._write_turnover(frames, version)
+        checksums += self._write_costs(frames, version)
+        checksums += self._write_fills(frames, version)
         checksum = hashlib.sha256(
             "".join(checksums or ["empty"]).encode()
         ).hexdigest()
@@ -67,8 +69,12 @@ class BacktestDatasetWriter:
             execution_policy=spec.execution_policy.mode,
             benchmark_mode=spec.benchmark_mode,
             benchmark_instrument_key=spec.benchmark_instrument_key or "",
+            realism=spec.realism,
+            market_rule=spec.market_rule if spec.realism == "NET" else "",
+            execution_profile_version=spec.execution_profile_version,
             metrics_json=dict(frames.metrics or {}),
             benchmark_metrics_json=dict(frames.benchmark_metrics or {}),
+            attribution_json=dict(frames.attribution or {}),
             engine_version=version,
             return_calculation_version=(
                 spec.return_calculation_version or RETURN_CALCULATION_VERSION
@@ -99,6 +105,7 @@ class BacktestDatasetWriter:
             metrics={
                 "metrics": frames.metrics,
                 "benchmark_metrics": frames.benchmark_metrics,
+                "attribution": frames.attribution,
             },
         )
         summary = summary.model_copy(
@@ -183,6 +190,38 @@ class BacktestDatasetWriter:
             )
         return self._flush("turnover", by_ym, frames.backtest_hash, version)
 
+    def _write_costs(self, frames: BacktestFrames, version: str) -> list[str]:
+        """写 5C 日成本；GROSS 无数据时跳过。"""
+        by_ym: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+        for row in frames.costs or []:
+            td = row.get("trading_date")
+            if td is None:
+                continue
+            from datetime import date as date_cls
+
+            d = td if hasattr(td, "year") else date_cls.fromisoformat(str(td)[:10])
+            item = dict(row)
+            item["trading_date"] = d
+            item["data_version"] = version
+            by_ym[(d.year, d.month)].append(item)
+        return self._flush("costs", by_ym, frames.backtest_hash, version)
+
+    def _write_fills(self, frames: BacktestFrames, version: str) -> list[str]:
+        """写 5C 成交明细；GROSS 无数据时跳过。"""
+        by_ym: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+        for row in frames.fills or []:
+            td = row.get("trading_date")
+            if td is None:
+                continue
+            from datetime import date as date_cls
+
+            d = td if hasattr(td, "year") else date_cls.fromisoformat(str(td)[:10])
+            item = dict(row)
+            item["trading_date"] = d
+            item["data_version"] = version
+            by_ym[(d.year, d.month)].append(item)
+        return self._flush("fills", by_ym, frames.backtest_hash, version)
+
     def _flush(
         self,
         kind: str,
@@ -190,12 +229,16 @@ class BacktestDatasetWriter:
         backtest_hash: str,
         version: str,
     ) -> list[str]:
+        if not by_ym:
+            return []
         checksums: list[str] = []
         writers = {
             "portfolio": rd_writer.write_research_backtest_nav_panel,
             "returns": rd_writer.write_research_backtest_return_panel,
             "positions": rd_writer.write_research_backtest_position_panel,
             "turnover": rd_writer.write_research_backtest_turnover_panel,
+            "costs": rd_writer.write_research_backtest_cost_panel,
+            "fills": rd_writer.write_research_backtest_fill_panel,
         }
         write_fn = writers[kind]
         for (y, m), part in sorted(by_ym.items()):
