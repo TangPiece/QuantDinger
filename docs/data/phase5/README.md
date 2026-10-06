@@ -1,6 +1,6 @@
 # Phase 5 — Strategy Research
 
-> **Status:** Phase 5A–5F implemented. Phase 6A Production Runtime started — see [../phase6/README.md](../phase6/README.md).
+> **Status:** Phase 5A–5F implemented. Phase 6A–6B started — see [../phase6/README.md](../phase6/README.md).
 
 ## Roadmap
 
@@ -11,8 +11,9 @@ Phase 5C  Cost / Execution Model          ← done
 Phase 5D  Qlib Strategy / Model Integration ← done
 Phase 5E  QuantDinger ↔ Qlib Cross Validation ← done
 Phase 5F  Research → Production Bridge    ← done
-Phase 6A  Production Runtime / Online Data ← see phase6/
-Phase 6+  Account / Risk / OMS / Broker
+Phase 6A  Production Runtime / Online Data ← done (see phase6/)
+Phase 6B  Portfolio & Position Service     ← done (see phase6/)
+Phase 6+  Risk / OMS / Broker
 ```
 
 ## Reading

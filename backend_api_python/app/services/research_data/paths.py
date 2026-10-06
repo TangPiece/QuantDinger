@@ -504,6 +504,35 @@ def production_runtime_run_key(*, runtime_id: str, run_id: str) -> str:
     return f"{production_runtime_prefix(runtime_id=runtime_id)}/runs/{run_id}/inference.json"
 
 
+def production_portfolio_prefix(
+    *, account_id: str, year: int | None = None, month: int | None = None, day: int | None = None
+) -> str:
+    """Phase 6B：``qd/production/portfolio/account={id}/[year=/month=/day=/]``。"""
+    base = f"{_root()}/production/portfolio/account={account_id}"
+    if year is not None:
+        base = f"{base}/year={int(year):04d}"
+    if month is not None:
+        base = f"{base}/month={int(month):02d}"
+    if day is not None:
+        base = f"{base}/day={int(day):02d}"
+    return base
+
+
+def production_portfolio_snapshot_key(
+    *, account_id: str, year: int, month: int, day: int, kind: str = "portfolio.parquet"
+) -> str:
+    return f"{production_portfolio_prefix(account_id=account_id, year=year, month=month, day=day)}/{kind}"
+
+
+def production_portfolio_event_key(
+    *, account_id: str, event_id: str, year: int, month: int, day: int
+) -> str:
+    return (
+        f"{production_portfolio_prefix(account_id=account_id, year=year, month=month, day=day)}"
+        f"/events/{event_id}.json"
+    )
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

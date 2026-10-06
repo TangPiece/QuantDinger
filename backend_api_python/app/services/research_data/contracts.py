@@ -745,3 +745,116 @@ class ProductionRuntimeRunSummary(_ContractModel):
     storage_uri: str = ""
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionAccountSummary(_ContractModel):
+    """Phase 6B：生产账户 Registry 行。"""
+
+    account_id: str
+    environment: str = "PAPER"
+    market: str = "CN_A"
+    status: str = "ACTIVE"
+    currency: str = "CNY"
+    available_cash: float = 0.0
+    frozen_cash: float = 0.0
+    market_value: float = 0.0
+    equity: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    total_pnl: float = 0.0
+    engine_version: str = "qd_portfolio_service@1"
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionPortfolioSummary(_ContractModel):
+    """Phase 6B：组合 Registry 行。"""
+
+    portfolio_id: str
+    account_id: str
+    runtime_id: str = ""
+    bundle_hash: str = ""
+    status: str = "ACTIVE"
+    trading_date: str = ""
+    engine_version: str = "qd_portfolio_service@1"
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionPositionSummary(_ContractModel):
+    """Phase 6B：当前持仓态 Registry 行。"""
+
+    portfolio_id: str
+    instrument_key: str
+    quantity: float = 0.0
+    available_quantity: float = 0.0
+    frozen_quantity: float = 0.0
+    avg_cost: float = 0.0
+    market_value: float = 0.0
+    currency: str = "CNY"
+    as_of: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionPositionEventRecord(_ContractModel):
+    """Phase 6B：持仓事件日志行。"""
+
+    event_id: str
+    portfolio_id: str
+    account_id: str = ""
+    event_type: str
+    instrument_key: str = ""
+    trading_date: str = ""
+    quantity: float = 0.0
+    price: float = 0.0
+    cash_delta: float = 0.0
+    fee: float = 0.0
+    idempotency_key: str = ""
+    message: str = ""
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+
+
+class ProductionPortfolioSnapshotSummary(_ContractModel):
+    """Phase 6B：组合快照元数据。"""
+
+    snapshot_id: str
+    account_id: str
+    portfolio_id: str
+    trading_date: str = ""
+    knowledge_time: Optional[str] = None
+    cash: float = 0.0
+    market_value: float = 0.0
+    equity: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    total_pnl: float = 0.0
+    gross_exposure: float = 0.0
+    net_exposure: float = 0.0
+    runtime_id: str = ""
+    bundle_hash: str = ""
+    idempotency_key: str = ""
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionPortfolioApplySummary(_ContractModel):
+    """Phase 6B：幂等 apply_targets 运行。"""
+
+    apply_id: str
+    account_id: str
+    portfolio_id: str
+    idempotency_key: str
+    trading_date: str = ""
+    status: str = "OK"
+    n_deltas: int = 0
+    n_events: int = 0
+    snapshot_id: str = ""
+    runtime_id: str = ""
+    run_id: str = ""
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

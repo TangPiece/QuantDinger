@@ -37,6 +37,12 @@ from .contracts import (
     ProductionRuntimeEventRecord,
     ProductionRuntimeRunSummary,
     ProductionRuntimeSummary,
+    ProductionAccountSummary,
+    ProductionPortfolioApplySummary,
+    ProductionPortfolioSnapshotSummary,
+    ProductionPortfolioSummary,
+    ProductionPositionEventRecord,
+    ProductionPositionSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -308,6 +314,58 @@ class ResearchRegistry(Protocol):
 
     def get_runtime_run(self, run_id: str) -> ProductionRuntimeRunSummary: ...
 
+    def upsert_production_account(
+        self, record: ProductionAccountSummary
+    ) -> None: ...
+
+    def get_production_account(
+        self, account_id: str
+    ) -> ProductionAccountSummary: ...
+
+    def upsert_production_portfolio(
+        self, record: ProductionPortfolioSummary
+    ) -> None: ...
+
+    def get_production_portfolio(
+        self, portfolio_id: str
+    ) -> ProductionPortfolioSummary: ...
+
+    def list_portfolios_by_account(
+        self, account_id: str
+    ) -> list[ProductionPortfolioSummary]: ...
+
+    def upsert_production_position(
+        self, record: ProductionPositionSummary
+    ) -> None: ...
+
+    def list_positions(
+        self, portfolio_id: str
+    ) -> list[ProductionPositionSummary]: ...
+
+    def append_position_event(
+        self, record: ProductionPositionEventRecord
+    ) -> None: ...
+
+    def list_position_events(
+        self, portfolio_id: str, *, limit: int = 500
+    ) -> list[ProductionPositionEventRecord]: ...
+
+    def upsert_portfolio_snapshot(
+        self, record: ProductionPortfolioSnapshotSummary
+    ) -> None: ...
+
+    def get_portfolio_snapshot(
+        self, snapshot_id: str
+    ) -> ProductionPortfolioSnapshotSummary: ...
+
+    def upsert_portfolio_apply(
+        self, record: ProductionPortfolioApplySummary
+    ) -> None: ...
+
+    def get_apply_by_idempotency(
+        self, idempotency_key: str
+    ) -> ProductionPortfolioApplySummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -351,6 +409,13 @@ class LocalJsonRegistry:
                     "production_runtime_events": {},
                     "production_runtime_runs": {},
                     "production_runtime_runs_by_idempotency": {},
+                    "production_accounts": {},
+                    "production_portfolios": {},
+                    "production_positions": {},
+                    "production_position_events": {},
+                    "production_portfolio_snapshots": {},
+                    "production_portfolio_applies": {},
+                    "production_portfolio_applies_by_idempotency": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -1037,6 +1102,142 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"runtime_run not found: {run_id!r}")
         return ProductionRuntimeRunSummary.model_validate(raw)
+
+    def upsert_production_account(self, record: ProductionAccountSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_accounts", {})
+            data["production_accounts"][record.account_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_production_account(self, account_id: str) -> ProductionAccountSummary:
+        data = self._read()
+        raw = (data.get("production_accounts") or {}).get(account_id)
+        if not raw:
+            raise KeyError(f"production_account not found: {account_id!r}")
+        return ProductionAccountSummary.model_validate(raw)
+
+    def upsert_production_portfolio(
+        self, record: ProductionPortfolioSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_portfolios", {})
+            data["production_portfolios"][record.portfolio_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_production_portfolio(
+        self, portfolio_id: str
+    ) -> ProductionPortfolioSummary:
+        data = self._read()
+        raw = (data.get("production_portfolios") or {}).get(portfolio_id)
+        if not raw:
+            raise KeyError(f"production_portfolio not found: {portfolio_id!r}")
+        return ProductionPortfolioSummary.model_validate(raw)
+
+    def list_portfolios_by_account(
+        self, account_id: str
+    ) -> list[ProductionPortfolioSummary]:
+        data = self._read()
+        return [
+            ProductionPortfolioSummary.model_validate(v)
+            for v in (data.get("production_portfolios") or {}).values()
+            if v.get("account_id") == account_id
+        ]
+
+    def upsert_production_position(
+        self, record: ProductionPositionSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_positions", {})
+            key = f"{record.portfolio_id}|{record.instrument_key}"
+            data["production_positions"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def list_positions(
+        self, portfolio_id: str
+    ) -> list[ProductionPositionSummary]:
+        data = self._read()
+        return [
+            ProductionPositionSummary.model_validate(v)
+            for v in (data.get("production_positions") or {}).values()
+            if v.get("portfolio_id") == portfolio_id
+        ]
+
+    def append_position_event(
+        self, record: ProductionPositionEventRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_position_events", {})
+            data["production_position_events"][record.event_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_position_events(
+        self, portfolio_id: str, *, limit: int = 500
+    ) -> list[ProductionPositionEventRecord]:
+        data = self._read()
+        rows = [
+            ProductionPositionEventRecord.model_validate(v)
+            for v in (data.get("production_position_events") or {}).values()
+            if v.get("portfolio_id") == portfolio_id
+        ]
+        rows.sort(key=lambda e: e.created_at or "")
+        return rows[-int(limit) :]
+
+    def upsert_portfolio_snapshot(
+        self, record: ProductionPortfolioSnapshotSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_portfolio_snapshots", {})
+            data["production_portfolio_snapshots"][
+                record.snapshot_id
+            ] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_portfolio_snapshot(
+        self, snapshot_id: str
+    ) -> ProductionPortfolioSnapshotSummary:
+        data = self._read()
+        raw = (data.get("production_portfolio_snapshots") or {}).get(snapshot_id)
+        if not raw:
+            raise KeyError(f"portfolio_snapshot not found: {snapshot_id!r}")
+        return ProductionPortfolioSnapshotSummary.model_validate(raw)
+
+    def upsert_portfolio_apply(
+        self, record: ProductionPortfolioApplySummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_portfolio_applies", {})
+            data.setdefault("production_portfolio_applies_by_idempotency", {})
+            payload = record.model_dump(mode="json")
+            data["production_portfolio_applies"][record.apply_id] = payload
+            data["production_portfolio_applies_by_idempotency"][
+                record.idempotency_key
+            ] = record.apply_id
+            self._write(data)
+
+    def get_apply_by_idempotency(
+        self, idempotency_key: str
+    ) -> ProductionPortfolioApplySummary:
+        data = self._read()
+        idx = data.get("production_portfolio_applies_by_idempotency") or {}
+        apply_id = idx.get(idempotency_key)
+        if not apply_id:
+            raise KeyError(f"portfolio_apply idempotency not found: {idempotency_key!r}")
+        raw = (data.get("production_portfolio_applies") or {}).get(apply_id)
+        if not raw:
+            raise KeyError(f"portfolio_apply not found: {apply_id!r}")
+        return ProductionPortfolioApplySummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -3368,6 +3569,459 @@ class D1ResearchRegistry:
             for r in rows
         ]
         return SnapshotRef(snapshot_id=snapshot_id, items=items)
+
+    def upsert_production_account(self, record: ProductionAccountSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_account (
+                  account_id, environment, market, status, currency,
+                  available_cash, frozen_cash, market_value, equity,
+                  realized_pnl, unrealized_pnl, total_pnl,
+                  engine_version, storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                  status=excluded.status,
+                  available_cash=excluded.available_cash,
+                  frozen_cash=excluded.frozen_cash,
+                  market_value=excluded.market_value,
+                  equity=excluded.equity,
+                  realized_pnl=excluded.realized_pnl,
+                  unrealized_pnl=excluded.unrealized_pnl,
+                  total_pnl=excluded.total_pnl,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.account_id,
+                    record.environment,
+                    record.market,
+                    record.status,
+                    record.currency,
+                    record.available_cash,
+                    record.frozen_cash,
+                    record.market_value,
+                    record.equity,
+                    record.realized_pnl,
+                    record.unrealized_pnl,
+                    record.total_pnl,
+                    record.engine_version,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_production_account(self, account_id: str) -> ProductionAccountSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_account WHERE account_id=?",
+                [account_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"production_account not found: {account_id!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionAccountSummary(
+            account_id=row["account_id"],
+            environment=row.get("environment") or "PAPER",
+            market=row.get("market") or "CN_A",
+            status=row.get("status") or "ACTIVE",
+            currency=row.get("currency") or "CNY",
+            available_cash=float(row.get("available_cash") or 0),
+            frozen_cash=float(row.get("frozen_cash") or 0),
+            market_value=float(row.get("market_value") or 0),
+            equity=float(row.get("equity") or 0),
+            realized_pnl=float(row.get("realized_pnl") or 0),
+            unrealized_pnl=float(row.get("unrealized_pnl") or 0),
+            total_pnl=float(row.get("total_pnl") or 0),
+            engine_version=row.get("engine_version") or "qd_portfolio_service@1",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_production_portfolio(
+        self, record: ProductionPortfolioSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_portfolio (
+                  portfolio_id, account_id, runtime_id, bundle_hash, status,
+                  trading_date, engine_version, storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(portfolio_id) DO UPDATE SET
+                  runtime_id=excluded.runtime_id,
+                  bundle_hash=excluded.bundle_hash,
+                  status=excluded.status,
+                  trading_date=excluded.trading_date,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.portfolio_id,
+                    record.account_id,
+                    record.runtime_id,
+                    record.bundle_hash,
+                    record.status,
+                    record.trading_date,
+                    record.engine_version,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_production_portfolio(
+        self, portfolio_id: str
+    ) -> ProductionPortfolioSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_portfolio WHERE portfolio_id=?",
+                [portfolio_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"production_portfolio not found: {portfolio_id!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionPortfolioSummary(
+            portfolio_id=row["portfolio_id"],
+            account_id=row["account_id"],
+            runtime_id=row.get("runtime_id") or "",
+            bundle_hash=row.get("bundle_hash") or "",
+            status=row.get("status") or "ACTIVE",
+            trading_date=row.get("trading_date") or "",
+            engine_version=row.get("engine_version") or "qd_portfolio_service@1",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def list_portfolios_by_account(
+        self, account_id: str
+    ) -> list[ProductionPortfolioSummary]:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_portfolio WHERE account_id=?",
+                [account_id],
+            )
+        except Exception:
+            rows = []
+        out = []
+        for row in rows or []:
+            meta = json.loads(row.get("metadata_json") or "{}")
+            out.append(
+                ProductionPortfolioSummary(
+                    portfolio_id=row["portfolio_id"],
+                    account_id=row["account_id"],
+                    runtime_id=row.get("runtime_id") or "",
+                    bundle_hash=row.get("bundle_hash") or "",
+                    status=row.get("status") or "ACTIVE",
+                    trading_date=row.get("trading_date") or "",
+                    engine_version=row.get("engine_version")
+                    or "qd_portfolio_service@1",
+                    storage_uri=row.get("storage_uri") or "",
+                    created_at=row.get("created_at"),
+                    metadata=meta if isinstance(meta, dict) else {},
+                )
+            )
+        return out
+
+    def upsert_production_position(
+        self, record: ProductionPositionSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_position (
+                  portfolio_id, instrument_key, quantity, available_quantity,
+                  frozen_quantity, avg_cost, market_value, currency, as_of, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(portfolio_id, instrument_key) DO UPDATE SET
+                  quantity=excluded.quantity,
+                  available_quantity=excluded.available_quantity,
+                  frozen_quantity=excluded.frozen_quantity,
+                  avg_cost=excluded.avg_cost,
+                  market_value=excluded.market_value,
+                  as_of=excluded.as_of,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.portfolio_id,
+                    record.instrument_key,
+                    record.quantity,
+                    record.available_quantity,
+                    record.frozen_quantity,
+                    record.avg_cost,
+                    record.market_value,
+                    record.currency,
+                    record.as_of,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_positions(
+        self, portfolio_id: str
+    ) -> list[ProductionPositionSummary]:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_position WHERE portfolio_id=?",
+                [portfolio_id],
+            )
+        except Exception:
+            rows = []
+        out = []
+        for row in rows or []:
+            meta = json.loads(row.get("metadata_json") or "{}")
+            out.append(
+                ProductionPositionSummary(
+                    portfolio_id=row["portfolio_id"],
+                    instrument_key=row["instrument_key"],
+                    quantity=float(row.get("quantity") or 0),
+                    available_quantity=float(row.get("available_quantity") or 0),
+                    frozen_quantity=float(row.get("frozen_quantity") or 0),
+                    avg_cost=float(row.get("avg_cost") or 0),
+                    market_value=float(row.get("market_value") or 0),
+                    currency=row.get("currency") or "CNY",
+                    as_of=row.get("as_of"),
+                    metadata=meta if isinstance(meta, dict) else {},
+                )
+            )
+        return out
+
+    def append_position_event(
+        self, record: ProductionPositionEventRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_position_event (
+                  event_id, portfolio_id, account_id, event_type, instrument_key,
+                  trading_date, quantity, price, cash_delta, fee, idempotency_key,
+                  message, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+                [
+                    record.event_id,
+                    record.portfolio_id,
+                    record.account_id,
+                    record.event_type,
+                    record.instrument_key,
+                    record.trading_date,
+                    record.quantity,
+                    record.price,
+                    record.cash_delta,
+                    record.fee,
+                    record.idempotency_key,
+                    record.message,
+                    json.dumps(record.payload_json or {}, ensure_ascii=False),
+                    record.created_at or _utc_now(),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_position_events(
+        self, portfolio_id: str, *, limit: int = 500
+    ) -> list[ProductionPositionEventRecord]:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM production_position_event
+                WHERE portfolio_id=?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                [portfolio_id, int(limit)],
+            )
+        except Exception:
+            rows = []
+        out = []
+        for row in rows or []:
+            payload = json.loads(row.get("payload_json") or "{}")
+            out.append(
+                ProductionPositionEventRecord(
+                    event_id=row["event_id"],
+                    portfolio_id=row["portfolio_id"],
+                    account_id=row.get("account_id") or "",
+                    event_type=row.get("event_type") or "",
+                    instrument_key=row.get("instrument_key") or "",
+                    trading_date=row.get("trading_date") or "",
+                    quantity=float(row.get("quantity") or 0),
+                    price=float(row.get("price") or 0),
+                    cash_delta=float(row.get("cash_delta") or 0),
+                    fee=float(row.get("fee") or 0),
+                    idempotency_key=row.get("idempotency_key") or "",
+                    message=row.get("message") or "",
+                    payload_json=payload if isinstance(payload, dict) else {},
+                    created_at=row.get("created_at"),
+                )
+            )
+        return out
+
+    def upsert_portfolio_snapshot(
+        self, record: ProductionPortfolioSnapshotSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_portfolio_snapshot (
+                  snapshot_id, account_id, portfolio_id, trading_date, knowledge_time,
+                  cash, market_value, equity, realized_pnl, unrealized_pnl, total_pnl,
+                  gross_exposure, net_exposure, runtime_id, bundle_hash, idempotency_key,
+                  storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                  cash=excluded.cash,
+                  market_value=excluded.market_value,
+                  equity=excluded.equity,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.snapshot_id,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.trading_date,
+                    record.knowledge_time,
+                    record.cash,
+                    record.market_value,
+                    record.equity,
+                    record.realized_pnl,
+                    record.unrealized_pnl,
+                    record.total_pnl,
+                    record.gross_exposure,
+                    record.net_exposure,
+                    record.runtime_id,
+                    record.bundle_hash,
+                    record.idempotency_key,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_portfolio_snapshot(
+        self, snapshot_id: str
+    ) -> ProductionPortfolioSnapshotSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_portfolio_snapshot WHERE snapshot_id=?",
+                [snapshot_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"portfolio_snapshot not found: {snapshot_id!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionPortfolioSnapshotSummary(
+            snapshot_id=row["snapshot_id"],
+            account_id=row["account_id"],
+            portfolio_id=row["portfolio_id"],
+            trading_date=row.get("trading_date") or "",
+            knowledge_time=row.get("knowledge_time"),
+            cash=float(row.get("cash") or 0),
+            market_value=float(row.get("market_value") or 0),
+            equity=float(row.get("equity") or 0),
+            realized_pnl=float(row.get("realized_pnl") or 0),
+            unrealized_pnl=float(row.get("unrealized_pnl") or 0),
+            total_pnl=float(row.get("total_pnl") or 0),
+            gross_exposure=float(row.get("gross_exposure") or 0),
+            net_exposure=float(row.get("net_exposure") or 0),
+            runtime_id=row.get("runtime_id") or "",
+            bundle_hash=row.get("bundle_hash") or "",
+            idempotency_key=row.get("idempotency_key") or "",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_portfolio_apply(
+        self, record: ProductionPortfolioApplySummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_portfolio_apply (
+                  apply_id, account_id, portfolio_id, idempotency_key, trading_date,
+                  status, n_deltas, n_events, snapshot_id, runtime_id, run_id,
+                  storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(apply_id) DO UPDATE SET
+                  status=excluded.status,
+                  n_deltas=excluded.n_deltas,
+                  n_events=excluded.n_events,
+                  snapshot_id=excluded.snapshot_id,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.apply_id,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.idempotency_key,
+                    record.trading_date,
+                    record.status,
+                    record.n_deltas,
+                    record.n_events,
+                    record.snapshot_id,
+                    record.runtime_id,
+                    record.run_id,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_apply_by_idempotency(
+        self, idempotency_key: str
+    ) -> ProductionPortfolioApplySummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_portfolio_apply WHERE idempotency_key=?",
+                [idempotency_key],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(
+                f"portfolio_apply idempotency not found: {idempotency_key!r}"
+            )
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionPortfolioApplySummary(
+            apply_id=row["apply_id"],
+            account_id=row["account_id"],
+            portfolio_id=row["portfolio_id"],
+            idempotency_key=row["idempotency_key"],
+            trading_date=row.get("trading_date") or "",
+            status=row.get("status") or "OK",
+            n_deltas=int(row.get("n_deltas") or 0),
+            n_events=int(row.get("n_events") or 0),
+            snapshot_id=row.get("snapshot_id") or "",
+            runtime_id=row.get("runtime_id") or "",
+            run_id=row.get("run_id") or "",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
 
 
 def get_default_registry(root: Path | None = None) -> ResearchRegistry:
