@@ -533,6 +533,22 @@ def production_portfolio_event_key(
     )
 
 
+def production_risk_prefix(*, risk_run_id: str, kind: str = "") -> str:
+    """Phase 6C：``qd/production/risk/{risk_run_id}/[kind]``。"""
+    base = f"{_root()}/production/risk/{risk_run_id}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def production_risk_snapshot_key(*, risk_run_id: str) -> str:
+    return f"{production_risk_prefix(risk_run_id=risk_run_id)}/snapshot.json"
+
+
+def production_risk_decision_key(*, risk_run_id: str) -> str:
+    return f"{production_risk_prefix(risk_run_id=risk_run_id)}/decision.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

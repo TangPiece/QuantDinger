@@ -43,6 +43,9 @@ from .contracts import (
     ProductionPortfolioSummary,
     ProductionPositionEventRecord,
     ProductionPositionSummary,
+    RiskDecisionEventRecord,
+    RiskPolicySummary,
+    RiskRunSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -366,6 +369,26 @@ class ResearchRegistry(Protocol):
         self, idempotency_key: str
     ) -> ProductionPortfolioApplySummary: ...
 
+    def upsert_risk_policy(self, record: RiskPolicySummary) -> None: ...
+
+    def get_risk_policy(
+        self, policy_code: str, policy_version: str
+    ) -> RiskPolicySummary: ...
+
+    def get_risk_policy_by_hash(self, policy_hash: str) -> RiskPolicySummary: ...
+
+    def upsert_risk_run(self, record: RiskRunSummary) -> None: ...
+
+    def get_risk_run_by_idempotency(
+        self, idempotency_key: str
+    ) -> RiskRunSummary: ...
+
+    def get_risk_run(self, risk_run_id: str) -> RiskRunSummary: ...
+
+    def append_risk_decision_event(
+        self, record: RiskDecisionEventRecord
+    ) -> None: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -416,6 +439,11 @@ class LocalJsonRegistry:
                     "production_portfolio_snapshots": {},
                     "production_portfolio_applies": {},
                     "production_portfolio_applies_by_idempotency": {},
+                    "risk_policies": {},
+                    "risk_policies_by_ref": {},
+                    "risk_runs": {},
+                    "risk_runs_by_idempotency": {},
+                    "risk_decision_events": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -1238,6 +1266,72 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"portfolio_apply not found: {apply_id!r}")
         return ProductionPortfolioApplySummary.model_validate(raw)
+
+    def upsert_risk_policy(self, record: RiskPolicySummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("risk_policies", {})
+            data.setdefault("risk_policies_by_ref", {})
+            payload = record.model_dump(mode="json")
+            data["risk_policies"][record.policy_hash] = payload
+            data["risk_policies_by_ref"][
+                f"{record.policy_code}@{record.policy_version}"
+            ] = record.policy_hash
+            self._write(data)
+
+    def get_risk_policy(
+        self, policy_code: str, policy_version: str
+    ) -> RiskPolicySummary:
+        data = self._read()
+        ref = f"{policy_code}@{policy_version}"
+        ph = (data.get("risk_policies_by_ref") or {}).get(ref)
+        if not ph:
+            raise KeyError(f"risk_policy not found: {ref!r}")
+        return self.get_risk_policy_by_hash(ph)
+
+    def get_risk_policy_by_hash(self, policy_hash: str) -> RiskPolicySummary:
+        data = self._read()
+        raw = (data.get("risk_policies") or {}).get(policy_hash)
+        if not raw:
+            raise KeyError(f"risk_policy not found: {policy_hash!r}")
+        return RiskPolicySummary.model_validate(raw)
+
+    def upsert_risk_run(self, record: RiskRunSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("risk_runs", {})
+            data.setdefault("risk_runs_by_idempotency", {})
+            payload = record.model_dump(mode="json")
+            data["risk_runs"][record.risk_run_id] = payload
+            data["risk_runs_by_idempotency"][
+                record.idempotency_key
+            ] = record.risk_run_id
+            self._write(data)
+
+    def get_risk_run_by_idempotency(self, idempotency_key: str) -> RiskRunSummary:
+        data = self._read()
+        rid = (data.get("risk_runs_by_idempotency") or {}).get(idempotency_key)
+        if not rid:
+            raise KeyError(f"risk_run idempotency not found: {idempotency_key!r}")
+        return self.get_risk_run(rid)
+
+    def get_risk_run(self, risk_run_id: str) -> RiskRunSummary:
+        data = self._read()
+        raw = (data.get("risk_runs") or {}).get(risk_run_id)
+        if not raw:
+            raise KeyError(f"risk_run not found: {risk_run_id!r}")
+        return RiskRunSummary.model_validate(raw)
+
+    def append_risk_decision_event(
+        self, record: RiskDecisionEventRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("risk_decision_events", {})
+            data["risk_decision_events"][record.event_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
 
 
 class D1ResearchRegistry:
@@ -4022,6 +4116,178 @@ class D1ResearchRegistry:
             created_at=row.get("created_at"),
             metadata=meta if isinstance(meta, dict) else {},
         )
+
+    def upsert_risk_policy(self, record: RiskPolicySummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO risk_policy (
+                  policy_hash, policy_code, policy_version, engine_version,
+                  storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(policy_hash) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.policy_hash,
+                    record.policy_code,
+                    record.policy_version,
+                    record.engine_version,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_risk_policy(
+        self, policy_code: str, policy_version: str
+    ) -> RiskPolicySummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM risk_policy WHERE policy_code=? AND policy_version=?",
+                [policy_code, policy_version],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(
+                f"risk_policy not found: {policy_code!r}@{policy_version!r}"
+            )
+        return self._risk_policy_from_row(rows[0])
+
+    def get_risk_policy_by_hash(self, policy_hash: str) -> RiskPolicySummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM risk_policy WHERE policy_hash=?",
+                [policy_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"risk_policy not found: {policy_hash!r}")
+        return self._risk_policy_from_row(rows[0])
+
+    def _risk_policy_from_row(self, row: dict[str, Any]) -> RiskPolicySummary:
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return RiskPolicySummary(
+            policy_hash=row["policy_hash"],
+            policy_code=row["policy_code"],
+            policy_version=row["policy_version"],
+            engine_version=row.get("engine_version") or "qd_risk_engine@1",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_risk_run(self, record: RiskRunSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO risk_run (
+                  risk_run_id, idempotency_key, policy_hash, account_id,
+                  portfolio_id, apply_id, trading_date, verdict,
+                  n_intents, n_violations, storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(risk_run_id) DO UPDATE SET
+                  verdict=excluded.verdict,
+                  n_intents=excluded.n_intents,
+                  n_violations=excluded.n_violations,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.risk_run_id,
+                    record.idempotency_key,
+                    record.policy_hash,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.apply_id,
+                    record.trading_date,
+                    record.verdict,
+                    record.n_intents,
+                    record.n_violations,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_risk_run_by_idempotency(self, idempotency_key: str) -> RiskRunSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM risk_run WHERE idempotency_key=?",
+                [idempotency_key],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"risk_run idempotency not found: {idempotency_key!r}")
+        return self._risk_run_from_row(rows[0])
+
+    def get_risk_run(self, risk_run_id: str) -> RiskRunSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM risk_run WHERE risk_run_id=?",
+                [risk_run_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"risk_run not found: {risk_run_id!r}")
+        return self._risk_run_from_row(rows[0])
+
+    def _risk_run_from_row(self, row: dict[str, Any]) -> RiskRunSummary:
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return RiskRunSummary(
+            risk_run_id=row["risk_run_id"],
+            idempotency_key=row["idempotency_key"],
+            policy_hash=row.get("policy_hash") or "",
+            account_id=row.get("account_id") or "",
+            portfolio_id=row.get("portfolio_id") or "",
+            apply_id=row.get("apply_id") or "",
+            trading_date=row.get("trading_date") or "",
+            verdict=row.get("verdict") or "ALLOW",
+            n_intents=int(row.get("n_intents") or 0),
+            n_violations=int(row.get("n_violations") or 0),
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def append_risk_decision_event(
+        self, record: RiskDecisionEventRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO risk_decision_event (
+                  event_id, risk_run_id, rule_code, decision, severity,
+                  instrument_key, message, original_value, limit_value,
+                  payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+                [
+                    record.event_id,
+                    record.risk_run_id,
+                    record.rule_code,
+                    record.decision,
+                    record.severity,
+                    record.instrument_key,
+                    record.message,
+                    record.original_value,
+                    record.limit_value,
+                    json.dumps(record.payload_json or {}, ensure_ascii=False),
+                    record.created_at or _utc_now(),
+                ],
+            )
+        except Exception:
+            return
 
 
 def get_default_registry(root: Path | None = None) -> ResearchRegistry:

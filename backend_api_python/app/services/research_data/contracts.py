@@ -858,3 +858,49 @@ class ProductionPortfolioApplySummary(_ContractModel):
     storage_uri: str = ""
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RiskPolicySummary(_ContractModel):
+    """Phase 6C：风控策略版本 Registry 行。"""
+
+    policy_hash: str
+    policy_code: str
+    policy_version: str
+    engine_version: str = "qd_risk_engine@1"
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RiskRunSummary(_ContractModel):
+    """Phase 6C：幂等 risk evaluate 运行。"""
+
+    risk_run_id: str
+    idempotency_key: str
+    policy_hash: str = ""
+    account_id: str = ""
+    portfolio_id: str = ""
+    apply_id: str = ""
+    trading_date: str = ""
+    verdict: str = "ALLOW"
+    n_intents: int = 0
+    n_violations: int = 0
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RiskDecisionEventRecord(_ContractModel):
+    """Phase 6C：风控决策事件行。"""
+
+    event_id: str
+    risk_run_id: str
+    rule_code: str = ""
+    decision: str = ""
+    severity: str = "P0"
+    instrument_key: str = ""
+    message: str = ""
+    original_value: float = 0.0
+    limit_value: float = 0.0
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
