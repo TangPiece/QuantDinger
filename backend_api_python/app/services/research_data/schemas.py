@@ -22,6 +22,9 @@ SCHEMA_VERSION_ROLLING_IC = "rolling_ic_daily@1"
 SCHEMA_VERSION_DECAY = "decay_curve@1"
 SCHEMA_VERSION_GROUP_STABILITY = "group_stability_daily@1"
 SCHEMA_VERSION_REGIME = "regime_metrics@1"
+SCHEMA_VERSION_NEUTRALIZED = "neutralized_factor_daily@1"
+SCHEMA_VERSION_EXPOSURE = "exposure_daily@1"
+SCHEMA_VERSION_NEUT_DIAG = "neutralization_diagnostics@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -286,6 +289,53 @@ def regime_metrics_schema() -> pa.Schema:
             ("turnover", pa.float64()),
             ("net_return", pa.float64()),
             ("sample_count", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def neutralized_factor_daily_schema() -> pa.Schema:
+    """Phase 4G：审计用 raw + neutralized。"""
+    return pa.schema(
+        [
+            ("instrument_key", pa.string()),
+            ("trading_date", pa.date32()),
+            ("raw_factor", pa.float64()),
+            ("neutralized_factor", pa.float64()),
+            ("neutralization_hash", pa.string()),
+            ("status", pa.string()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def exposure_daily_schema() -> pa.Schema:
+    """Phase 4G：暴露明细。"""
+    return pa.schema(
+        [
+            ("instrument_key", pa.string()),
+            ("trading_date", pa.date32()),
+            ("exposure_code", pa.string()),
+            ("exposure_value", pa.float64()),
+            ("available_time", pa.timestamp("us", tz="UTC")),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def neutralization_diagnostics_schema() -> pa.Schema:
+    """Phase 4G：暴露诊断。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("exposure_code", pa.string()),
+            ("correlation_before", pa.float64()),
+            ("correlation_after", pa.float64()),
+            ("spearman_before", pa.float64()),
+            ("spearman_after", pa.float64()),
+            ("r_squared", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("status", pa.string()),
             ("data_version", pa.string()),
         ]
     )

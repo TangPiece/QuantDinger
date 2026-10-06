@@ -894,6 +894,194 @@ def write_regime_metrics_panel(
     return result
 
 
+def write_neutralized_factor_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    neutralization_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4G：审计用 raw + neutralized 分区。"""
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        item.setdefault("neutralization_hash", neutralization_hash)
+        if item.get("neutralized_factor") is None:
+            item["neutralized_factor"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.neutralized_factor_key(
+        neutralization_hash=neutralization_hash,
+        kind="factor",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.neutralized_factor_daily_schema(),
+        required_columns=["instrument_key", "trading_date", "raw_factor"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_NEUTRALIZED,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"neut_fac_{neutralization_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_NEUTRALIZED,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_exposure_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    neutralization_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4G：暴露分区。"""
+    from datetime import datetime, timezone
+
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        at = item.get("available_time")
+        if isinstance(at, str):
+            item["available_time"] = datetime.fromisoformat(
+                at.replace("Z", "+00:00")
+            )
+        elif at is None:
+            item["available_time"] = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.neutralized_factor_key(
+        neutralization_hash=neutralization_hash,
+        kind="exposure",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.exposure_daily_schema(),
+        required_columns=["instrument_key", "trading_date", "exposure_code"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_EXPOSURE,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"neut_exp_{neutralization_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_EXPOSURE,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_neutralization_diagnostics_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    neutralization_hash: str,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4G：诊断（无年月分区）。"""
+    float_cols = (
+        "correlation_before",
+        "correlation_after",
+        "spearman_before",
+        "spearman_after",
+        "r_squared",
+    )
+    norm = []
+    for r in rows:
+        item = _norm_eval_date_as_trading(dict(r))
+        item.setdefault("data_version", version)
+        for col in float_cols:
+            if item.get(col) is None:
+                item[col] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.neutralized_factor_key(
+        neutralization_hash=neutralization_hash, kind="diagnostics", part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.neutralization_diagnostics_schema(),
+        required_columns=["trading_date", "exposure_code", "sample_count"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_NEUT_DIAG,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"neut_diag_{neutralization_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_NEUT_DIAG,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def _norm_eval_date_as_trading(item: dict[str, Any]) -> dict[str, Any]:
+    """统一 trading_date / evaluation_date 为 date。"""
+    td = item.get("trading_date") or item.get("evaluation_date")
+    if isinstance(td, str):
+        item["trading_date"] = date.fromisoformat(td[:10])
+    elif hasattr(td, "date") and not isinstance(td, date):
+        item["trading_date"] = td.date()
+    elif isinstance(td, date):
+        item["trading_date"] = td
+    item.pop("evaluation_date", None)
+    return item
+
+
 def write_snapshot_manifest(
     store: CanonicalStore,
     *,

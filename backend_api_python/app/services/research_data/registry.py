@@ -20,6 +20,7 @@ from .contracts import (
     ExperimentDefinition,
     FactorDatasetRecord,
     FactorEvaluationSummary,
+    FactorNeutralizationSummary,
     FactorStabilitySummary,
     FeatureDefinition,
     GroupEvaluationSummary,
@@ -180,6 +181,14 @@ class ResearchRegistry(Protocol):
         self, stability_hash: str, horizon: int
     ) -> FactorStabilitySummary: ...
 
+    def upsert_factor_neutralization(
+        self, record: FactorNeutralizationSummary
+    ) -> None: ...
+
+    def get_factor_neutralization(
+        self, neutralization_hash: str
+    ) -> FactorNeutralizationSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -208,6 +217,7 @@ class LocalJsonRegistry:
                     "factor_evaluation_summaries": {},
                     "factor_group_evaluations": {},
                     "factor_stability_evaluations": {},
+                    "factor_neutralizations": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -609,6 +619,28 @@ class LocalJsonRegistry:
                 f"factor_stability_evaluation not found: {stability_hash!r} h={horizon}"
             )
         return FactorStabilitySummary.model_validate(raw)
+
+    def upsert_factor_neutralization(
+        self, record: FactorNeutralizationSummary
+    ) -> None:
+        """登记 Neutralization Summary（Local JSON）。"""
+        key = record.neutralization_hash
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_neutralizations", {})
+            data["factor_neutralizations"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_factor_neutralization(
+        self, neutralization_hash: str
+    ) -> FactorNeutralizationSummary:
+        data = self._read()
+        raw = (data.get("factor_neutralizations") or {}).get(neutralization_hash)
+        if not raw:
+            raise KeyError(
+                f"factor_neutralization not found: {neutralization_hash!r}"
+            )
+        return FactorNeutralizationSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1724,6 +1756,97 @@ class D1ResearchRegistry:
             ic_stability_metrics_json=_loads("ic_stability_metrics_json", {}),
             group_stability_metrics_json=_loads("group_stability_metrics_json", {}),
             stability_version=row.get("stability_version") or "qd_factor_stability@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_factor_neutralization(
+        self, record: FactorNeutralizationSummary
+    ) -> None:
+        """D1：写 factor_neutralization；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_neutralization (
+                  neutralization_hash, factor_dataset_id, factor_dataset_hash,
+                  method, targets_json, r_squared_mean, diagnostics_json,
+                  neutralized_factor_dataset_id, neutralization_version,
+                  storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(neutralization_hash) DO UPDATE SET
+                  r_squared_mean=excluded.r_squared_mean,
+                  diagnostics_json=excluded.diagnostics_json,
+                  neutralized_factor_dataset_id=excluded.neutralized_factor_dataset_id,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.neutralization_hash,
+                    record.factor_dataset_id,
+                    record.factor_dataset_hash,
+                    record.method,
+                    json.dumps(record.targets_json or [], ensure_ascii=False),
+                    record.r_squared_mean,
+                    json.dumps(record.diagnostics_json or {}, ensure_ascii=False),
+                    record.neutralized_factor_dataset_id,
+                    record.neutralization_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_factor_neutralization(
+        self, neutralization_hash: str
+    ) -> FactorNeutralizationSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM factor_neutralization
+                WHERE neutralization_hash=?
+                """,
+                [neutralization_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(
+                f"factor_neutralization not found: {neutralization_hash!r}"
+            )
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return FactorNeutralizationSummary(
+            neutralization_hash=row["neutralization_hash"],
+            factor_dataset_id=row["factor_dataset_id"],
+            factor_dataset_hash=row.get("factor_dataset_hash") or "",
+            method=row.get("method") or "REGRESSION",
+            targets_json=_loads("targets_json", []),
+            r_squared_mean=row.get("r_squared_mean"),
+            diagnostics_json=_loads("diagnostics_json", {}),
+            neutralized_factor_dataset_id=row.get("neutralized_factor_dataset_id")
+            or "",
+            neutralization_version=row.get("neutralization_version")
+            or "qd_factor_neutralization@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

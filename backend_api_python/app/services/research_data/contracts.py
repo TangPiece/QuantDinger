@@ -473,3 +473,21 @@ class FactorStabilitySummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorNeutralizationSummary(_ContractModel):
+    """Phase 4G：中性化汇总（明细在 R2；Raw Factor 不可变）。"""
+
+    neutralization_hash: str
+    factor_dataset_id: str
+    factor_dataset_hash: str = ""
+    method: str = "REGRESSION"
+    targets_json: list[Any] = Field(default_factory=list)
+    r_squared_mean: Optional[float] = None
+    diagnostics_json: dict[str, Any] = Field(default_factory=dict)
+    neutralized_factor_dataset_id: str = ""
+    neutralization_version: str = "qd_factor_neutralization@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

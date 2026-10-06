@@ -79,6 +79,13 @@ from .stability import (
     StabilitySpec,
     compute_stability_hash,
 )
+from .neutralization import (
+    NEUTRALIZATION_VERSION,
+    FactorNeutralizationService,
+    FactorNeutralizationSummary,
+    NeutralizationSpec,
+    compute_neutralization_hash,
+)
 
 __all__ = [
     "DEPENDENCY_TYPES",
@@ -86,6 +93,7 @@ __all__ = [
     "FACTOR_LAB_CONTRACT_VERSION",
     "GROUP_VERSION",
     "METRIC_VERSION",
+    "NEUTRALIZATION_VERSION",
     "SCHEMA_LONG",
     "SCHEMA_WIDE",
     "STABILITY_VERSION",
@@ -106,6 +114,8 @@ __all__ = [
     "FactorGroupEvaluationService",
     "FactorManifestError",
     "FactorMetricsService",
+    "FactorNeutralizationService",
+    "FactorNeutralizationSummary",
     "FactorStabilityService",
     "FactorStabilitySummary",
     "FeatureImmutabilityError",
@@ -115,6 +125,7 @@ __all__ = [
     "GroupSpec",
     "MetricSpec",
     "MetricTimeSeries",
+    "NeutralizationSpec",
     "PITComputeContext",
     "ReturnSpec",
     "StabilitySpec",
@@ -128,6 +139,7 @@ __all__ = [
     "compute_factor_hash",
     "compute_group_evaluation_hash",
     "compute_metric_hash",
+    "compute_neutralization_hash",
     "compute_result_dataset_hash",
     "compute_stability_hash",
     "ensure_factor_hash",

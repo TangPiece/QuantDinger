@@ -213,6 +213,44 @@ def evaluation_stability_summary_key(*, stability_hash: str) -> str:
     return f"{_root()}/evaluation/stability/{stability_hash}/summary.json"
 
 
+def neutralized_factor_prefix(
+    *,
+    neutralization_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+) -> str:
+    """Phase 4G：``qd/factor/neutralized/{hash}/{kind}/[year=/month=]``。"""
+    base = f"{_root()}/factor/neutralized/{neutralization_hash}/{kind}"
+    if year is None or month is None:
+        return base
+    return f"{base}/year={int(year):04d}/month={int(month):02d}"
+
+
+def neutralized_factor_key(
+    *,
+    neutralization_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+    part: str = "part-000.parquet",
+) -> str:
+    if year is None or month is None:
+        return f"{neutralized_factor_prefix(neutralization_hash=neutralization_hash, kind=kind)}/{part}"
+    return (
+        f"{neutralized_factor_prefix(neutralization_hash=neutralization_hash, kind=kind, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def neutralized_factor_manifest_key(*, neutralization_hash: str) -> str:
+    return f"{_root()}/factor/neutralized/{neutralization_hash}/manifest.json"
+
+
+def neutralized_factor_summary_key(*, neutralization_hash: str) -> str:
+    return f"{_root()}/factor/neutralized/{neutralization_hash}/summary.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config
