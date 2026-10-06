@@ -74,7 +74,7 @@ OMSService(..., broker_port=adapter, broker_adapter_service=svc)
 ❌ Multi-Broker Routing / SOR / Failover
 ❌ Alpaca Live / any LIVE funded trading
 ❌ Merge live_trading Domain (OMS / strategy / account state machine)
-❌ Full Reconciliation (→ 6F)
+❌ Full Reconciliation (→ 6F, implemented)
 ❌ Parent/Child / TWAP/VWAP
 ```
 
@@ -82,7 +82,8 @@ OMSService(..., broker_port=adapter, broker_adapter_service=svc)
 
 - 6D OMS extended: `BrokerPort`, `BROKER_SUBMIT`, `recover_unknown_order`,
   `environment=SANDBOX|SHADOW`; Paper sync path unchanged for 6D tests
-- 6F reserved: Broker Position/Account views for reconciliation (`0021_…`)
+- 6F: Broker Position/Account views → `BrokerSnapshot` + Trading Gate
+  ([06_reconciliation.md](06_reconciliation.md), D1 `0021_reconciliation.sql`)
 
 ## Verify
 

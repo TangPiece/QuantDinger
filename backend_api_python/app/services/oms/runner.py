@@ -37,10 +37,12 @@ class OMSService:
         broker_port: BrokerPort | None = None,
         artifact_store: OmsArtifactStore | None = None,
         broker_adapter_service: Any = None,
+        trading_gate: Any = None,
     ) -> None:
         self._store = store
         self._registry = registry
         self._portfolio = portfolio_service
+        self._trading_gate = trading_gate
         # 默认 PaperBroker；可由 6E PaperBrokerAdapter / Simulated 注入
         if broker_port is not None:
             self._port: BrokerPort = broker_port
@@ -72,6 +74,10 @@ class OMSService:
             mark_fn=lambda oid, st: self._writer.mark_outbox(oid, st),
         )
 
+    def set_trading_gate(self, gate: Any) -> None:
+        """6F：注入 TradingGate（阻断新 submit）。"""
+        self._trading_gate = gate
+
     def submit_intents(
         self,
         intents: Sequence[OrderIntent] | list[OrderIntent],
@@ -100,9 +106,17 @@ class OMSService:
                 portfolio_service=self._portfolio,
                 prices=prices,
                 metadata=meta,
+                trading_gate=self._trading_gate,
             )
         except StateMachineError as exc:
             raise OMSError(str(exc)) from exc
+        except Exception as exc:
+            # ValidationError / TradingGateBlocked → OMSError
+            from .validation import ValidationError
+
+            if isinstance(exc, ValidationError):
+                raise OMSError(str(exc)) from exc
+            raise
 
     def cancel(self, order_id: str, *, reason: str = "") -> Order:
         order = self.get_order(order_id)

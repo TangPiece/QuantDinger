@@ -53,6 +53,11 @@ from .contracts import (
     BrokerEventIndexRecord,
     BrokerOrderLinkRecord,
     BrokerSessionSummary,
+    BrokerSnapshotIndexRecord,
+    ReconciliationCursorRecord,
+    ReconciliationFindingSummary,
+    ReconciliationGateRecord,
+    ReconciliationRunSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -444,6 +449,46 @@ class ResearchRegistry(Protocol):
 
     def append_broker_event_index(
         self, record: BrokerEventIndexRecord
+    ) -> None: ...
+
+    def upsert_reconciliation_run(
+        self, record: ReconciliationRunSummary
+    ) -> None: ...
+
+    def upsert_reconciliation_finding(
+        self, record: ReconciliationFindingSummary
+    ) -> None: ...
+
+    def list_reconciliation_findings(
+        self,
+        *,
+        run_id: str = "",
+        account_id: str = "",
+        status: str = "",
+    ) -> list[ReconciliationFindingSummary]: ...
+
+    def append_broker_snapshot_index(
+        self, record: BrokerSnapshotIndexRecord
+    ) -> None: ...
+
+    def get_reconciliation_cursor(
+        self,
+        account_id: str,
+        *,
+        broker_id: str = "",
+        cursor_type: str = "EXECUTION",
+    ) -> ReconciliationCursorRecord: ...
+
+    def set_reconciliation_cursor(
+        self, record: ReconciliationCursorRecord
+    ) -> None: ...
+
+    def get_reconciliation_gate(
+        self, account_id: str
+    ) -> ReconciliationGateRecord: ...
+
+    def set_reconciliation_gate(
+        self, record: ReconciliationGateRecord
     ) -> None: ...
 
 
@@ -1606,6 +1651,109 @@ class LocalJsonRegistry:
             data = self._read()
             data.setdefault("broker_event_index", {})
             data["broker_event_index"][record.event_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_reconciliation_run(
+        self, record: ReconciliationRunSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("reconciliation_runs", {})
+            data["reconciliation_runs"][record.run_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_reconciliation_finding(
+        self, record: ReconciliationFindingSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("reconciliation_findings", {})
+            data["reconciliation_findings"][record.finding_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_reconciliation_findings(
+        self,
+        *,
+        run_id: str = "",
+        account_id: str = "",
+        status: str = "",
+    ) -> list[ReconciliationFindingSummary]:
+        data = self._read()
+        rows = list((data.get("reconciliation_findings") or {}).values())
+        out: list[ReconciliationFindingSummary] = []
+        for raw in rows:
+            if run_id and str(raw.get("run_id") or "") != run_id:
+                continue
+            if status and str(raw.get("status") or "") != status:
+                continue
+            if account_id:
+                meta = raw.get("metadata") or {}
+                if str(meta.get("account_id") or "") != account_id:
+                    # 也允许经 run 反查
+                    runs = data.get("reconciliation_runs") or {}
+                    run = runs.get(str(raw.get("run_id") or ""))
+                    if not run or str(run.get("account_id") or "") != account_id:
+                        continue
+            out.append(ReconciliationFindingSummary.model_validate(raw))
+        return out
+
+    def append_broker_snapshot_index(
+        self, record: BrokerSnapshotIndexRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("broker_snapshot_index", {})
+            data["broker_snapshot_index"][record.snapshot_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_reconciliation_cursor(
+        self,
+        account_id: str,
+        *,
+        broker_id: str = "",
+        cursor_type: str = "EXECUTION",
+    ) -> ReconciliationCursorRecord:
+        data = self._read()
+        key = f"{account_id}|{broker_id}|{cursor_type}"
+        raw = (data.get("reconciliation_cursors") or {}).get(key)
+        if not raw:
+            raise KeyError(f"cursor not found: {key!r}")
+        return ReconciliationCursorRecord.model_validate(raw)
+
+    def set_reconciliation_cursor(
+        self, record: ReconciliationCursorRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("reconciliation_cursors", {})
+            key = f"{record.account_id}|{record.broker_id}|{record.cursor_type}"
+            data["reconciliation_cursors"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_reconciliation_gate(
+        self, account_id: str
+    ) -> ReconciliationGateRecord:
+        data = self._read()
+        raw = (data.get("reconciliation_gates") or {}).get(account_id)
+        if not raw:
+            raise KeyError(f"gate not found: {account_id!r}")
+        return ReconciliationGateRecord.model_validate(raw)
+
+    def set_reconciliation_gate(
+        self, record: ReconciliationGateRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("reconciliation_gates", {})
+            data["reconciliation_gates"][record.account_id] = record.model_dump(
                 mode="json"
             )
             self._write(data)
@@ -5095,6 +5243,243 @@ class D1ResearchRegistry:
                     record.received_at or _utc_now(),
                     record.storage_uri,
                     record.checksum,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_reconciliation_run(
+        self, record: ReconciliationRunSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO reconciliation_run (
+                  run_id, account_id, portfolio_id, broker_id, mode,
+                  started_at, completed_at, snapshot_id, finding_count,
+                  critical_count, gate_blocked, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  completed_at=excluded.completed_at,
+                  finding_count=excluded.finding_count,
+                  critical_count=excluded.critical_count,
+                  gate_blocked=excluded.gate_blocked,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.broker_id,
+                    record.mode,
+                    record.started_at,
+                    record.completed_at,
+                    record.snapshot_id,
+                    int(record.finding_count),
+                    int(record.critical_count),
+                    1 if record.gate_blocked else 0,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_reconciliation_finding(
+        self, record: ReconciliationFindingSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO reconciliation_finding (
+                  finding_id, run_id, type, severity, status, entity_type,
+                  entity_id, expected_json, actual_json, difference_json,
+                  detected_at, resolved_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(finding_id) DO UPDATE SET
+                  status=excluded.status,
+                  resolved_at=excluded.resolved_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.finding_id,
+                    record.run_id,
+                    record.type,
+                    record.severity,
+                    record.status,
+                    record.entity_type,
+                    record.entity_id,
+                    json.dumps(record.expected or {}, ensure_ascii=False),
+                    json.dumps(record.actual or {}, ensure_ascii=False),
+                    json.dumps(record.difference or {}, ensure_ascii=False),
+                    record.detected_at,
+                    record.resolved_at,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_reconciliation_findings(
+        self,
+        *,
+        run_id: str = "",
+        account_id: str = "",
+        status: str = "",
+    ) -> list[ReconciliationFindingSummary]:
+        # D1 列表简化：失败返回空（单测走 LocalJson）
+        try:
+            sql = "SELECT * FROM reconciliation_finding WHERE 1=1"
+            params: list[Any] = []
+            if run_id:
+                sql += " AND run_id=?"
+                params.append(run_id)
+            if status:
+                sql += " AND status=?"
+                params.append(status)
+            rows = d1_client.query(sql, params) or []
+            out: list[ReconciliationFindingSummary] = []
+            for r in rows:
+                meta = json.loads(r.get("metadata_json") or "{}")
+                if account_id and str(meta.get("account_id") or "") != account_id:
+                    continue
+                out.append(
+                    ReconciliationFindingSummary(
+                        finding_id=r["finding_id"],
+                        run_id=r.get("run_id") or "",
+                        type=r.get("type") or "",
+                        severity=r.get("severity") or "",
+                        status=r.get("status") or "",
+                        entity_type=r.get("entity_type") or "",
+                        entity_id=r.get("entity_id") or "",
+                        expected=json.loads(r.get("expected_json") or "{}"),
+                        actual=json.loads(r.get("actual_json") or "{}"),
+                        difference=json.loads(r.get("difference_json") or "{}"),
+                        detected_at=r.get("detected_at"),
+                        resolved_at=r.get("resolved_at"),
+                        metadata=meta,
+                    )
+                )
+            return out
+        except Exception:
+            return []
+
+    def append_broker_snapshot_index(
+        self, record: BrokerSnapshotIndexRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO broker_snapshot_index (
+                  snapshot_id, broker_id, account_id, captured_at,
+                  storage_uri, checksum, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO NOTHING
+                """,
+                [
+                    record.snapshot_id,
+                    record.broker_id,
+                    record.account_id,
+                    record.captured_at,
+                    record.storage_uri,
+                    record.checksum,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_reconciliation_cursor(
+        self,
+        account_id: str,
+        *,
+        broker_id: str = "",
+        cursor_type: str = "EXECUTION",
+    ) -> ReconciliationCursorRecord:
+        rows = d1_client.query(
+            """
+            SELECT * FROM reconciliation_cursor
+            WHERE account_id=? AND broker_id=? AND cursor_type=?
+            """,
+            [account_id, broker_id, cursor_type],
+        )
+        if not rows:
+            raise KeyError("cursor not found")
+        r = rows[0]
+        return ReconciliationCursorRecord(
+            account_id=r["account_id"],
+            broker_id=r.get("broker_id") or "",
+            cursor_type=r.get("cursor_type") or "",
+            cursor_value=r.get("cursor_value") or "",
+            updated_at=r.get("updated_at"),
+        )
+
+    def set_reconciliation_cursor(
+        self, record: ReconciliationCursorRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO reconciliation_cursor (
+                  account_id, broker_id, cursor_type, cursor_value, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, broker_id, cursor_type) DO UPDATE SET
+                  cursor_value=excluded.cursor_value,
+                  updated_at=excluded.updated_at
+                """,
+                [
+                    record.account_id,
+                    record.broker_id,
+                    record.cursor_type,
+                    record.cursor_value,
+                    record.updated_at or _utc_now(),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_reconciliation_gate(
+        self, account_id: str
+    ) -> ReconciliationGateRecord:
+        rows = d1_client.query(
+            "SELECT * FROM reconciliation_gate WHERE account_id=?",
+            [account_id],
+        )
+        if not rows:
+            raise KeyError("gate not found")
+        r = rows[0]
+        return ReconciliationGateRecord(
+            account_id=r["account_id"],
+            blocked=bool(r.get("blocked")),
+            reason=r.get("reason") or "",
+            finding_id=r.get("finding_id") or "",
+            updated_at=r.get("updated_at"),
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def set_reconciliation_gate(
+        self, record: ReconciliationGateRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO reconciliation_gate (
+                  account_id, blocked, reason, finding_id, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                  blocked=excluded.blocked,
+                  reason=excluded.reason,
+                  finding_id=excluded.finding_id,
+                  updated_at=excluded.updated_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.account_id,
+                    1 if record.blocked else 0,
+                    record.reason,
+                    record.finding_id,
+                    record.updated_at or _utc_now(),
                     json.dumps(record.metadata or {}, ensure_ascii=False),
                 ],
             )

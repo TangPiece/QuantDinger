@@ -22,6 +22,10 @@ from .validation import ValidationError, validate_order
 _ALLOWED_ENV = frozenset({"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER"})
 
 
+class TradingGateBlocked(ValidationError):
+    """6F Trading Gate：账户因 CRITICAL 对账差异阻断新单。"""
+
+
 def _apply_report_to_order(
     order: Order,
     report: Any,
@@ -76,8 +80,17 @@ def run_submit_intents(
     metadata: Mapping[str, Any] | None = None,
     # 兼容旧调用方
     paper_broker: Any = None,
+    trading_gate: Any = None,
 ) -> SubmitResult:
     """PAPER 默认同步；SANDBOX/SHADOW 或 async_submit → BROKER_SUBMIT outbox。"""
+    # 6F：CRITICAL Gate 阻断新 submit（cancel/recover 不走此路径）
+    if trading_gate is not None and hasattr(trading_gate, "is_blocked"):
+        if trading_gate.is_blocked(account_id):
+            raise TradingGateBlocked(
+                f"trading gate blocked for account {account_id}: "
+                "reconciliation CRITICAL open"
+            )
+
     env = str(environment).upper()
     if env not in _ALLOWED_ENV:
         raise StateMachineError(

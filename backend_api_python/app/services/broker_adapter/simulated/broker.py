@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional  # Any：fill 联动类型
 
 from app.services.oms.protocol import (
     CancelRequest,
@@ -104,6 +104,22 @@ class SimulatedBrokerAdapter:
             ),
         )
 
+    def _apply_fill_to_book(self, order: Order, fill: Any) -> None:
+        """成交后同步 _positions / _cash，供 6F Snapshot 对齐。"""
+        qty = float(fill.quantity)
+        px = float(fill.price)
+        key = order.instrument_key
+        signed = qty if str(order.side).upper() == "BUY" else -qty
+        self._positions[key] = float(self._positions.get(key) or 0.0) + signed
+        # BUY 扣现金；SELL 加现金（简化，无费用）
+        notional = qty * px
+        if str(order.side).upper() == "BUY":
+            self._cash -= notional
+        else:
+            self._cash += notional
+        if abs(float(self._positions.get(key) or 0.0)) < 1e-12:
+            self._positions.pop(key, None)
+
     def submit_order(self, order: Order) -> ExecutionReport:
         meta = dict(order.metadata or {})
         inject = dict(meta.get("simulated") or meta.get("paper_broker") or meta)
@@ -111,11 +127,14 @@ class SimulatedBrokerAdapter:
             self._ws.configure_disconnect_after(int(inject["ws_disconnect_after_n"]))
 
         report = self._rest.submit(order)
-        # 推送 WS 事件（含 duplicate 注入）
+        # 推送 WS 事件（含 duplicate 注入）+ 6F 持仓/现金联动
         for fill in report.fills:
             exec_id = str(
                 (fill.metadata or {}).get("broker_execution_id") or fill.fill_id
             )
+            # 故障：跳过某笔成交写入 broker book（OMS 仍有 fill，Snapshot 缺）
+            if not inject.get("skip_broker_position_update"):
+                self._apply_fill_to_book(order, fill)
             ev_type = "FILL" if report.status == "FILL" else "PARTIAL"
             self._ws.push_raw(
                 broker_execution_id=exec_id,
@@ -142,6 +161,12 @@ class SimulatedBrokerAdapter:
                     remaining_quantity=float(report.remaining_quantity),
                     message="duplicate",
                 )
+        # 6F 注入：强制覆盖 broker 持仓/现金
+        if inject.get("force_broker_position") is not None:
+            forced = dict(inject["force_broker_position"])
+            self._positions = {str(k): float(v) for k, v in forced.items()}
+        if inject.get("force_broker_cash") is not None:
+            self._cash = float(inject["force_broker_cash"])
         return report
 
     def cancel_order(self, order: Order, request: CancelRequest) -> ExecutionReport:

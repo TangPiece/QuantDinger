@@ -1009,3 +1009,72 @@ class BrokerEventIndexRecord(_ContractModel):
     storage_uri: str = ""
     checksum: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReconciliationRunSummary(_ContractModel):
+    """Phase 6F：对账运行 Registry 行。"""
+
+    run_id: str
+    account_id: str = ""
+    portfolio_id: str = ""
+    broker_id: str = ""
+    mode: str = "FAST"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    snapshot_id: str = ""
+    finding_count: int = 0
+    critical_count: int = 0
+    gate_blocked: bool = False
+    engine_version: str = "qd_reconciliation@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReconciliationFindingSummary(_ContractModel):
+    """Phase 6F：Finding Registry 行。"""
+
+    finding_id: str
+    run_id: str = ""
+    type: str = ""
+    severity: str = "WARNING"
+    status: str = "OPEN"
+    entity_type: str = ""
+    entity_id: str = ""
+    expected: dict[str, Any] = Field(default_factory=dict)
+    actual: dict[str, Any] = Field(default_factory=dict)
+    difference: dict[str, Any] = Field(default_factory=dict)
+    detected_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BrokerSnapshotIndexRecord(_ContractModel):
+    """Phase 6F：BrokerSnapshot 索引（明细在 R2）。"""
+
+    snapshot_id: str
+    broker_id: str = ""
+    account_id: str = ""
+    captured_at: Optional[str] = None
+    storage_uri: str = ""
+    checksum: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReconciliationCursorRecord(_ContractModel):
+    """Phase 6F：增量游标。"""
+
+    account_id: str
+    broker_id: str = ""
+    cursor_type: str = "EXECUTION"
+    cursor_value: str = ""
+    updated_at: Optional[str] = None
+
+
+class ReconciliationGateRecord(_ContractModel):
+    """Phase 6F：Trading Gate 状态。"""
+
+    account_id: str
+    blocked: bool = False
+    reason: str = ""
+    finding_id: str = ""
+    updated_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

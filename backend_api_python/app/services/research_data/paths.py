@@ -586,6 +586,34 @@ def production_broker_event_key(
     )
 
 
+def production_reconciliation_prefix(
+    *, broker_id: str = "", account_id: str = ""
+) -> str:
+    """Phase 6F：``qd/production/reconciliation/[broker]/[account]``。"""
+    base = f"{_root()}/production/reconciliation"
+    if broker_id:
+        base = f"{base}/{broker_id}"
+    if account_id:
+        base = f"{base}/{account_id}"
+    return base
+
+
+def production_reconciliation_snapshot_key(
+    *,
+    broker_id: str,
+    account_id: str,
+    year: str,
+    month: str,
+    day: str,
+    snapshot_id: str,
+) -> str:
+    """``qd/production/reconciliation/{broker}/{account}/{yyyy}/{mm}/{dd}/{id}.json``。"""
+    return (
+        f"{production_reconciliation_prefix(broker_id=broker_id, account_id=account_id)}"
+        f"/{year}/{month}/{day}/{snapshot_id}.json"
+    )
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config
