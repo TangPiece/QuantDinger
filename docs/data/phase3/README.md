@@ -1,6 +1,6 @@
 # Phase 3 — Research Backtest
 
-> **Status:** Phase 3A–3C implemented. Phase 3D Production Backtest is next.
+> **Status:** Phase 3A–3D implemented. Phase 3E dual-engine consistency is next.
 
 ## Reading order
 
@@ -23,11 +23,14 @@ See [../../backtest/README.md](../../backtest/README.md):
 
 8. [08_trading_cost_execution.md](../../backtest/08_trading_cost_execution.md)
 
-### 3D–3E (planned)
+### 3D — Production Backtest (done)
+
+9. [09_production_backtest.md](../../backtest/09_production_backtest.md)
+
+### 3E (planned)
 
 | Phase | Topic |
 | --- | --- |
-| 3D | QuantDinger Production Backtest |
 | 3E | Dual-engine consistency analysis |
 
 ## Prerequisite
@@ -45,4 +48,7 @@ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
 
 QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase3c_execution_rules.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase3d_production_backtest.py
 ```

@@ -192,6 +192,20 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 Phase 3C 说明：[docs/backtest/08_trading_cost_execution.md](backtest/08_trading_cost_execution.md)。
 
+验证 Phase 3D Production Backtest（无 qlib；组合 3C ExecutionSimulator）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase3d_production_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase3d_*.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 3D 说明：[docs/backtest/09_production_backtest.md](backtest/09_production_backtest.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

@@ -47,6 +47,10 @@ class PortfolioSnapshot(_ContractModel):
     cash: float = 0.0
     total_value: float = 0.0
     positions: list[PositionSnapshot] = []
+    # Phase 3D 账本审计（可选）
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    total_cost: float = 0.0
 
 
 class EquityPoint(_ContractModel):
