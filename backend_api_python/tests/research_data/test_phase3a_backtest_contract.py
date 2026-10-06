@@ -137,9 +137,10 @@ def test_trade_ledger_fields():
 
 
 def test_backtest_package_no_forbidden_imports():
+    # 含 execution/ 子包（Phase 3C）；禁止 qlib / strategy_v2
     root = Path(__file__).resolve().parents[2] / "app/services/research_data/backtest"
     forbidden = ("qlib", "strategy_v2")
-    for py in root.glob("*.py"):
+    for py in root.rglob("*.py"):
         tree = ast.parse(py.read_text(encoding="utf-8"))
         names: list[str] = []
         for node in ast.walk(tree):
@@ -149,4 +150,4 @@ def test_backtest_package_no_forbidden_imports():
                 names.append(node.module or "")
         joined = " ".join(names).lower()
         for bad in forbidden:
-            assert bad not in joined, f"{py.name} imports {bad}"
+            assert bad not in joined, f"{py.relative_to(root)} imports {bad}"

@@ -45,6 +45,8 @@ def cn_equity_close_signal_next_open() -> tuple[
         fractional_shares=False,
         market_calendar_id="CN_SSE_SZSE",
         suspension_mode="skip",
+        lot_rounding="floor",
+        enforce_cash=True,
     )
     return execution, price, cost, rules
 

@@ -273,7 +273,7 @@ class TargetPosition(_ContractModel):
 
 
 class OrderIntent(_ContractModel):
-    """订单意图契约（Phase 2E 仅保留；不接 Broker）。"""
+    """订单意图契约；2E 占位 mapper / 3C 再平衡正式使用（不接 Broker）。"""
 
     instrument_key: str
     side: Literal["BUY", "SELL"]
@@ -284,6 +284,13 @@ class OrderIntent(_ContractModel):
     signal_id: Optional[str] = None
     strategy_version: Optional[str] = None
     trading_date: Optional[str] = None
+    # Phase 3C：再平衡审计字段（可选，向后兼容）
+    target_quantity: Optional[float] = None
+    current_quantity: Optional[float] = None
+    quantity_delta: Optional[float] = None
+    signal_time: Optional[datetime] = None
+    intended_execution_time: Optional[datetime] = None
+    reason: Optional[str] = None
 
 
 class SignalRunRecord(_ContractModel):

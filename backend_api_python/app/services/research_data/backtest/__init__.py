@@ -1,4 +1,4 @@
-"""Phase 3A：回测 Domain Contract（无引擎实现）。"""
+"""Phase 3A/3C：回测 Domain Contract + Execution Rules（无 qlib）。"""
 
 from .engine import BacktestEngine
 from .fingerprint import compute_request_fingerprint

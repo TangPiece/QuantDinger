@@ -51,7 +51,7 @@ class CostPolicy(_ContractModel):
 
 
 class TradingRule(_ContractModel):
-    """市场微观结构规则；Production 3D 严格执行。"""
+    """市场微观结构规则；3C ExecutionSimulator / Production 3D 执行。"""
 
     lot_size: int = 100
     tick_size: float = 0.01
@@ -62,3 +62,7 @@ class TradingRule(_ContractModel):
     fractional_shares: bool = False
     market_calendar_id: str = "CN_SSE_SZSE"
     suspension_mode: Literal["skip", "hold", "fail"] = "skip"
+    # floor：向下取整到 lot_size，零头 rejected；reject：非整手整单拒绝
+    lot_rounding: Literal["floor", "reject"] = "floor"
+    # True 时买入受现金约束（不足则部分/拒绝）
+    enforce_cash: bool = True
