@@ -630,3 +630,68 @@ class CrossValidationSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionBundleSummary(_ContractModel):
+    """Phase 5F：生产 Bundle 冻结汇总；明细在 R2。
+
+    注意：字段 ``bundle_hash`` 是 *production* bundle 身份，
+    勿与 2A ``ResearchBundleIdentity.bundle_hash`` 混淆。
+    """
+
+    bundle_hash: str
+    strategy_hash: str
+    strategy_code: str = ""
+    cv_hash: str = ""
+    backtest_hash: str = ""
+    qlib_run_hash: str = ""
+    dataset_hash: str = ""
+    materialization_id: str = ""
+    model_artifact_id: str = ""
+    model_version: str = ""
+    processor_hash: str = ""
+    processor_artifact_uri: str = ""
+    pipeline_digest: str = ""
+    universe_code: str = ""
+    snapshot_id: str = ""
+    execution_policy: str = "NEXT_OPEN"
+    realism: str = "GROSS"
+    market_rule: str = ""
+    status: str = "DRAFT"
+    parent_bundle_hash: str = ""
+    dependency_lock_json: dict[str, Any] = Field(default_factory=dict)
+    feature_hashes: list[str] = Field(default_factory=list)
+    engine_version: str = "qd_production_bridge@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionDeploymentSummary(_ContractModel):
+    """Phase 5F：某 strategy_code 当前/历史部署指针。"""
+
+    deployment_id: str
+    bundle_hash: str
+    strategy_code: str
+    status: str = "DEPLOYED"
+    previous_bundle_hash: str = ""
+    deployed_at: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionDeploymentRunSummary(_ContractModel):
+    """Phase 5F：干跑 Inference 审计。"""
+
+    run_id: str
+    bundle_hash: str
+    deployment_id: str = ""
+    trading_date: str = ""
+    status: str = "OK"
+    n_signals: int = 0
+    n_intents: int = 0
+    gate_json: dict[str, Any] = Field(default_factory=dict)
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

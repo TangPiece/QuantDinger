@@ -129,7 +129,7 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
 ❌ Merge with Phase 3E Production consistency
 ❌ Force Qlib NET == QD NET
 ❌ Modify Strategy Contract / Qlib source
-❌ Production / Live / 5F Bridge
+❌ Production Bridge details (see 06; 5E stops at validation report)
 ❌ P1 multi-market / CA / Level2
 ❌ P2 CI dashboard / visualization
 ```

@@ -464,6 +464,30 @@ def cross_validation_attribution_key(*, cv_hash: str) -> str:
     return f"{cross_validation_prefix(cv_hash=cv_hash)}/attribution.json"
 
 
+def production_bundle_prefix(*, bundle_hash: str, kind: str = "") -> str:
+    """Phase 5F：``qd/production/bundles/{bundle_hash}/[kind]``。"""
+    base = f"{_root()}/production/bundles/{bundle_hash}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def production_bundle_manifest_key(*, bundle_hash: str) -> str:
+    return f"{production_bundle_prefix(bundle_hash=bundle_hash)}/manifest.json"
+
+
+def production_bundle_summary_key(*, bundle_hash: str) -> str:
+    return f"{production_bundle_prefix(bundle_hash=bundle_hash)}/summary.json"
+
+
+def production_run_prefix(*, run_id: str, kind: str = "") -> str:
+    """Phase 5F：干跑 inference 产物。"""
+    base = f"{_root()}/production/runs/{run_id}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

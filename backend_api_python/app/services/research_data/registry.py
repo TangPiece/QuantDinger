@@ -31,6 +31,9 @@ from .contracts import (
     PricePolicy,
     ProcessorDefinition,
     CrossValidationSummary,
+    ProductionBundleSummary,
+    ProductionDeploymentRunSummary,
+    ProductionDeploymentSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -248,6 +251,34 @@ class ResearchRegistry(Protocol):
         self, cv_hash: str
     ) -> CrossValidationSummary: ...
 
+    def upsert_production_bundle(
+        self, record: ProductionBundleSummary
+    ) -> None: ...
+
+    def get_production_bundle(
+        self, bundle_hash: str
+    ) -> ProductionBundleSummary: ...
+
+    def upsert_production_deployment(
+        self, record: ProductionDeploymentSummary
+    ) -> None: ...
+
+    def get_production_deployment(
+        self, deployment_id: str
+    ) -> ProductionDeploymentSummary: ...
+
+    def get_active_deployment(
+        self, strategy_code: str
+    ) -> ProductionDeploymentSummary: ...
+
+    def upsert_deployment_run(
+        self, record: ProductionDeploymentRunSummary
+    ) -> None: ...
+
+    def get_deployment_run(
+        self, run_id: str
+    ) -> ProductionDeploymentRunSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -284,6 +315,9 @@ class LocalJsonRegistry:
                     "research_backtests": {},
                     "research_qlib_runs": {},
                     "research_cross_validations": {},
+                    "production_bundles": {},
+                    "production_deployments": {},
+                    "production_deployment_runs": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -830,6 +864,78 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"research_cross_validation not found: {cv_hash!r}")
         return CrossValidationSummary.model_validate(raw)
+
+    def upsert_production_bundle(self, record: ProductionBundleSummary) -> None:
+        """登记 Production Bundle（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_bundles", {})
+            data["production_bundles"][record.bundle_hash] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_production_bundle(self, bundle_hash: str) -> ProductionBundleSummary:
+        data = self._read()
+        raw = (data.get("production_bundles") or {}).get(bundle_hash)
+        if not raw:
+            raise KeyError(f"production_bundle not found: {bundle_hash!r}")
+        return ProductionBundleSummary.model_validate(raw)
+
+    def upsert_production_deployment(
+        self, record: ProductionDeploymentSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_deployments", {})
+            data["production_deployments"][record.deployment_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_production_deployment(
+        self, deployment_id: str
+    ) -> ProductionDeploymentSummary:
+        data = self._read()
+        raw = (data.get("production_deployments") or {}).get(deployment_id)
+        if not raw:
+            raise KeyError(f"production_deployment not found: {deployment_id!r}")
+        return ProductionDeploymentSummary.model_validate(raw)
+
+    def get_active_deployment(
+        self, strategy_code: str
+    ) -> ProductionDeploymentSummary:
+        data = self._read()
+        deps = data.get("production_deployments") or {}
+        # 取该 code 下最新 DEPLOYED
+        candidates = [
+            ProductionDeploymentSummary.model_validate(v)
+            for v in deps.values()
+            if v.get("strategy_code") == strategy_code
+            and v.get("status") == "DEPLOYED"
+        ]
+        if not candidates:
+            raise KeyError(f"active deployment not found: {strategy_code!r}")
+        candidates.sort(key=lambda d: d.deployed_at or d.created_at or "")
+        return candidates[-1]
+
+    def upsert_deployment_run(
+        self, record: ProductionDeploymentRunSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_deployment_runs", {})
+            data["production_deployment_runs"][record.run_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_deployment_run(self, run_id: str) -> ProductionDeploymentRunSummary:
+        data = self._read()
+        raw = (data.get("production_deployment_runs") or {}).get(run_id)
+        if not raw:
+            raise KeyError(f"deployment_run not found: {run_id!r}")
+        return ProductionDeploymentRunSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -2666,6 +2772,248 @@ class D1ResearchRegistry:
             engine_version=row.get("engine_version") or "qd_cross_validation@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_production_bundle(self, record: ProductionBundleSummary) -> None:
+        """D1：写 production_bundle；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_bundle (
+                  bundle_hash, strategy_hash, strategy_code, cv_hash,
+                  backtest_hash, qlib_run_hash, dataset_hash, materialization_id,
+                  model_artifact_id, model_version,
+                  processor_hash, processor_artifact_uri, pipeline_digest,
+                  universe_code, snapshot_id, execution_policy, realism, market_rule,
+                  status, parent_bundle_hash, dependency_lock_json, feature_hashes_json,
+                  engine_version, storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                )
+                ON CONFLICT(bundle_hash) DO UPDATE SET
+                  status=excluded.status,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.bundle_hash,
+                    record.strategy_hash,
+                    record.strategy_code,
+                    record.cv_hash,
+                    record.backtest_hash,
+                    record.qlib_run_hash,
+                    record.dataset_hash,
+                    record.materialization_id,
+                    record.model_artifact_id,
+                    record.model_version,
+                    record.processor_hash,
+                    record.processor_artifact_uri,
+                    record.pipeline_digest,
+                    record.universe_code,
+                    record.snapshot_id,
+                    record.execution_policy,
+                    record.realism,
+                    record.market_rule,
+                    record.status,
+                    record.parent_bundle_hash,
+                    json.dumps(
+                        record.dependency_lock_json or {}, ensure_ascii=False
+                    ),
+                    json.dumps(record.feature_hashes or [], ensure_ascii=False),
+                    record.engine_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_production_bundle(self, bundle_hash: str) -> ProductionBundleSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_bundle WHERE bundle_hash=?",
+                [bundle_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"production_bundle not found: {bundle_hash!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return ProductionBundleSummary(
+            bundle_hash=row["bundle_hash"],
+            strategy_hash=row["strategy_hash"],
+            strategy_code=row.get("strategy_code") or "",
+            cv_hash=row.get("cv_hash") or "",
+            backtest_hash=row.get("backtest_hash") or "",
+            qlib_run_hash=row.get("qlib_run_hash") or "",
+            dataset_hash=row.get("dataset_hash") or "",
+            materialization_id=row.get("materialization_id") or "",
+            model_artifact_id=row.get("model_artifact_id") or "",
+            model_version=row.get("model_version") or "",
+            processor_hash=row.get("processor_hash") or "",
+            processor_artifact_uri=row.get("processor_artifact_uri") or "",
+            pipeline_digest=row.get("pipeline_digest") or "",
+            universe_code=row.get("universe_code") or "",
+            snapshot_id=row.get("snapshot_id") or "",
+            execution_policy=row.get("execution_policy") or "NEXT_OPEN",
+            realism=row.get("realism") or "GROSS",
+            market_rule=row.get("market_rule") or "",
+            status=row.get("status") or "DRAFT",
+            parent_bundle_hash=row.get("parent_bundle_hash") or "",
+            dependency_lock_json=_loads("dependency_lock_json", {}),
+            feature_hashes=_loads("feature_hashes_json", []),
+            engine_version=row.get("engine_version") or "qd_production_bridge@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_production_deployment(
+        self, record: ProductionDeploymentSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_deployment (
+                  deployment_id, bundle_hash, strategy_code, status,
+                  previous_bundle_hash, deployed_at, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(deployment_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.deployment_id,
+                    record.bundle_hash,
+                    record.strategy_code,
+                    record.status,
+                    record.previous_bundle_hash,
+                    record.deployed_at,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_production_deployment(
+        self, deployment_id: str
+    ) -> ProductionDeploymentSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_deployment WHERE deployment_id=?",
+                [deployment_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"production_deployment not found: {deployment_id!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionDeploymentSummary(
+            deployment_id=row["deployment_id"],
+            bundle_hash=row["bundle_hash"],
+            strategy_code=row.get("strategy_code") or "",
+            status=row.get("status") or "DEPLOYED",
+            previous_bundle_hash=row.get("previous_bundle_hash") or "",
+            deployed_at=row.get("deployed_at"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def get_active_deployment(
+        self, strategy_code: str
+    ) -> ProductionDeploymentSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM production_deployment
+                WHERE strategy_code=? AND status='DEPLOYED'
+                ORDER BY deployed_at DESC
+                LIMIT 1
+                """,
+                [strategy_code],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"active deployment not found: {strategy_code!r}")
+        return self.get_production_deployment(rows[0]["deployment_id"])
+
+    def upsert_deployment_run(
+        self, record: ProductionDeploymentRunSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_deployment_run (
+                  run_id, bundle_hash, deployment_id, trading_date, status,
+                  n_signals, n_intents, gate_json, storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  status=excluded.status,
+                  gate_json=excluded.gate_json,
+                  storage_uri=excluded.storage_uri
+                """,
+                [
+                    record.run_id,
+                    record.bundle_hash,
+                    record.deployment_id,
+                    record.trading_date,
+                    record.status,
+                    record.n_signals,
+                    record.n_intents,
+                    json.dumps(record.gate_json or {}, ensure_ascii=False),
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_deployment_run(self, run_id: str) -> ProductionDeploymentRunSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_deployment_run WHERE run_id=?",
+                [run_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"deployment_run not found: {run_id!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        gate = json.loads(row.get("gate_json") or "{}")
+        return ProductionDeploymentRunSummary(
+            run_id=row["run_id"],
+            bundle_hash=row["bundle_hash"],
+            deployment_id=row.get("deployment_id") or "",
+            trading_date=row.get("trading_date") or "",
+            status=row.get("status") or "OK",
+            n_signals=int(row.get("n_signals") or 0),
+            n_intents=int(row.get("n_intents") or 0),
+            gate_json=gate if isinstance(gate, dict) else {},
+            storage_uri=row.get("storage_uri") or "",
             created_at=row.get("created_at"),
             metadata=meta if isinstance(meta, dict) else {},
         )
