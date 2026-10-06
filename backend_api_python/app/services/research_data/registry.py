@@ -65,6 +65,10 @@ from .contracts import (
     OpsHealthSnapshotRecord,
     OpsIncidentSummary,
     OpsSloDefinitionRecord,
+    E2EConsistencyScoreRecord,
+    E2EScenarioRunSummary,
+    E2ESessionSummary,
+    E2EVirtualOrderSummary,
     SafetyEventSummary,
     SafetyRuleRecord,
     SafetyStateRecord,
@@ -565,6 +569,39 @@ class ResearchRegistry(Protocol):
     ) -> None: ...
 
     def list_ops_slo_definitions(self) -> list[OpsSloDefinitionRecord]: ...
+
+    def upsert_e2e_scenario_run(self, record: E2EScenarioRunSummary) -> None: ...
+
+    def get_e2e_scenario_run(self, scenario_run_id: str) -> E2EScenarioRunSummary: ...
+
+    def list_e2e_scenario_runs(
+        self,
+        *,
+        session_id: str = "",
+        run_id: str = "",
+        scenario_id: str = "",
+        limit: int = 200,
+    ) -> list[E2EScenarioRunSummary]: ...
+
+    def upsert_e2e_session(self, record: E2ESessionSummary) -> None: ...
+
+    def get_e2e_session(self, session_id: str) -> E2ESessionSummary: ...
+
+    def upsert_e2e_consistency_score(
+        self, record: E2EConsistencyScoreRecord
+    ) -> None: ...
+
+    def get_e2e_consistency_score(self, score_id: str) -> E2EConsistencyScoreRecord: ...
+
+    def upsert_e2e_virtual_order(self, record: E2EVirtualOrderSummary) -> None: ...
+
+    def list_e2e_virtual_orders(
+        self,
+        *,
+        session_id: str = "",
+        scenario_run_id: str = "",
+        limit: int = 200,
+    ) -> list[E2EVirtualOrderSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -2040,6 +2077,97 @@ class LocalJsonRegistry:
         data = self._read()
         rows = list((data.get("ops_slo_definitions") or {}).values())
         return [OpsSloDefinitionRecord.model_validate(r) for r in rows]
+
+    def upsert_e2e_scenario_run(self, record: E2EScenarioRunSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("e2e_scenario_runs", {})
+            data["e2e_scenario_runs"][record.scenario_run_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_e2e_scenario_run(self, scenario_run_id: str) -> E2EScenarioRunSummary:
+        data = self._read()
+        raw = (data.get("e2e_scenario_runs") or {}).get(scenario_run_id)
+        if not raw:
+            raise KeyError(scenario_run_id)
+        return E2EScenarioRunSummary.model_validate(raw)
+
+    def list_e2e_scenario_runs(
+        self,
+        *,
+        session_id: str = "",
+        run_id: str = "",
+        scenario_id: str = "",
+        limit: int = 200,
+    ) -> list[E2EScenarioRunSummary]:
+        data = self._read()
+        rows = list((data.get("e2e_scenario_runs") or {}).values())
+        if session_id:
+            rows = [r for r in rows if r.get("session_id") == session_id]
+        if run_id:
+            rows = [r for r in rows if r.get("run_id") == run_id]
+        if scenario_id:
+            rows = [r for r in rows if r.get("scenario_id") == scenario_id]
+        rows.sort(key=lambda r: str(r.get("scenario_run_id") or ""))
+        return [E2EScenarioRunSummary.model_validate(r) for r in rows[:limit]]
+
+    def upsert_e2e_session(self, record: E2ESessionSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("e2e_sessions", {})
+            data["e2e_sessions"][record.session_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_e2e_session(self, session_id: str) -> E2ESessionSummary:
+        data = self._read()
+        raw = (data.get("e2e_sessions") or {}).get(session_id)
+        if not raw:
+            raise KeyError(session_id)
+        return E2ESessionSummary.model_validate(raw)
+
+    def upsert_e2e_consistency_score(
+        self, record: E2EConsistencyScoreRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("e2e_consistency_scores", {})
+            data["e2e_consistency_scores"][record.score_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_e2e_consistency_score(self, score_id: str) -> E2EConsistencyScoreRecord:
+        data = self._read()
+        raw = (data.get("e2e_consistency_scores") or {}).get(score_id)
+        if not raw:
+            raise KeyError(score_id)
+        return E2EConsistencyScoreRecord.model_validate(raw)
+
+    def upsert_e2e_virtual_order(self, record: E2EVirtualOrderSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("e2e_virtual_orders", {})
+            data["e2e_virtual_orders"][record.virtual_order_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_e2e_virtual_orders(
+        self,
+        *,
+        session_id: str = "",
+        scenario_run_id: str = "",
+        limit: int = 200,
+    ) -> list[E2EVirtualOrderSummary]:
+        data = self._read()
+        rows = list((data.get("e2e_virtual_orders") or {}).values())
+        if session_id:
+            rows = [r for r in rows if r.get("session_id") == session_id]
+        if scenario_run_id:
+            rows = [r for r in rows if r.get("scenario_run_id") == scenario_run_id]
+        return [E2EVirtualOrderSummary.model_validate(r) for r in rows[:limit]]
 
 
 class D1ResearchRegistry:
@@ -6380,6 +6508,289 @@ class D1ResearchRegistry:
                     window_sec=float(r.get("window_sec") or 86400),
                     metric_name=r.get("metric_name") or "",
                     enabled=bool(r.get("enabled")),
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def upsert_e2e_scenario_run(self, record: E2EScenarioRunSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO e2e_scenario_run (
+                  scenario_run_id, scenario_id, run_id, session_id, mode, status,
+                  trace_id, dataset_hash, strategy_version, strategy_id,
+                  intent_fingerprint, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scenario_run_id) DO UPDATE SET
+                  status=excluded.status,
+                  trace_id=excluded.trace_id,
+                  intent_fingerprint=excluded.intent_fingerprint,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.scenario_run_id,
+                    record.scenario_id,
+                    record.run_id,
+                    record.session_id,
+                    record.mode,
+                    record.status,
+                    record.trace_id,
+                    record.dataset_hash,
+                    record.strategy_version,
+                    record.strategy_id,
+                    record.intent_fingerprint,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_e2e_scenario_run(self, scenario_run_id: str) -> E2EScenarioRunSummary:
+        rows = d1_client.query(
+            "SELECT * FROM e2e_scenario_run WHERE scenario_run_id=?",
+            [scenario_run_id],
+        )
+        if not rows:
+            raise KeyError(scenario_run_id)
+        r = rows[0]
+        return E2EScenarioRunSummary(
+            scenario_run_id=r["scenario_run_id"],
+            scenario_id=r.get("scenario_id") or "",
+            run_id=r.get("run_id") or "",
+            session_id=r.get("session_id") or "",
+            mode=r.get("mode") or "PAPER",
+            status=r.get("status") or "",
+            trace_id=r.get("trace_id") or "",
+            dataset_hash=r.get("dataset_hash") or "",
+            strategy_version=r.get("strategy_version") or "",
+            strategy_id=r.get("strategy_id") or "",
+            intent_fingerprint=r.get("intent_fingerprint") or "",
+            engine_version=r.get("engine_version") or "qd_e2e@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def list_e2e_scenario_runs(
+        self,
+        *,
+        session_id: str = "",
+        run_id: str = "",
+        scenario_id: str = "",
+        limit: int = 200,
+    ) -> list[E2EScenarioRunSummary]:
+        try:
+            sql = "SELECT * FROM e2e_scenario_run WHERE 1=1"
+            params: list[Any] = []
+            if session_id:
+                sql += " AND session_id=?"
+                params.append(session_id)
+            if run_id:
+                sql += " AND run_id=?"
+                params.append(run_id)
+            if scenario_id:
+                sql += " AND scenario_id=?"
+                params.append(scenario_id)
+            sql += " ORDER BY scenario_run_id LIMIT ?"
+            params.append(int(limit))
+            rows = d1_client.query(sql, params) or []
+            return [
+                E2EScenarioRunSummary(
+                    scenario_run_id=r["scenario_run_id"],
+                    scenario_id=r.get("scenario_id") or "",
+                    run_id=r.get("run_id") or "",
+                    session_id=r.get("session_id") or "",
+                    mode=r.get("mode") or "PAPER",
+                    status=r.get("status") or "",
+                    trace_id=r.get("trace_id") or "",
+                    dataset_hash=r.get("dataset_hash") or "",
+                    strategy_version=r.get("strategy_version") or "",
+                    strategy_id=r.get("strategy_id") or "",
+                    intent_fingerprint=r.get("intent_fingerprint") or "",
+                    engine_version=r.get("engine_version") or "qd_e2e@1",
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def upsert_e2e_session(self, record: E2ESessionSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO e2e_session (
+                  session_id, trading_date, market, mode, status,
+                  account_id, portfolio_id, dataset_hash, strategy_version,
+                  strategy_id, opened_at, closed_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  status=excluded.status,
+                  closed_at=excluded.closed_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.session_id,
+                    record.trading_date,
+                    record.market,
+                    record.mode,
+                    record.status,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.dataset_hash,
+                    record.strategy_version,
+                    record.strategy_id,
+                    record.opened_at,
+                    record.closed_at,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_e2e_session(self, session_id: str) -> E2ESessionSummary:
+        rows = d1_client.query(
+            "SELECT * FROM e2e_session WHERE session_id=?", [session_id]
+        )
+        if not rows:
+            raise KeyError(session_id)
+        r = rows[0]
+        return E2ESessionSummary(
+            session_id=r["session_id"],
+            trading_date=r.get("trading_date") or "",
+            market=r.get("market") or "",
+            mode=r.get("mode") or "PAPER",
+            status=r.get("status") or "",
+            account_id=r.get("account_id") or "",
+            portfolio_id=r.get("portfolio_id") or "",
+            dataset_hash=r.get("dataset_hash") or "",
+            strategy_version=r.get("strategy_version") or "",
+            strategy_id=r.get("strategy_id") or "",
+            opened_at=r.get("opened_at"),
+            closed_at=r.get("closed_at"),
+            engine_version=r.get("engine_version") or "qd_e2e@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_e2e_consistency_score(
+        self, record: E2EConsistencyScoreRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO e2e_consistency_score (
+                  score_id, run_id, session_id,
+                  signal_consistency, order_consistency, execution_consistency,
+                  position_consistency, reconciliation_score, audit_coverage,
+                  safety_coverage, overall, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(score_id) DO UPDATE SET
+                  overall=excluded.overall,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.score_id,
+                    record.run_id,
+                    record.session_id,
+                    record.signal_consistency,
+                    record.order_consistency,
+                    record.execution_consistency,
+                    record.position_consistency,
+                    record.reconciliation_score,
+                    record.audit_coverage,
+                    record.safety_coverage,
+                    record.overall,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_e2e_consistency_score(self, score_id: str) -> E2EConsistencyScoreRecord:
+        rows = d1_client.query(
+            "SELECT * FROM e2e_consistency_score WHERE score_id=?", [score_id]
+        )
+        if not rows:
+            raise KeyError(score_id)
+        r = rows[0]
+        return E2EConsistencyScoreRecord(
+            score_id=r["score_id"],
+            run_id=r.get("run_id") or "",
+            session_id=r.get("session_id") or "",
+            signal_consistency=float(r.get("signal_consistency") or 0),
+            order_consistency=float(r.get("order_consistency") or 0),
+            execution_consistency=float(r.get("execution_consistency") or 0),
+            position_consistency=float(r.get("position_consistency") or 0),
+            reconciliation_score=float(r.get("reconciliation_score") or 0),
+            audit_coverage=float(r.get("audit_coverage") or 0),
+            safety_coverage=float(r.get("safety_coverage") or 0),
+            overall=float(r.get("overall") or 0),
+            engine_version=r.get("engine_version") or "qd_e2e@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_e2e_virtual_order(self, record: E2EVirtualOrderSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO e2e_virtual_order (
+                  virtual_order_id, session_id, scenario_run_id, trace_id,
+                  instrument_key, side, quantity, status, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(virtual_order_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.virtual_order_id,
+                    record.session_id,
+                    record.scenario_run_id,
+                    record.trace_id,
+                    record.instrument_key,
+                    record.side,
+                    record.quantity,
+                    record.status,
+                    record.created_at,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_e2e_virtual_orders(
+        self,
+        *,
+        session_id: str = "",
+        scenario_run_id: str = "",
+        limit: int = 200,
+    ) -> list[E2EVirtualOrderSummary]:
+        try:
+            sql = "SELECT * FROM e2e_virtual_order WHERE 1=1"
+            params: list[Any] = []
+            if session_id:
+                sql += " AND session_id=?"
+                params.append(session_id)
+            if scenario_run_id:
+                sql += " AND scenario_run_id=?"
+                params.append(scenario_run_id)
+            sql += " LIMIT ?"
+            params.append(int(limit))
+            rows = d1_client.query(sql, params) or []
+            return [
+                E2EVirtualOrderSummary(
+                    virtual_order_id=r["virtual_order_id"],
+                    session_id=r.get("session_id") or "",
+                    scenario_run_id=r.get("scenario_run_id") or "",
+                    trace_id=r.get("trace_id") or "",
+                    instrument_key=r.get("instrument_key") or "",
+                    side=r.get("side") or "",
+                    quantity=float(r.get("quantity") or 0),
+                    status=r.get("status") or "",
+                    created_at=r.get("created_at"),
                     metadata=json.loads(r.get("metadata_json") or "{}"),
                 )
                 for r in rows

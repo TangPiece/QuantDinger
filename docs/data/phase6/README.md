@@ -1,6 +1,6 @@
 # Phase 6 — Production / Live Trading
 
-> **Status:** Phase 6A–6H implemented.
+> **Status:** Phase 6A–6I implemented.
 
 ## Roadmap
 
@@ -13,6 +13,7 @@ Phase 6E  Broker Adapter                     ← done (Paper + Fake + Alpaca Pap
 Phase 6F  Reconciliation / Execution Reconciliation  ← done
 Phase 6G  Trading Safety / Kill Switch               ← done
 Phase 6H  Monitoring / Audit / Alert                 ← done
+Phase 6I  Paper / Shadow E2E                         ← done
 ```
 
 ## Reading
@@ -25,6 +26,7 @@ Phase 6H  Monitoring / Audit / Alert                 ← done
 6. [06_reconciliation.md](06_reconciliation.md)
 7. [07_safety.md](07_safety.md)
 8. [08_ops_monitoring.md](08_ops_monitoring.md)
+9. [09_paper_shadow_e2e.md](09_paper_shadow_e2e.md)
 
 ## Commands
 
@@ -56,6 +58,9 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase6h_ops.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase6i_e2e.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase6f_reconciliation.py -q \
   --confcutdir=tests/research_data
@@ -69,6 +74,11 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase6h_ops.py -q \
   --confcutdir=tests/research_data
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase6i_e2e.py -q \
+  --confcutdir=tests/research_data
 ```
 
 ## Notes
@@ -81,3 +91,4 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 - **6F:** BrokerSnapshot 对账；Finding/Gate；CRITICAL 上报 Safety；无自动补仓
 - **6G:** Fail-Closed Safety Gate；Kill Switch；OMS submit 权威闸门；Emergency 仅 Contract
 - **6H:** Health / Audit / Alert / Incident；trace_id；CRITICAL 告警 → Safety Policy（WARNING 不 HALT）
+- **6I:** E2E-001…010；PAPER/SHADOW；Identity/Replay/ConsistencyScore；禁 LIVE

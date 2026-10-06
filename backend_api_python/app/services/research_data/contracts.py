@@ -1224,3 +1224,73 @@ class OpsSloDefinitionRecord(_ContractModel):
     metric_name: str = ""
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class E2EScenarioRunSummary(_ContractModel):
+    """Phase 6I：E2E 场景运行 Registry 索引（明细在 R2）。"""
+
+    scenario_run_id: str
+    scenario_id: str = ""
+    run_id: str = ""
+    session_id: str = ""
+    mode: str = "PAPER"
+    status: str = "OK"
+    trace_id: str = ""
+    dataset_hash: str = ""
+    strategy_version: str = ""
+    strategy_id: str = ""
+    intent_fingerprint: str = ""
+    engine_version: str = "qd_e2e@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class E2ESessionSummary(_ContractModel):
+    """Phase 6I：TradingSession 持久化行。"""
+
+    session_id: str
+    trading_date: str = ""
+    market: str = ""
+    mode: str = "PAPER"
+    status: str = "OPEN"
+    account_id: str = ""
+    portfolio_id: str = ""
+    dataset_hash: str = ""
+    strategy_version: str = ""
+    strategy_id: str = ""
+    opened_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    engine_version: str = "qd_e2e@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class E2EConsistencyScoreRecord(_ContractModel):
+    """Phase 6I：ConsistencyScore Registry 索引。"""
+
+    score_id: str
+    run_id: str = ""
+    session_id: str = ""
+    signal_consistency: float = 0.0
+    order_consistency: float = 0.0
+    execution_consistency: float = 0.0
+    position_consistency: float = 0.0
+    reconciliation_score: float = 0.0
+    audit_coverage: float = 0.0
+    safety_coverage: float = 0.0
+    overall: float = 0.0
+    engine_version: str = "qd_e2e@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class E2EVirtualOrderSummary(_ContractModel):
+    """Phase 6I：Shadow 模式虚拟订单（不发 Broker）。"""
+
+    virtual_order_id: str
+    session_id: str = ""
+    scenario_run_id: str = ""
+    trace_id: str = ""
+    instrument_key: str = ""
+    side: str = "BUY"
+    quantity: float = 0.0
+    status: str = "WOULD_SUBMIT"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

@@ -661,6 +661,19 @@ def production_incident_key(*, incident_id: str) -> str:
     return f"{_root()}/production/incidents/{incident_id}.json"
 
 
+def production_e2e_prefix(*, session_id: str = "") -> str:
+    """Phase 6I：``qd/production/e2e`` 或按 session 分子目录。"""
+    base = f"{_root()}/production/e2e"
+    if session_id:
+        base = f"{base}/{session_id}"
+    return base
+
+
+def production_e2e_run_key(*, session_id: str, run_id: str) -> str:
+    """``qd/production/e2e/{session_id}/{run_id}.json``。"""
+    return f"{production_e2e_prefix(session_id=session_id)}/{run_id}.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

@@ -92,3 +92,5 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
 ```
 
 See also [07_safety.md](07_safety.md) for the trading gate; Ops observes Safety actions but does not own the gate.
+
+**Next:** Phase 6I E2E uses Ops audit/trace end-to-end — [09_paper_shadow_e2e.md](09_paper_shadow_e2e.md).
