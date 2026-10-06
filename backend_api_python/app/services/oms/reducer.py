@@ -50,7 +50,8 @@ def apply_execution_report(
         cur = cur.model_copy(update={"broker_order_id": report.broker_order_id})
 
     if st in ("ACK", "ACKNOWLEDGED"):
-        if str(cur.status) in ("SUBMITTED", "REPLACED"):
+        # 6E：UNKNOWN 经 get_order 恢复亦可进入 ACKNOWLEDGED
+        if str(cur.status) in ("SUBMITTED", "REPLACED", "UNKNOWN"):
             cur, ev = append_event(
                 cur,
                 event_type="ACKNOWLEDGED",

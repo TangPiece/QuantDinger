@@ -561,6 +561,31 @@ def production_oms_order_key(*, order_id: str) -> str:
     return f"{production_oms_prefix(order_id=order_id)}/order.json"
 
 
+def production_broker_adapter_prefix(
+    *, broker_id: str, kind: str = ""
+) -> str:
+    """Phase 6E：``qd/production/broker/{broker_id}/[kind]``。"""
+    base = f"{_root()}/production/broker/{broker_id}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def production_broker_event_key(
+    *,
+    broker_id: str,
+    year: str,
+    month: str,
+    day: str,
+    event_id: str,
+) -> str:
+    """``qd/production/broker/{broker_id}/events/{yyyy}/{mm}/{dd}/{event_id}.json``。"""
+    return (
+        f"{production_broker_adapter_prefix(broker_id=broker_id, kind='events')}"
+        f"/{year}/{month}/{day}/{event_id}.json"
+    )
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

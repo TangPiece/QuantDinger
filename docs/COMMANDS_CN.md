@@ -469,6 +469,19 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+验证 Phase 6E Broker Adapter（Contract；PaperBrokerAdapter；Fake REST/WS；BROKER_SUBMIT；dedup/UNKNOWN/WS 恢复；Reference=Alpaca Paper；禁止 LIVE / live_trading Domain）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase6e_broker_adapter.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase6e_broker_adapter.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 Phase 6 说明：[docs/data/phase6/README.md](data/phase6/README.md)。

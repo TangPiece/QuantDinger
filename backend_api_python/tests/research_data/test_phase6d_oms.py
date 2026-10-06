@@ -260,14 +260,24 @@ def test_ast_isolation():
                 for alias in node.names:
                     name = alias.name or ""
                     assert name != "qlib" and not name.startswith("qlib.")
-                    assert "broker" not in name.lower() or name.endswith(
-                        "paper_broker"
-                    ) or ".paper_broker" in name
+                    assert (
+                        "broker" not in name.lower()
+                        or name.endswith("paper_broker")
+                        or ".paper_broker" in name
+                        or name.endswith("broker_port")
+                        or ".broker_port" in name
+                    )
             elif isinstance(node, ast.ImportFrom):
                 mod = node.module or ""
                 for frag in forbidden_mods:
                     assert frag not in mod, f"{py}: forbidden import {mod}"
                 assert "DataSourceFactory" not in mod
-                # 禁止真实 broker adapter 包名
+                # 允许 OMS 本地 broker_port / paper_broker；禁止真实 broker adapter 包
                 if "broker" in mod.lower():
-                    assert "paper_broker" in mod or mod.endswith("paper_broker")
+                    assert (
+                        "paper_broker" in mod
+                        or mod.endswith("paper_broker")
+                        or mod.endswith("broker_port")
+                        or mod == "broker_port"
+                        or mod.endswith(".broker_port")
+                    ), f"{py}: unexpected broker import {mod}"

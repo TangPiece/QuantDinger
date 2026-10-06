@@ -1,4 +1,4 @@
-"""submit_intents → validate → outbox → PaperBroker → Fill → 6B bridge。"""
+"""submit_intents → validate → outbox → BrokerPort → Fill → 6B bridge。"""
 
 from __future__ import annotations
 
@@ -6,17 +6,59 @@ from typing import Any, Mapping, Optional, Sequence
 
 from app.services.research_data.contracts import OrderIntent
 
+from .broker_port import BrokerPort
 from .cancel import apply_cancel
 from .events import append_event
 from .fill_bridge import bridge_fills_to_portfolio
 from .intent_mapper import intent_to_order
 from .outbox import make_outbox
 from .paper_broker import PaperBroker
-from .protocol import Fill, Order, OrderEvent, OutboxRecord, SubmitResult
+from .protocol import Fill, Order, OrderEvent, SubmitResult
 from .reducer import apply_execution_report
 from .replace import apply_replace
 from .state_machine import StateMachineError
 from .validation import ValidationError, validate_order
+
+_ALLOWED_ENV = frozenset({"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER"})
+
+
+def _apply_report_to_order(
+    order: Order,
+    report: Any,
+    *,
+    writer: Any,
+    portfolio_service: Any,
+    events: list,
+) -> tuple[Order, list, list]:
+    """ExecutionReport → state + fills + position bridge。"""
+    if str(report.status).upper() in (
+        "FILL",
+        "PARTIAL",
+        "FILLED",
+        "PARTIALLY_FILLED",
+    ):
+        if str(order.status) == "SUBMITTED":
+            order, ev = append_event(
+                order,
+                event_type="ACKNOWLEDGED",
+                new_status="ACKNOWLEDGED",
+                source="BROKER",
+                message="ack before fill",
+                salt=f"preack|{order.order_id}",
+            )
+            events.append(ev)
+    order, more_events, fills = apply_execution_report(order, report)
+    events.extend(more_events)
+    writer.persist_order(order, events=more_events, fills=fills, outbox=None)
+    bridge_fills_to_portfolio(
+        order,
+        fills,
+        portfolio_service=portfolio_service,
+        writer=getattr(portfolio_service, "_writer", None)
+        if portfolio_service
+        else None,
+    )
+    return order, more_events, fills
 
 
 def run_submit_intents(
@@ -28,19 +70,40 @@ def run_submit_intents(
     policy_hash: str = "",
     environment: str = "PAPER",
     writer: Any,
-    paper_broker: PaperBroker,
+    broker_port: BrokerPort,
     portfolio_service: Any = None,
     prices: Mapping[str, float] | None = None,
     metadata: Mapping[str, Any] | None = None,
+    # 兼容旧调用方
+    paper_broker: Any = None,
 ) -> SubmitResult:
-    """PAPER 路径主循环。"""
-    if str(environment).upper() != "PAPER":
-        raise StateMachineError("Phase 6D only supports environment=PAPER")
+    """PAPER 默认同步；SANDBOX/SHADOW 或 async_submit → BROKER_SUBMIT outbox。"""
+    env = str(environment).upper()
+    if env not in _ALLOWED_ENV:
+        raise StateMachineError(
+            f"environment must be one of {sorted(_ALLOWED_ENV)}, got {environment!r}"
+        )
+    if env == "LIVE":
+        raise StateMachineError("LIVE not enabled in Phase 6E")
 
-    if prices:
-        paper_broker.set_prices(prices)
+    port: BrokerPort = broker_port or paper_broker or PaperBroker()
+    if prices and hasattr(port, "set_prices"):
+        port.set_prices(prices)
 
     meta = dict(metadata or {})
+    async_submit = bool(meta.get("async_submit")) or env in (
+        "SANDBOX",
+        "SHADOW",
+        "ALPACA_PAPER",
+    )
+    # PAPER 默认同步（6D 兼容）；可用 async_submit 强制 outbox-only
+    if env == "PAPER" and not meta.get("async_submit"):
+        async_submit = False
+
+    outbox_event = "BROKER_SUBMIT" if async_submit or env != "PAPER" else "PAPER_SUBMIT"
+    if env == "PAPER" and not async_submit:
+        outbox_event = "PAPER_SUBMIT"
+
     orders: list[Order] = []
     all_fills: list[Fill] = []
     all_events: list[OrderEvent] = []
@@ -48,7 +111,6 @@ def run_submit_intents(
     position_events: list[Any] = []
 
     for idx, intent in enumerate(intents):
-        # 幂等：已存在则直接返回
         existing = writer.get_by_idempotency_for_intent(
             intent,
             account_id=account_id,
@@ -72,7 +134,6 @@ def run_submit_intents(
         )
         events: list[OrderEvent] = []
 
-        # Validation
         try:
             validate_order(
                 order,
@@ -100,7 +161,6 @@ def run_submit_intents(
             all_events.extend(events)
             continue
 
-        # SUBMITTED + Outbox（同事务语义）
         order, ev = append_event(
             order,
             event_type="SUBMITTED",
@@ -110,43 +170,29 @@ def run_submit_intents(
         events.append(ev)
         ob = make_outbox(
             order_id=order.order_id,
-            event_type="PAPER_SUBMIT",
-            payload={"order_id": order.order_id},
+            event_type=outbox_event,
+            payload={"order_id": order.order_id, "environment": env},
             salt=f"submit|{order.order_id}",
         )
         writer.persist_order(order, events=events, fills=[], outbox=ob)
         outbox_ids.append(ob.outbox_id)
 
-        # 同步 Paper 路径（drain 也可异步；6D 默认同进程执行）
-        report = paper_broker.submit(order)
-        # ACK first if fill path
-        if str(report.status).upper() in ("FILL", "PARTIAL", "FILLED", "PARTIALLY_FILLED"):
-            if str(order.status) == "SUBMITTED":
-                order, ev = append_event(
-                    order,
-                    event_type="ACKNOWLEDGED",
-                    new_status="ACKNOWLEDGED",
-                    source="BROKER",
-                    message="paper ack before fill",
-                    salt=f"preack|{order.order_id}",
-                )
-                events.append(ev)
+        if async_submit:
+            # 仅 enqueue；由 drain_outbox 推送
+            orders.append(order)
+            all_events.extend(events)
+            continue
 
-        order, more_events, fills = apply_execution_report(order, report)
-        events.extend(more_events)
-        writer.persist_order(order, events=more_events, fills=fills, outbox=None)
-        writer.mark_outbox(ob.outbox_id, "SENT")
-
-        pos_evs = bridge_fills_to_portfolio(
+        report = port.submit(order)
+        order, more_events, fills = _apply_report_to_order(
             order,
-            fills,
+            report,
+            writer=writer,
             portfolio_service=portfolio_service,
-            writer=getattr(portfolio_service, "_writer", None)
-            if portfolio_service
-            else None,
+            events=events,
         )
-        position_events.extend(pos_evs)
-
+        writer.mark_outbox(ob.outbox_id, "SENT")
+        position_events.extend([])  # bridge 已在 _apply 内写
         orders.append(order)
         all_fills.extend(fills)
         all_events.extend(events)
@@ -162,7 +208,7 @@ def run_submit_intents(
             "portfolio_id": portfolio_id,
             "risk_run_id": risk_run_id,
             "policy_hash": policy_hash,
-            "environment": environment,
+            "environment": env,
             **meta,
         },
     )
@@ -173,9 +219,11 @@ def run_cancel(
     *,
     reason: str = "",
     writer: Any,
-    paper_broker: PaperBroker,
+    broker_port: BrokerPort | None = None,
+    paper_broker: Any = None,
 ) -> Order:
-    cur, events, req = apply_cancel(order, reason=reason, paper_broker=paper_broker)
+    port = broker_port or paper_broker
+    cur, events, req = apply_cancel(order, reason=reason, paper_broker=port)
     writer.persist_cancel(cur, events=events, request=req)
     return cur
 
@@ -186,13 +234,15 @@ def run_replace(
     quantity: Optional[float] = None,
     limit_price: Optional[float] = None,
     writer: Any,
-    paper_broker: PaperBroker,
+    broker_port: BrokerPort | None = None,
+    paper_broker: Any = None,
 ) -> Order:
+    port = broker_port or paper_broker
     cur, events, ver, req = apply_replace(
         order,
         quantity=quantity,
         limit_price=limit_price,
-        paper_broker=paper_broker,
+        paper_broker=port,
     )
     writer.persist_replace(cur, events=events, version=ver, request=req)
     return cur

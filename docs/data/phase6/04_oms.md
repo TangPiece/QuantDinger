@@ -87,7 +87,7 @@ Prefer this over 6B in-process `PAPER_FILL` for production paper path.
 ## Non-goals
 
 ```text
-❌ Real Broker / LIVE / pending_orders
+❌ Real Broker / LIVE / pending_orders（真实通道在 6E Adapter，且仅 Paper）
 ❌ TWAP/VWAP/POV / Parent-Child
 ❌ Full reconciliation (6F)
 ❌ Merge Strategy V2 LiveSession
@@ -98,7 +98,8 @@ Prefer this over 6B in-process `PAPER_FILL` for production paper path.
 
 - 6C API unchanged; OMS consumes `order_intents` + `risk_run_id` / `policy_hash`
 - 6B `FREEZE` / filled events used by OMS fill bridge
-- 6E reserved: `broker_order_id`, Outbox `BROKER_SUBMIT`
+- 6E：Outbox **`BROKER_SUBMIT`** + `BrokerPort`；`broker_order_id` 在 ACK/回报后回填
+- Downstream：[05_broker_adapter.md](05_broker_adapter.md)（Reference = Alpaca Paper）
 
 ## Verify
 

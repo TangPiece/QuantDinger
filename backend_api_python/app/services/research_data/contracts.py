@@ -974,3 +974,38 @@ class OmsOutboxRecord(_ContractModel):
     payload_json: dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[str] = None
     sent_at: Optional[str] = None
+
+
+class BrokerSessionSummary(_ContractModel):
+    """Phase 6E：Broker 会话 Registry 行。"""
+
+    session_id: str
+    broker_id: str = ""
+    execution_mode: str = "PAPER"
+    status: str = "DISCONNECTED"
+    engine_version: str = "qd_broker_adapter@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BrokerOrderLinkRecord(_ContractModel):
+    """Phase 6E：order_id ↔ client_order_id ↔ broker_order_id。"""
+
+    order_id: str
+    client_order_id: str
+    broker_order_id: str = ""
+    broker_id: str = ""
+    account_id: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BrokerEventIndexRecord(_ContractModel):
+    """Phase 6E：Raw 事件索引（明细在 R2）。"""
+
+    event_id: str
+    broker_id: str = ""
+    received_at: Optional[str] = None
+    storage_uri: str = ""
+    checksum: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)

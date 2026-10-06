@@ -43,8 +43,8 @@ def _domain_isolation() -> bool:
                     return False
                 if "DataSourceFactory" in mod:
                     return False
-                # 允许本包 paper_broker；禁止其它 broker adapter
-                if "broker" in mod.lower() and "paper_broker" not in mod:
+                # 允许本包 paper_broker / broker_port；禁止其它 broker adapter
+                if "broker" in mod.lower() and "paper_broker" not in mod and "broker_port" not in mod:
                     return False
     return True
 

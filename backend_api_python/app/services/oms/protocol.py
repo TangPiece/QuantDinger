@@ -110,19 +110,27 @@ class Fill(_ContractModel):
 
 
 class ExecutionReport(_ContractModel):
-    """Broker（含 Paper）回报。"""
+    """Broker（含 Paper）回报；6E 扩展字段向后兼容。"""
 
     report_id: str = ""
     order_id: str = ""
+    client_order_id: str = ""
     broker_order_id: str = ""
+    broker_event_id: str = ""
     status: str = ""  # ACK / PARTIAL / FILL / REJECT / CANCEL / UNKNOWN
     filled_quantity: float = 0.0
     last_quantity: float = 0.0
     last_price: float = 0.0
     avg_price: float = 0.0
+    remaining_quantity: float = 0.0
     fee: float = 0.0
+    currency: str = ""
+    broker_timestamp: Optional[str] = None
+    received_at: Optional[str] = None
     message: str = ""
     fills: list[Fill] = Field(default_factory=list)
+    # 小摘要；完整 raw 在 R2 broker-events
+    raw_reference: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

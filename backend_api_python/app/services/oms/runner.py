@@ -1,4 +1,4 @@
-"""OMSService：submit_intents / cancel / replace / drain_outbox。"""
+"""OMSService：submit_intents / cancel / replace / drain_outbox / recover_unknown。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from app.services.research_data.contracts import OmsOutboxRecord, OrderIntent
 from app.services.research_data.registry import ResearchRegistry
 
 from .artifact_store import OmsArtifactStore
+from .broker_port import BrokerPort
 from .cycle import run_cancel, run_replace, run_submit_intents
 from .events import append_event
 from .fill_bridge import bridge_fills_to_portfolio
@@ -24,7 +25,7 @@ class OMSError(RuntimeError):
 
 
 class OMSService:
-    """Order Lifecycle；Phase 6D 仅 PAPER。"""
+    """Order Lifecycle；6E 支持 PAPER|SANDBOX|SHADOW（经 BrokerPort）。"""
 
     def __init__(
         self,
@@ -33,12 +34,22 @@ class OMSService:
         *,
         portfolio_service: Any = None,
         paper_broker: PaperBroker | None = None,
+        broker_port: BrokerPort | None = None,
         artifact_store: OmsArtifactStore | None = None,
+        broker_adapter_service: Any = None,
     ) -> None:
         self._store = store
         self._registry = registry
         self._portfolio = portfolio_service
-        self._paper = paper_broker or PaperBroker()
+        # 默认 PaperBroker；可由 6E PaperBrokerAdapter / Simulated 注入
+        if broker_port is not None:
+            self._port: BrokerPort = broker_port
+        elif paper_broker is not None:
+            self._port = paper_broker  # type: ignore[assignment]
+        else:
+            self._port = PaperBroker()  # type: ignore[assignment]
+        self._paper = self._port  # 兼容旧字段名
+        self._broker_svc = broker_adapter_service
         self._writer = OmsWriter(registry, artifact_store=artifact_store)
 
         def _enqueue(rec: OutboxRecord) -> None:
@@ -85,7 +96,7 @@ class OMSService:
                 policy_hash=policy_hash,
                 environment=environment,
                 writer=self._writer,
-                paper_broker=self._paper,
+                broker_port=self._port,
                 portfolio_service=self._portfolio,
                 prices=prices,
                 metadata=meta,
@@ -97,7 +108,10 @@ class OMSService:
         order = self.get_order(order_id)
         try:
             return run_cancel(
-                order, reason=reason, writer=self._writer, paper_broker=self._paper
+                order,
+                reason=reason,
+                writer=self._writer,
+                broker_port=self._port,
             )
         except StateMachineError as exc:
             raise OMSError(str(exc)) from exc
@@ -116,7 +130,7 @@ class OMSService:
                 quantity=quantity,
                 limit_price=limit_price,
                 writer=self._writer,
-                paper_broker=self._paper,
+                broker_port=self._port,
             )
         except Exception as exc:
             raise OMSError(str(exc)) from exc
@@ -133,11 +147,34 @@ class OMSService:
     def list_events(self, order_id: str):
         return self._writer.list_events(order_id)
 
+    def recover_unknown_order(self, order_id: str) -> Order:
+        """UNKNOWN → query BrokerPort / Adapter → apply_execution_report；禁止重下单。"""
+        order = self.get_order(order_id)
+        if str(order.status) != "UNKNOWN":
+            return order
+        report = None
+        if self._broker_svc is not None:
+            report = self._broker_svc.recover_order(order)
+        elif hasattr(self._port, "recover_unknown"):
+            report = self._port.recover_unknown(order)  # type: ignore[attr-defined]
+        else:
+            raise OMSError("no recover path on broker_port")
+        events = []
+        # UNKNOWN → ACK/FILL/... 合法
+        order, more, fills = apply_execution_report(order, report)
+        events.extend(more)
+        self._writer.persist_order(order, events=events, fills=fills)
+        if fills:
+            bridge_fills_to_portfolio(
+                order, fills, portfolio_service=self._portfolio
+            )
+        return order
+
     def drain_outbox(self, *, limit: int = 100) -> int:
-        """推送 PENDING outbox（PAPER_SUBMIT → PaperBroker）。"""
+        """推送 PENDING outbox（PAPER_SUBMIT | BROKER_SUBMIT）。"""
 
         def _handler(rec: OutboxRecord) -> None:
-            if rec.event_type != "PAPER_SUBMIT":
+            if rec.event_type not in ("PAPER_SUBMIT", "BROKER_SUBMIT"):
                 return
             oid = rec.aggregate_id or str(
                 (rec.payload_json or {}).get("order_id") or ""
@@ -150,7 +187,7 @@ class OMSService:
                 return
             if str(order.status) not in ("SUBMITTED",):
                 return
-            report = self._paper.submit(order)
+            report = self._port.submit(order)
             events = []
             if str(report.status).upper() in (
                 "FILL",

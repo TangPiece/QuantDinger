@@ -50,6 +50,9 @@ from .contracts import (
     OmsOrderEventRecord,
     OmsOrderSummary,
     OmsOutboxRecord,
+    BrokerEventIndexRecord,
+    BrokerOrderLinkRecord,
+    BrokerSessionSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -422,6 +425,26 @@ class ResearchRegistry(Protocol):
     def upsert_cancel_request(self, request: Any) -> None: ...
 
     def upsert_replace_request(self, request: Any) -> None: ...
+
+    def upsert_broker_session(self, record: BrokerSessionSummary) -> None: ...
+
+    def upsert_broker_order_link(self, record: BrokerOrderLinkRecord) -> None: ...
+
+    def get_order_link_by_client_id(
+        self, client_order_id: str
+    ) -> BrokerOrderLinkRecord: ...
+
+    def get_order_link_by_broker_id(
+        self, broker_id: str, broker_order_id: str
+    ) -> BrokerOrderLinkRecord: ...
+
+    def try_record_execution_dedup(
+        self, broker_id: str, broker_execution_id: str
+    ) -> bool: ...
+
+    def append_broker_event_index(
+        self, record: BrokerEventIndexRecord
+    ) -> None: ...
 
 
 class LocalJsonRegistry:
@@ -1502,6 +1525,89 @@ class LocalJsonRegistry:
                 else dict(request)
             )
             data["oms_replace_requests"][payload.get("request_id")] = payload
+            self._write(data)
+
+    def upsert_broker_session(self, record: BrokerSessionSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("broker_sessions", {})
+            data["broker_sessions"][record.session_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_broker_order_link(self, record: BrokerOrderLinkRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("broker_order_links", {})
+            data.setdefault("broker_order_links_by_client", {})
+            data.setdefault("broker_order_links_by_broker", {})
+            payload = record.model_dump(mode="json")
+            data["broker_order_links"][record.order_id] = payload
+            data["broker_order_links_by_client"][
+                record.client_order_id
+            ] = record.order_id
+            if record.broker_order_id:
+                data["broker_order_links_by_broker"][
+                    f"{record.broker_id}|{record.broker_order_id}"
+                ] = record.order_id
+            self._write(data)
+
+    def get_order_link_by_client_id(
+        self, client_order_id: str
+    ) -> BrokerOrderLinkRecord:
+        data = self._read()
+        oid = (data.get("broker_order_links_by_client") or {}).get(client_order_id)
+        if not oid:
+            raise KeyError(f"broker link client not found: {client_order_id!r}")
+        raw = (data.get("broker_order_links") or {}).get(oid)
+        if not raw:
+            raise KeyError(f"broker link not found: {oid!r}")
+        return BrokerOrderLinkRecord.model_validate(raw)
+
+    def get_order_link_by_broker_id(
+        self, broker_id: str, broker_order_id: str
+    ) -> BrokerOrderLinkRecord:
+        data = self._read()
+        oid = (data.get("broker_order_links_by_broker") or {}).get(
+            f"{broker_id}|{broker_order_id}"
+        )
+        if not oid:
+            raise KeyError(
+                f"broker link not found: {broker_id!r}/{broker_order_id!r}"
+            )
+        raw = (data.get("broker_order_links") or {}).get(oid)
+        if not raw:
+            raise KeyError(f"broker link not found: {oid!r}")
+        return BrokerOrderLinkRecord.model_validate(raw)
+
+    def try_record_execution_dedup(
+        self, broker_id: str, broker_execution_id: str
+    ) -> bool:
+        """首次写入返回 True；已存在返回 False。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("broker_execution_dedup", {})
+            key = f"{broker_id}|{broker_execution_id}"
+            if key in data["broker_execution_dedup"]:
+                return False
+            data["broker_execution_dedup"][key] = {
+                "broker_id": broker_id,
+                "broker_execution_id": broker_execution_id,
+                "created_at": _utc_now(),
+            }
+            self._write(data)
+            return True
+
+    def append_broker_event_index(
+        self, record: BrokerEventIndexRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("broker_event_index", {})
+            data["broker_event_index"][record.event_id] = record.model_dump(
+                mode="json"
+            )
             self._write(data)
 
 
@@ -4847,6 +4953,149 @@ class D1ResearchRegistry:
                     payload.get("limit_price"),
                     payload.get("created_at") or _utc_now(),
                     json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_broker_session(self, record: BrokerSessionSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO broker_session (
+                  session_id, broker_id, execution_mode, status,
+                  engine_version, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.session_id,
+                    record.broker_id,
+                    record.execution_mode,
+                    record.status,
+                    record.engine_version,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_broker_order_link(self, record: BrokerOrderLinkRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO broker_order_link (
+                  order_id, client_order_id, broker_order_id, broker_id,
+                  account_id, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                  broker_order_id=excluded.broker_order_id,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.order_id,
+                    record.client_order_id,
+                    record.broker_order_id or None,
+                    record.broker_id,
+                    record.account_id,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_order_link_by_client_id(
+        self, client_order_id: str
+    ) -> BrokerOrderLinkRecord:
+        rows = d1_client.query(
+            "SELECT * FROM broker_order_link WHERE client_order_id = ? LIMIT 1",
+            [client_order_id],
+        )
+        if not rows:
+            raise KeyError(f"broker link client not found: {client_order_id!r}")
+        return self._broker_link_from_row(rows[0])
+
+    def get_order_link_by_broker_id(
+        self, broker_id: str, broker_order_id: str
+    ) -> BrokerOrderLinkRecord:
+        rows = d1_client.query(
+            """
+            SELECT * FROM broker_order_link
+            WHERE broker_id = ? AND broker_order_id = ? LIMIT 1
+            """,
+            [broker_id, broker_order_id],
+        )
+        if not rows:
+            raise KeyError(
+                f"broker link not found: {broker_id!r}/{broker_order_id!r}"
+            )
+        return self._broker_link_from_row(rows[0])
+
+    def _broker_link_from_row(self, row: dict[str, Any]) -> BrokerOrderLinkRecord:
+        meta = row.get("metadata_json") or "{}"
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        return BrokerOrderLinkRecord(
+            order_id=row["order_id"],
+            client_order_id=row.get("client_order_id") or "",
+            broker_order_id=row.get("broker_order_id") or "",
+            broker_id=row.get("broker_id") or "",
+            account_id=row.get("account_id") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def try_record_execution_dedup(
+        self, broker_id: str, broker_execution_id: str
+    ) -> bool:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT 1 FROM broker_execution_dedup
+                WHERE broker_id = ? AND broker_execution_id = ? LIMIT 1
+                """,
+                [broker_id, broker_execution_id],
+            )
+            if rows:
+                return False
+            d1_client.query(
+                """
+                INSERT INTO broker_execution_dedup (
+                  broker_id, broker_execution_id, created_at
+                ) VALUES (?, ?, ?)
+                """,
+                [broker_id, broker_execution_id, _utc_now()],
+            )
+            return True
+        except Exception:
+            return True
+
+    def append_broker_event_index(
+        self, record: BrokerEventIndexRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO broker_event_index (
+                  event_id, broker_id, received_at, storage_uri,
+                  checksum, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+                [
+                    record.event_id,
+                    record.broker_id,
+                    record.received_at or _utc_now(),
+                    record.storage_uri,
+                    record.checksum,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
                 ],
             )
         except Exception:
