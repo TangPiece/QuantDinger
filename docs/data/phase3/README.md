@@ -1,6 +1,6 @@
 # Phase 3 — Research Backtest
 
-> **Status:** Phase 3A–3E implemented. Phase 4 Factor Lab is next (not in this tree yet).
+> **Status:** Phase 3A–3E implemented. Phase 4A Factor Foundation → [../phase4/README.md](../phase4/README.md).
 
 ## Reading order
 

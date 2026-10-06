@@ -220,6 +220,20 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 Phase 3E 说明：[docs/backtest/06_dual_engine_consistency.md](backtest/06_dual_engine_consistency.md)。
 
+验证 Phase 4A Factor Lab Foundation（定义 / 版本不可变 / hash / Dataset Manifest；无大规模计算）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase4a_factor_lab.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase4a_*.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 4A 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
+
 ## Level2 因子 D1 Worker
 
 在 `workers/l2-factors-d1`：

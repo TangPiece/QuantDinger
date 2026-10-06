@@ -74,6 +74,9 @@ class FeatureDefinition(BaseModel):
     backend: Literal["r2_factor", "d1_l2_factors", "computed"] = "r2_factor"
     online_supported: bool = False
     definition: dict[str, Any] = Field(default_factory=dict)
+    # Phase 4A Factor Lab extensions (see docs/data/phase4/01_factor_definition.md):
+    # description, factor_type, computation_engine, engine_version, universe,
+    # information_policy, schema_version, factor_hash, price_policy, processor_ref
 
 
 class LabelDefinition(BaseModel):

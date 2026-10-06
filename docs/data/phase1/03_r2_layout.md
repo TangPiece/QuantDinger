@@ -135,6 +135,14 @@ Prefer **long** schema (`factor_code`, `value`) or a dedicated small set — nev
 
 Level2 hot columns remain in D1 `l2_factors`. Optional research copies may also land under `qd/factor/daily/factor_set=l2_base@1/...` for offline labs.
 
+Phase 4A Factor Dataset Manifest (metadata only; values still under `qd/factor/...`):
+
+```text
+qd/dataset/factor/{factor_dataset_id}/manifest.json
+```
+
+See [phase4/01_factor_definition.md](../phase4/01_factor_definition.md).
+
 ## Manifests
 
 ### Snapshot manifest — `qd/snapshot/{snapshot_id}/manifest.json`

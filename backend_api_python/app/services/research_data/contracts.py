@@ -63,6 +63,11 @@ class KnowledgeTime(_ContractModel):
 
 
 class FeatureDefinition(_ContractModel):
+    """研究 Feature / Factor 定义（Factor 为研究语义扩展；交易侧 FactorDefinition 无关）。
+
+    Phase 4A：补齐类型、引擎、PIT 政策、factor_hash；值在 R2，不进 D1。
+    """
+
     code: str
     version: str
     name: str
@@ -72,6 +77,28 @@ class FeatureDefinition(_ContractModel):
     backend: Literal["r2_factor", "d1_l2_factors", "computed"] = "r2_factor"
     online_supported: bool = False
     definition: dict[str, Any] = Field(default_factory=dict)
+    # Phase 4A Factor Lab
+    description: str = ""
+    factor_type: Literal[
+        "TECHNICAL",
+        "FUNDAMENTAL",
+        "MICROSTRUCTURE",
+        "LEVEL2",
+        "ALTERNATIVE",
+        "ML_DERIVED",
+        "COMPOSITE",
+        "CUSTOM",
+    ] = "CUSTOM"
+    computation_engine: Literal[
+        "qlib", "quantdinger", "duckdb", "polars", "level2"
+    ] = "quantdinger"
+    engine_version: str = ""
+    universe: Optional[str] = None
+    information_policy: Literal["PIT_SAFE", "NON_PIT", "UNKNOWN"] = "UNKNOWN"
+    schema_version: str = "factor_daily_long@1"
+    factor_hash: Optional[str] = None
+    price_policy: Optional[PricePolicy] = None
+    processor_ref: Optional[str] = None
 
 
 class LabelDefinition(_ContractModel):
@@ -318,5 +345,27 @@ class ConsistencyRunRecord(_ContractModel):
     artifact_uri: str = ""
     level: str = ""
     semantic_fingerprint: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorDatasetRecord(_ContractModel):
+    """Phase 4A：因子计算结果集的 Registry 索引（数值在 R2 Parquet）。"""
+
+    factor_dataset_id: str
+    factor_ref: str
+    factor_hash: str
+    dataset_hash: str
+    snapshot_id: str
+    universe_code: str = ""
+    frequency: str = "1d"
+    start_date: str = ""
+    end_date: str = ""
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    row_count: Optional[int] = None
+    layout: Literal["long", "wide"] = "long"
+    schema_version: str = "factor_daily_long@1"
+    status: Literal["ACTIVE", "FAILED"] = "ACTIVE"
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)

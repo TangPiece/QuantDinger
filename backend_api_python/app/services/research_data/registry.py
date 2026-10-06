@@ -17,6 +17,7 @@ from .contracts import (
     DatasetDefinition,
     DatasetHandle,
     ExperimentDefinition,
+    FactorDatasetRecord,
     FeatureDefinition,
     ModelDefinition,
     ModelVersionRecord,
@@ -30,6 +31,10 @@ from .hashing import canonical_json, compute_dataset_hash
 
 class ProcessorImmutabilityError(ValueError):
     """同一 code@version 禁止修改 pipeline；须 bump version。"""
+
+
+class FeatureImmutabilityError(ValueError):
+    """同一 feature code@version 禁止修改定义；须 bump version。"""
 
 
 class ModelImmutabilityError(ValueError):
@@ -139,6 +144,10 @@ class ResearchRegistry(Protocol):
 
     def get_consistency_run(self, run_id: str) -> ConsistencyRunRecord: ...
 
+    def upsert_factor_dataset(self, record: FactorDatasetRecord) -> None: ...
+
+    def get_factor_dataset(self, factor_dataset_id: str) -> FactorDatasetRecord: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -162,6 +171,7 @@ class LocalJsonRegistry:
                     "experiments": {},
                     "signal_runs": {},
                     "consistency_runs": {},
+                    "factor_datasets": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -265,9 +275,28 @@ class LocalJsonRegistry:
         )
 
     def upsert_feature(self, feature: FeatureDefinition) -> None:
+        """登记 Feature/Factor；同 code@version 且 factor_hash 变化则拒绝。"""
+        from app.services.research_data.factor_lab.hash import compute_factor_hash
+        from app.services.research_data.factor_lab.immutability import (
+            FeatureImmutabilityError as _FIE,
+            assert_feature_immutable,
+            ensure_factor_hash,
+        )
+
+        feat = ensure_factor_hash(feature)
+        feat = feat.model_copy(update={"factor_hash": compute_factor_hash(feat)})
         with self._lock:
             data = self._read()
-            data["features"][f"{feature.code}@{feature.version}"] = feature.model_dump(mode="json")
+            data.setdefault("features", {})
+            key = f"{feat.code}@{feat.version}"
+            existing = data["features"].get(key)
+            if existing is not None:
+                try:
+                    assert_feature_immutable(existing, feat)
+                except _FIE as exc:
+                    raise FeatureImmutabilityError(str(exc)) from exc
+                return
+            data["features"][key] = feat.model_dump(mode="json")
             self._write(data)
 
     def get_feature(self, feature_ref: str) -> FeatureDefinition:
@@ -442,6 +471,23 @@ class LocalJsonRegistry:
             raise KeyError(f"consistency_run not found: {run_id!r}")
         return ConsistencyRunRecord.model_validate(raw)
 
+    def upsert_factor_dataset(self, record: FactorDatasetRecord) -> None:
+        """登记 Factor Dataset 索引（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_datasets", {})
+            data["factor_datasets"][record.factor_dataset_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_factor_dataset(self, factor_dataset_id: str) -> FactorDatasetRecord:
+        data = self._read()
+        raw = (data.get("factor_datasets") or {}).get(factor_dataset_id)
+        if not raw:
+            raise KeyError(f"factor_dataset not found: {factor_dataset_id!r}")
+        return FactorDatasetRecord.model_validate(raw)
+
 
 class D1ResearchRegistry:
     """经 Worker 写入 qd_research。"""
@@ -601,33 +647,104 @@ class D1ResearchRegistry:
         )
 
     def upsert_feature(self, feature: FeatureDefinition) -> None:
+        """登记 Feature/Factor 到 D1；写 feature_dependency；同版本不可变。"""
+        from app.services.research_data.factor_lab.dependencies import (
+            format_dependency,
+            parse_dependencies,
+        )
+        from app.services.research_data.factor_lab.hash import compute_factor_hash
+        from app.services.research_data.factor_lab.immutability import (
+            FeatureImmutabilityError as _FIE,
+            assert_feature_immutable,
+            ensure_factor_hash,
+        )
+
+        feat = ensure_factor_hash(feature)
+        feat = feat.model_copy(update={"factor_hash": compute_factor_hash(feat)})
+        existing_rows = d1_client.query(
+            "SELECT * FROM feature WHERE code=? AND version=?",
+            [feat.code, feat.version],
+        )
+        if existing_rows:
+            old = self.get_feature(f"{feat.code}@{feat.version}")
+            try:
+                assert_feature_immutable(old, feat)
+            except _FIE as exc:
+                raise FeatureImmutabilityError(str(exc)) from exc
+            return
+
+        # definition_json 保留扩展字段快照（兼容旧列）
+        def_blob = dict(feat.definition or {})
+        def_blob.update(
+            {
+                "description": feat.description,
+                "factor_type": feat.factor_type,
+                "computation_engine": feat.computation_engine,
+                "engine_version": feat.engine_version,
+                "universe": feat.universe,
+                "information_policy": feat.information_policy,
+                "schema_version": feat.schema_version,
+                "factor_hash": feat.factor_hash,
+                "processor_ref": feat.processor_ref,
+                "price_policy": (
+                    feat.price_policy.model_dump(mode="json")
+                    if feat.price_policy
+                    else None
+                ),
+                "dependencies": list(feat.dependencies or []),
+            }
+        )
         d1_client.query(
             """
             INSERT INTO feature (
               code, version, name, expression, frequency, definition_json,
-              backend, online_supported, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
-            ON CONFLICT(code, version) DO UPDATE SET
-              name=excluded.name,
-              expression=excluded.expression,
-              frequency=excluded.frequency,
-              definition_json=excluded.definition_json,
-              backend=excluded.backend,
-              online_supported=excluded.online_supported,
-              status='ACTIVE'
+              backend, online_supported, status, created_at,
+              description, factor_type, computation_engine, engine_version,
+              universe, information_policy, schema_version, factor_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                feature.code,
-                feature.version,
-                feature.name,
-                feature.expression,
-                feature.frequency,
-                json.dumps(feature.definition, ensure_ascii=False),
-                feature.backend,
-                1 if feature.online_supported else 0,
+                feat.code,
+                feat.version,
+                feat.name,
+                feat.expression,
+                feat.frequency,
+                json.dumps(def_blob, ensure_ascii=False),
+                feat.backend,
+                1 if feat.online_supported else 0,
                 _utc_now(),
+                feat.description or "",
+                feat.factor_type,
+                feat.computation_engine,
+                feat.engine_version or "",
+                feat.universe,
+                feat.information_policy,
+                feat.schema_version,
+                feat.factor_hash,
             ],
         )
+        rows = d1_client.query(
+            "SELECT feature_id FROM feature WHERE code=? AND version=?",
+            [feat.code, feat.version],
+        )
+        if not rows:
+            return
+        feature_id = rows[0]["feature_id"]
+        d1_client.query(
+            "DELETE FROM feature_dependency WHERE feature_id=?",
+            [feature_id],
+        )
+        for dep in parse_dependencies(feat.dependencies or []):
+            d1_client.query(
+                """
+                INSERT INTO feature_dependency
+                  (feature_id, dependency_type, dependency_code)
+                VALUES (?, ?, ?)
+                """,
+                [feature_id, dep.dependency_type, dep.dependency_code],
+            )
+            # 规范化字符串写入 definition 侧已由 parse 保证
+            _ = format_dependency(dep)
 
     def get_feature(self, feature_ref: str) -> FeatureDefinition:
         code, version = _split_ref(feature_ref)
@@ -638,6 +755,21 @@ class D1ResearchRegistry:
         if not rows:
             raise KeyError(f"feature not found: {feature_ref}")
         row = rows[0]
+        blob = json.loads(row.get("definition_json") or "{}")
+        dep_rows = d1_client.query(
+            """
+            SELECT dependency_type, dependency_code
+            FROM feature_dependency
+            WHERE feature_id=?
+            """,
+            [row["feature_id"]],
+        )
+        deps_from_table = [
+            f"{r['dependency_type']}:{r['dependency_code']}" for r in (dep_rows or [])
+        ]
+        deps = deps_from_table or list(blob.get("dependencies") or [])
+        pp = blob.get("price_policy")
+        price_policy = PricePolicy.model_validate(pp) if pp else None
         return FeatureDefinition(
             code=row["code"],
             version=row["version"],
@@ -646,7 +778,43 @@ class D1ResearchRegistry:
             frequency=row["frequency"],
             backend=row.get("backend") or "r2_factor",
             online_supported=bool(row.get("online_supported")),
-            definition=json.loads(row.get("definition_json") or "{}"),
+            definition={
+                k: v
+                for k, v in blob.items()
+                if k
+                not in {
+                    "description",
+                    "factor_type",
+                    "computation_engine",
+                    "engine_version",
+                    "universe",
+                    "information_policy",
+                    "schema_version",
+                    "factor_hash",
+                    "processor_ref",
+                    "price_policy",
+                    "dependencies",
+                }
+            },
+            dependencies=deps,
+            description=row.get("description") or blob.get("description") or "",
+            factor_type=row.get("factor_type") or blob.get("factor_type") or "CUSTOM",
+            computation_engine=row.get("computation_engine")
+            or blob.get("computation_engine")
+            or "quantdinger",
+            engine_version=row.get("engine_version")
+            or blob.get("engine_version")
+            or "",
+            universe=row.get("universe") or blob.get("universe"),
+            information_policy=row.get("information_policy")
+            or blob.get("information_policy")
+            or "UNKNOWN",
+            schema_version=row.get("schema_version")
+            or blob.get("schema_version")
+            or "factor_daily_long@1",
+            factor_hash=row.get("factor_hash") or blob.get("factor_hash"),
+            price_policy=price_policy,
+            processor_ref=blob.get("processor_ref"),
         )
 
     def upsert_processor(self, processor: ProcessorDefinition) -> None:
@@ -943,6 +1111,95 @@ class D1ResearchRegistry:
             level=str(meta.get("level") or ""),
             semantic_fingerprint=meta.get("semantic_fingerprint"),
             created_at=meta.get("created_at"),
+            metadata=meta,
+        )
+
+    def upsert_factor_dataset(self, record: FactorDatasetRecord) -> None:
+        """D1：优先写 factor_dataset 表；失败则依赖 artifact metadata。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_dataset (
+                  factor_dataset_id, factor_ref, factor_hash, dataset_hash,
+                  snapshot_id, universe_code, frequency, start_date, end_date,
+                  storage_uri, checksum, row_count, layout, schema_version,
+                  status, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(factor_dataset_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  row_count=excluded.row_count,
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.factor_dataset_id,
+                    record.factor_ref,
+                    record.factor_hash,
+                    record.dataset_hash,
+                    record.snapshot_id,
+                    record.universe_code,
+                    record.frequency,
+                    record.start_date,
+                    record.end_date,
+                    record.storage_uri,
+                    record.checksum,
+                    record.row_count,
+                    record.layout,
+                    record.schema_version,
+                    record.status,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            # 未跑 migration 时：仅靠 upsert_artifact(type=factor_dataset)
+            return
+
+    def get_factor_dataset(self, factor_dataset_id: str) -> FactorDatasetRecord:
+        """从 factor_dataset 表或 artifact 元数据读取。"""
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM factor_dataset WHERE factor_dataset_id=?",
+                [factor_dataset_id],
+            )
+        except Exception:
+            rows = []
+        if rows:
+            row = rows[0]
+            meta = json.loads(row.get("metadata_json") or "{}")
+            return FactorDatasetRecord(
+                factor_dataset_id=row["factor_dataset_id"],
+                factor_ref=row["factor_ref"],
+                factor_hash=row["factor_hash"],
+                dataset_hash=row["dataset_hash"],
+                snapshot_id=row["snapshot_id"],
+                universe_code=row.get("universe_code") or "",
+                frequency=row.get("frequency") or "1d",
+                start_date=row.get("start_date") or "",
+                end_date=row.get("end_date") or "",
+                storage_uri=row.get("storage_uri") or "",
+                checksum=row.get("checksum"),
+                row_count=row.get("row_count"),
+                layout=row.get("layout") or "long",
+                schema_version=row.get("schema_version") or "factor_daily_long@1",
+                status=row.get("status") or "ACTIVE",
+                created_at=row.get("created_at"),
+                metadata=meta if isinstance(meta, dict) else {},
+            )
+        art = self.get_artifact(factor_dataset_id)
+        meta = dict(art.metadata or {})
+        return FactorDatasetRecord(
+            factor_dataset_id=factor_dataset_id,
+            factor_ref=str(meta.get("factor_ref") or ""),
+            factor_hash=str(meta.get("factor_hash") or ""),
+            dataset_hash=str(meta.get("dataset_hash") or ""),
+            snapshot_id=str(meta.get("snapshot_id") or ""),
+            universe_code=str(meta.get("universe_code") or ""),
+            storage_uri=art.storage_uri,
+            checksum=art.checksum,
+            layout=meta.get("layout") or "long",
+            schema_version=str(meta.get("schema_version") or "factor_daily_long@1"),
             metadata=meta,
         )
 

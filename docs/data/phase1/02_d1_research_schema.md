@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS feature_dependency (
   PRIMARY KEY (feature_id, dependency_type, dependency_code)
 );
 
+-- Phase 4A (migration 0002_factor_lab.sql): feature gains description, factor_type,
+-- computation_engine, engine_version, universe, information_policy, schema_version,
+-- factor_hash; plus factor_dataset index table. Values remain on R2.
+-- See docs/data/phase4/01_factor_definition.md
+
 CREATE TABLE IF NOT EXISTS label (
   label_id         INTEGER PRIMARY KEY AUTOINCREMENT,
   code             TEXT NOT NULL,

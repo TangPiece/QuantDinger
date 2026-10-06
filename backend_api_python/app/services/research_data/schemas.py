@@ -12,6 +12,7 @@ SCHEMA_VERSION_UNIVERSE = "universe_membership_snapshot@1"
 SCHEMA_VERSION_CORPORATE_ACTION = "corporate_action@1"
 SCHEMA_VERSION_TRADING_STATUS = "trading_status@1"
 SCHEMA_VERSION_FACTOR_LONG = "factor_daily_long@1"
+SCHEMA_VERSION_FACTOR_WIDE = "factor_daily_wide@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -115,6 +116,18 @@ def factor_daily_long_schema() -> pa.Schema:
             ("data_version", pa.string()),
         ]
     )
+
+
+def factor_daily_wide_schema(*, factor_columns: Iterable[str] | None = None) -> pa.Schema:
+    """Wide 因子面板：固定键列 + 动态因子列（4A 定义；4B 填充）。"""
+    fields = [
+        ("instrument_key", pa.string()),
+        ("trading_date", pa.date32()),
+        ("data_version", pa.string()),
+    ]
+    for col in factor_columns or ():
+        fields.append((str(col), pa.float64()))
+    return pa.schema(fields)
 
 
 class SchemaValidationError(ValueError):

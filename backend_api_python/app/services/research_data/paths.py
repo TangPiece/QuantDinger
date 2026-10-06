@@ -88,6 +88,11 @@ def dataset_manifest_key(*, dataset_code: str, dataset_version: str, snapshot_id
     return f"{_root()}/dataset/{dataset_code}/{dataset_version}/{snapshot_id}/manifest.json"
 
 
+def factor_dataset_manifest_key(*, factor_dataset_id: str) -> str:
+    """Phase 4A：``qd/dataset/factor/{factor_dataset_id}/manifest.json``。"""
+    return f"{_root()}/dataset/factor/{factor_dataset_id}/manifest.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

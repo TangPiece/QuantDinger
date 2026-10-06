@@ -1,6 +1,6 @@
 # QuantDinger Backtest — Phase 3
 
-> **Status:** Phase 3A–3E implemented. Next major stage is Factor Lab (Phase 4), not started here.
+> **Status:** Phase 3A–3E implemented. Factor Lab starts at [Phase 4A](../data/phase4/README.md).
 
 ## Roadmap
 
