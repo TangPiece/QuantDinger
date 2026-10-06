@@ -284,6 +284,19 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+验证 Phase 4F Stability / Decay（Rolling IC、Decay、Regime；无 look-ahead）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase4f_factor_stability.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase4f_factor_stability.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 
 ## Level2 因子 D1 Worker

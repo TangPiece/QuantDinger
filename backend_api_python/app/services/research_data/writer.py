@@ -671,6 +671,229 @@ def write_group_turnover_panel(
     return result
 
 
+def _nan_floats(item: dict[str, Any], cols: tuple[str, ...]) -> dict[str, Any]:
+    for col in cols:
+        if item.get(col) is None:
+            item[col] = float("nan")
+    return item
+
+
+def write_rolling_ic_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    stability_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4F：滚动 IC 分区。"""
+    float_cols = ("ic_mean", "rankic_mean", "ic_std", "ic_positive_ratio")
+    norm = []
+    for r in rows:
+        item = _nan_floats(_norm_eval_date(dict(r)), float_cols)
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_stability_key(
+        stability_hash=stability_hash,
+        kind="rolling_ic",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.rolling_ic_daily_schema(),
+        required_columns=["evaluation_date", "horizon", "window", "sample_count"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_ROLLING_IC,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"stab_roll_{stability_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_ROLLING_IC,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_decay_curve_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    stability_hash: str,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4F：Decay 曲线（无年月分区）。"""
+    float_cols = (
+        "ic_mean",
+        "rankic_mean",
+        "long_return",
+        "short_return",
+        "long_short_return",
+    )
+    norm = []
+    for r in rows:
+        item = _nan_floats(dict(r), float_cols)
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_stability_key(
+        stability_hash=stability_hash, kind="decay", part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.decay_curve_schema(),
+        required_columns=["horizon", "sample_count"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_DECAY,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"stab_decay_{stability_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_DECAY,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_group_stability_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    stability_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4F：Group 稳定性分区。"""
+    float_cols = ("mean_return", "std_return", "positive_ratio")
+    norm = []
+    for r in rows:
+        item = _nan_floats(_norm_eval_date(dict(r)), float_cols)
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_stability_key(
+        stability_hash=stability_hash,
+        kind="group_stability",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.group_stability_daily_schema(),
+        required_columns=["evaluation_date", "horizon", "window", "portfolio"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_GROUP_STABILITY,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"stab_gst_{stability_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_GROUP_STABILITY,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_regime_metrics_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    stability_hash: str,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4F：Regime 指标（无年月分区）。"""
+    float_cols = (
+        "ic_mean",
+        "rankic_mean",
+        "long_short_return",
+        "turnover",
+        "net_return",
+    )
+    norm = []
+    for r in rows:
+        item = _nan_floats(dict(r), float_cols)
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_stability_key(
+        stability_hash=stability_hash, kind="regime", part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.regime_metrics_schema(),
+        required_columns=["regime_type", "regime_value", "horizon"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_REGIME,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"stab_reg_{stability_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_REGIME,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_snapshot_manifest(
     store: CanonicalStore,
     *,

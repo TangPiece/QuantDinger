@@ -72,6 +72,13 @@ from .groups import (
     GroupSpec,
     compute_group_evaluation_hash,
 )
+from .stability import (
+    STABILITY_VERSION,
+    FactorStabilityService,
+    FactorStabilitySummary,
+    StabilitySpec,
+    compute_stability_hash,
+)
 
 __all__ = [
     "DEPENDENCY_TYPES",
@@ -81,6 +88,7 @@ __all__ = [
     "METRIC_VERSION",
     "SCHEMA_LONG",
     "SCHEMA_WIDE",
+    "STABILITY_VERSION",
     "ComputePlan",
     "CostModelSpec",
     "EvaluationFrame",
@@ -98,6 +106,8 @@ __all__ = [
     "FactorGroupEvaluationService",
     "FactorManifestError",
     "FactorMetricsService",
+    "FactorStabilityService",
+    "FactorStabilitySummary",
     "FeatureImmutabilityError",
     "FactorSpec",
     "ForwardReturnEngine",
@@ -107,6 +117,7 @@ __all__ = [
     "MetricTimeSeries",
     "PITComputeContext",
     "ReturnSpec",
+    "StabilitySpec",
     "assert_feature_immutable",
     "build_compute_plan",
     "build_evaluation_plan",
@@ -118,6 +129,7 @@ __all__ = [
     "compute_group_evaluation_hash",
     "compute_metric_hash",
     "compute_result_dataset_hash",
+    "compute_stability_hash",
     "ensure_factor_hash",
     "get_factor",
     "get_factor_dataset",

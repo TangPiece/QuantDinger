@@ -454,3 +454,22 @@ class GroupEvaluationSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorStabilitySummary(_ContractModel):
+    """Phase 4F：稳定性 / Decay 汇总（明细在 R2；无综合 score）。"""
+
+    stability_hash: str
+    evaluation_hash: str
+    factor_dataset_id: str = ""
+    horizon: int
+    rolling_windows_json: list[Any] = Field(default_factory=list)
+    decay_summary_json: list[Any] = Field(default_factory=list)
+    regime_summary_json: list[Any] = Field(default_factory=list)
+    ic_stability_metrics_json: dict[str, Any] = Field(default_factory=dict)
+    group_stability_metrics_json: dict[str, Any] = Field(default_factory=dict)
+    stability_version: str = "qd_factor_stability@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

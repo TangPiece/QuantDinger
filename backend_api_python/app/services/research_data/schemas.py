@@ -18,6 +18,10 @@ SCHEMA_VERSION_METRIC_IC = "metric_ic_daily@1"
 SCHEMA_VERSION_GROUP_MEMBERSHIP = "group_membership@1"
 SCHEMA_VERSION_GROUP_RETURN = "group_return_daily@1"
 SCHEMA_VERSION_GROUP_TURNOVER = "group_turnover_daily@1"
+SCHEMA_VERSION_ROLLING_IC = "rolling_ic_daily@1"
+SCHEMA_VERSION_DECAY = "decay_curve@1"
+SCHEMA_VERSION_GROUP_STABILITY = "group_stability_daily@1"
+SCHEMA_VERSION_REGIME = "regime_metrics@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -214,6 +218,74 @@ def group_turnover_daily_schema() -> pa.Schema:
             ("turnover", pa.float64()),
             ("previous_weight_count", pa.int32()),
             ("current_weight_count", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def rolling_ic_daily_schema() -> pa.Schema:
+    """Phase 4F：滚动 IC。"""
+    return pa.schema(
+        [
+            ("evaluation_date", pa.date32()),
+            ("horizon", pa.int32()),
+            ("window", pa.int32()),
+            ("ic_mean", pa.float64()),
+            ("rankic_mean", pa.float64()),
+            ("ic_std", pa.float64()),
+            ("ic_positive_ratio", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def decay_curve_schema() -> pa.Schema:
+    """Phase 4F：Decay 观测曲线。"""
+    return pa.schema(
+        [
+            ("horizon", pa.int32()),
+            ("ic_mean", pa.float64()),
+            ("rankic_mean", pa.float64()),
+            ("long_return", pa.float64()),
+            ("short_return", pa.float64()),
+            ("long_short_return", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def group_stability_daily_schema() -> pa.Schema:
+    """Phase 4F：Group 滚动稳定性。"""
+    return pa.schema(
+        [
+            ("evaluation_date", pa.date32()),
+            ("horizon", pa.int32()),
+            ("window", pa.int32()),
+            ("portfolio", pa.string()),
+            ("mean_return", pa.float64()),
+            ("std_return", pa.float64()),
+            ("positive_ratio", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def regime_metrics_schema() -> pa.Schema:
+    """Phase 4F：日历 Regime。"""
+    return pa.schema(
+        [
+            ("regime_type", pa.string()),
+            ("regime_value", pa.string()),
+            ("horizon", pa.int32()),
+            ("ic_mean", pa.float64()),
+            ("rankic_mean", pa.float64()),
+            ("long_short_return", pa.float64()),
+            ("turnover", pa.float64()),
+            ("net_return", pa.float64()),
+            ("sample_count", pa.int32()),
             ("data_version", pa.string()),
         ]
     )

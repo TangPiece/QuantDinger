@@ -20,6 +20,7 @@ from .contracts import (
     ExperimentDefinition,
     FactorDatasetRecord,
     FactorEvaluationSummary,
+    FactorStabilitySummary,
     FeatureDefinition,
     GroupEvaluationSummary,
     ModelDefinition,
@@ -171,6 +172,14 @@ class ResearchRegistry(Protocol):
         self, group_evaluation_hash: str, horizon: int
     ) -> GroupEvaluationSummary: ...
 
+    def upsert_factor_stability_evaluation(
+        self, record: FactorStabilitySummary
+    ) -> None: ...
+
+    def get_factor_stability_evaluation(
+        self, stability_hash: str, horizon: int
+    ) -> FactorStabilitySummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -198,6 +207,7 @@ class LocalJsonRegistry:
                     "evaluation_datasets": {},
                     "factor_evaluation_summaries": {},
                     "factor_group_evaluations": {},
+                    "factor_stability_evaluations": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -576,6 +586,29 @@ class LocalJsonRegistry:
                 f"factor_group_evaluation not found: {group_evaluation_hash!r} h={horizon}"
             )
         return GroupEvaluationSummary.model_validate(raw)
+
+    def upsert_factor_stability_evaluation(
+        self, record: FactorStabilitySummary
+    ) -> None:
+        """登记 Stability Summary（Local JSON）。"""
+        key = f"{record.stability_hash}:{int(record.horizon)}"
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_stability_evaluations", {})
+            data["factor_stability_evaluations"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_factor_stability_evaluation(
+        self, stability_hash: str, horizon: int
+    ) -> FactorStabilitySummary:
+        data = self._read()
+        key = f"{stability_hash}:{int(horizon)}"
+        raw = (data.get("factor_stability_evaluations") or {}).get(key)
+        if not raw:
+            raise KeyError(
+                f"factor_stability_evaluation not found: {stability_hash!r} h={horizon}"
+            )
+        return FactorStabilitySummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1595,6 +1628,102 @@ class D1ResearchRegistry:
             valid_day_count=int(row.get("valid_day_count") or 0),
             total_day_count=int(row.get("total_day_count") or 0),
             group_version=row.get("group_version") or "qd_factor_groups@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_factor_stability_evaluation(
+        self, record: FactorStabilitySummary
+    ) -> None:
+        """D1：写 factor_stability_evaluation；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_stability_evaluation (
+                  stability_hash, horizon, evaluation_hash, factor_dataset_id,
+                  rolling_windows_json, decay_summary_json, regime_summary_json,
+                  ic_stability_metrics_json, group_stability_metrics_json,
+                  stability_version, storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(stability_hash, horizon) DO UPDATE SET
+                  decay_summary_json=excluded.decay_summary_json,
+                  regime_summary_json=excluded.regime_summary_json,
+                  ic_stability_metrics_json=excluded.ic_stability_metrics_json,
+                  group_stability_metrics_json=excluded.group_stability_metrics_json,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.stability_hash,
+                    int(record.horizon),
+                    record.evaluation_hash,
+                    record.factor_dataset_id,
+                    json.dumps(record.rolling_windows_json or [], ensure_ascii=False),
+                    json.dumps(record.decay_summary_json or [], ensure_ascii=False),
+                    json.dumps(record.regime_summary_json or [], ensure_ascii=False),
+                    json.dumps(
+                        record.ic_stability_metrics_json or {}, ensure_ascii=False
+                    ),
+                    json.dumps(
+                        record.group_stability_metrics_json or {}, ensure_ascii=False
+                    ),
+                    record.stability_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_factor_stability_evaluation(
+        self, stability_hash: str, horizon: int
+    ) -> FactorStabilitySummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM factor_stability_evaluation
+                WHERE stability_hash=? AND horizon=?
+                """,
+                [stability_hash, int(horizon)],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(
+                f"factor_stability_evaluation not found: {stability_hash!r} h={horizon}"
+            )
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return FactorStabilitySummary(
+            stability_hash=row["stability_hash"],
+            evaluation_hash=row["evaluation_hash"],
+            factor_dataset_id=row.get("factor_dataset_id") or "",
+            horizon=int(row["horizon"]),
+            rolling_windows_json=_loads("rolling_windows_json", []),
+            decay_summary_json=_loads("decay_summary_json", []),
+            regime_summary_json=_loads("regime_summary_json", []),
+            ic_stability_metrics_json=_loads("ic_stability_metrics_json", {}),
+            group_stability_metrics_json=_loads("group_stability_metrics_json", {}),
+            stability_version=row.get("stability_version") or "qd_factor_stability@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

@@ -178,6 +178,41 @@ def evaluation_groups_summary_key(*, group_evaluation_hash: str) -> str:
     return f"{_root()}/evaluation/groups/{group_evaluation_hash}/summary.json"
 
 
+def evaluation_stability_prefix(
+    *, stability_hash: str, kind: str, year: int | None = None, month: int | None = None
+) -> str:
+    """Phase 4F：``qd/evaluation/stability/{hash}/{kind}/[year=/month=]``。"""
+    base = f"{_root()}/evaluation/stability/{stability_hash}/{kind}"
+    if year is None or month is None:
+        return base
+    return f"{base}/year={int(year):04d}/month={int(month):02d}"
+
+
+def evaluation_stability_key(
+    *,
+    stability_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+    part: str = "part-000.parquet",
+) -> str:
+    """分区 kind 带 year/month；decay/regime 可无年月。"""
+    if year is None or month is None:
+        return f"{evaluation_stability_prefix(stability_hash=stability_hash, kind=kind)}/{part}"
+    return (
+        f"{evaluation_stability_prefix(stability_hash=stability_hash, kind=kind, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def evaluation_stability_manifest_key(*, stability_hash: str) -> str:
+    return f"{_root()}/evaluation/stability/{stability_hash}/manifest.json"
+
+
+def evaluation_stability_summary_key(*, stability_hash: str) -> str:
+    return f"{_root()}/evaluation/stability/{stability_hash}/summary.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config
