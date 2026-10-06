@@ -1,6 +1,6 @@
 # Phase 6 — Production / Live Trading
 
-> **Status:** Phase 6A–6F implemented. 6G+ not started.
+> **Status:** Phase 6A–6G implemented.
 
 ## Roadmap
 
@@ -11,6 +11,7 @@ Phase 6C  Risk Engine                        ← done
 Phase 6D  OMS / Order Lifecycle              ← done
 Phase 6E  Broker Adapter                     ← done (Paper + Fake + Alpaca Paper Reference)
 Phase 6F  Reconciliation / Execution Reconciliation  ← done
+Phase 6G  Trading Safety / Kill Switch               ← done
 ```
 
 ## Reading
@@ -21,6 +22,7 @@ Phase 6F  Reconciliation / Execution Reconciliation  ← done
 4. [04_oms.md](04_oms.md)
 5. [05_broker_adapter.md](05_broker_adapter.md)
 6. [06_reconciliation.md](06_reconciliation.md)
+7. [07_safety.md](07_safety.md)
 
 ## Commands
 
@@ -46,8 +48,16 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase6f_reconciliation.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase6g_safety.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase6f_reconciliation.py -q \
+  --confcutdir=tests/research_data
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase6g_safety.py -q \
   --confcutdir=tests/research_data
 ```
 
@@ -58,4 +68,5 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 - **6C:** PositionDelta → RiskDecision → OrderIntent（无 OMS/Broker）
 - **6D:** OrderIntent → Order 状态机 → Paper Broker → Fill → 6B PositionEvent
 - **6E:** BrokerAdapter Contract；Paper + Fake REST/WS；Reference=Alpaca Paper；无 LIVE / Multi-Broker
-- **6F:** BrokerSnapshot 对账；Finding/Gate；CRITICAL 阻断新单；无自动补仓 / Kill Switch
+- **6F:** BrokerSnapshot 对账；Finding/Gate；CRITICAL 上报 Safety；无自动补仓
+- **6G:** Fail-Closed Safety Gate；Kill Switch；OMS submit 权威闸门；Emergency 仅 Contract

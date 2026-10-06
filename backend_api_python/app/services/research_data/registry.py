@@ -58,6 +58,10 @@ from .contracts import (
     ReconciliationFindingSummary,
     ReconciliationGateRecord,
     ReconciliationRunSummary,
+    KillSwitchRecord,
+    SafetyEventSummary,
+    SafetyRuleRecord,
+    SafetyStateRecord,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -490,6 +494,30 @@ class ResearchRegistry(Protocol):
     def set_reconciliation_gate(
         self, record: ReconciliationGateRecord
     ) -> None: ...
+
+    def set_safety_state(self, record: SafetyStateRecord) -> None: ...
+
+    def get_safety_state(self, scope: str, scope_id: str) -> SafetyStateRecord: ...
+
+    def upsert_safety_event(self, record: SafetyEventSummary) -> None: ...
+
+    def get_safety_event(self, event_id: str) -> SafetyEventSummary: ...
+
+    def list_safety_events(
+        self,
+        *,
+        scope: str = "",
+        scope_id: str = "",
+        rule: str = "",
+    ) -> list[SafetyEventSummary]: ...
+
+    def set_kill_switch(self, record: KillSwitchRecord) -> None: ...
+
+    def get_kill_switch(self, scope: str, scope_id: str) -> KillSwitchRecord: ...
+
+    def upsert_safety_rule(self, record: SafetyRuleRecord) -> None: ...
+
+    def list_safety_rules(self) -> list[SafetyRuleRecord]: ...
 
 
 class LocalJsonRegistry:
@@ -1757,6 +1785,88 @@ class LocalJsonRegistry:
                 mode="json"
             )
             self._write(data)
+
+    @staticmethod
+    def _safety_state_key(scope: str, scope_id: str) -> str:
+        return f"{scope}|{scope_id or '_'}"
+
+    def set_safety_state(self, record: SafetyStateRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("safety_states", {})
+            key = self._safety_state_key(record.scope, record.scope_id)
+            data["safety_states"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_safety_state(self, scope: str, scope_id: str) -> SafetyStateRecord:
+        data = self._read()
+        key = self._safety_state_key(scope, scope_id)
+        raw = (data.get("safety_states") or {}).get(key)
+        if not raw:
+            raise KeyError(f"safety state not found: {key!r}")
+        return SafetyStateRecord.model_validate(raw)
+
+    def upsert_safety_event(self, record: SafetyEventSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("safety_events", {})
+            data["safety_events"][record.event_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_safety_event(self, event_id: str) -> SafetyEventSummary:
+        data = self._read()
+        raw = (data.get("safety_events") or {}).get(event_id)
+        if not raw:
+            raise KeyError(f"safety event not found: {event_id!r}")
+        return SafetyEventSummary.model_validate(raw)
+
+    def list_safety_events(
+        self,
+        *,
+        scope: str = "",
+        scope_id: str = "",
+        rule: str = "",
+    ) -> list[SafetyEventSummary]:
+        data = self._read()
+        rows = list((data.get("safety_events") or {}).values())
+        out: list[SafetyEventSummary] = []
+        for raw in rows:
+            if scope and str(raw.get("scope") or "") != scope:
+                continue
+            if scope_id and str(raw.get("scope_id") or "") != scope_id:
+                continue
+            if rule and str(raw.get("rule") or "") != rule:
+                continue
+            out.append(SafetyEventSummary.model_validate(raw))
+        return out
+
+    def set_kill_switch(self, record: KillSwitchRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("kill_switches", {})
+            key = self._safety_state_key(record.scope, record.scope_id)
+            data["kill_switches"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_kill_switch(self, scope: str, scope_id: str) -> KillSwitchRecord:
+        data = self._read()
+        key = self._safety_state_key(scope, scope_id)
+        raw = (data.get("kill_switches") or {}).get(key)
+        if not raw:
+            raise KeyError(f"kill switch not found: {key!r}")
+        return KillSwitchRecord.model_validate(raw)
+
+    def upsert_safety_rule(self, record: SafetyRuleRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("safety_rules", {})
+            data["safety_rules"][record.rule_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def list_safety_rules(self) -> list[SafetyRuleRecord]:
+        data = self._read()
+        rows = list((data.get("safety_rules") or {}).values())
+        return [SafetyRuleRecord.model_validate(r) for r in rows]
 
 
 class D1ResearchRegistry:
@@ -5485,6 +5595,249 @@ class D1ResearchRegistry:
             )
         except Exception:
             return
+
+    def set_safety_state(self, record: SafetyStateRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO safety_state (
+                  scope, scope_id, state, acknowledged, reason,
+                  updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, scope_id) DO UPDATE SET
+                  state=excluded.state,
+                  acknowledged=excluded.acknowledged,
+                  reason=excluded.reason,
+                  updated_at=excluded.updated_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.scope,
+                    record.scope_id,
+                    record.state,
+                    1 if record.acknowledged else 0,
+                    record.reason,
+                    record.updated_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_safety_state(self, scope: str, scope_id: str) -> SafetyStateRecord:
+        rows = d1_client.query(
+            "SELECT * FROM safety_state WHERE scope=? AND scope_id=?",
+            [scope, scope_id],
+        )
+        if not rows:
+            raise KeyError("safety state not found")
+        r = rows[0]
+        return SafetyStateRecord(
+            scope=r["scope"],
+            scope_id=r["scope_id"],
+            state=r.get("state") or "NORMAL",
+            acknowledged=bool(r.get("acknowledged")),
+            reason=r.get("reason") or "",
+            updated_at=r.get("updated_at"),
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_safety_event(self, record: SafetyEventSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO safety_event (
+                  event_id, scope, scope_id, rule, severity, state_before,
+                  state_after, reason, trigger_value, threshold, created_at,
+                  resolved_at, operator, acknowledged, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                  severity=excluded.severity,
+                  state_after=excluded.state_after,
+                  reason=excluded.reason,
+                  resolved_at=excluded.resolved_at,
+                  operator=excluded.operator,
+                  acknowledged=excluded.acknowledged,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.event_id,
+                    record.scope,
+                    record.scope_id,
+                    record.rule,
+                    record.severity,
+                    record.state_before,
+                    record.state_after,
+                    record.reason,
+                    float(record.trigger_value),
+                    float(record.threshold),
+                    record.created_at,
+                    record.resolved_at,
+                    record.operator,
+                    1 if record.acknowledged else 0,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_safety_event(self, event_id: str) -> SafetyEventSummary:
+        rows = d1_client.query(
+            "SELECT * FROM safety_event WHERE event_id=?",
+            [event_id],
+        )
+        if not rows:
+            raise KeyError("safety event not found")
+        r = rows[0]
+        return SafetyEventSummary(
+            event_id=r["event_id"],
+            scope=r.get("scope") or "",
+            scope_id=r.get("scope_id") or "",
+            rule=r.get("rule") or "",
+            severity=r.get("severity") or "",
+            state_before=r.get("state_before") or "",
+            state_after=r.get("state_after") or "",
+            reason=r.get("reason") or "",
+            trigger_value=float(r.get("trigger_value") or 0),
+            threshold=float(r.get("threshold") or 0),
+            created_at=r.get("created_at"),
+            resolved_at=r.get("resolved_at"),
+            operator=r.get("operator") or "",
+            acknowledged=bool(r.get("acknowledged")),
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def list_safety_events(
+        self,
+        *,
+        scope: str = "",
+        scope_id: str = "",
+        rule: str = "",
+    ) -> list[SafetyEventSummary]:
+        try:
+            sql = "SELECT * FROM safety_event WHERE 1=1"
+            params: list[Any] = []
+            if scope:
+                sql += " AND scope=?"
+                params.append(scope)
+            if scope_id:
+                sql += " AND scope_id=?"
+                params.append(scope_id)
+            if rule:
+                sql += " AND rule=?"
+                params.append(rule)
+            rows = d1_client.query(sql, params) or []
+            return [
+                SafetyEventSummary(
+                    event_id=r["event_id"],
+                    scope=r.get("scope") or "",
+                    scope_id=r.get("scope_id") or "",
+                    rule=r.get("rule") or "",
+                    severity=r.get("severity") or "",
+                    state_before=r.get("state_before") or "",
+                    state_after=r.get("state_after") or "",
+                    reason=r.get("reason") or "",
+                    trigger_value=float(r.get("trigger_value") or 0),
+                    threshold=float(r.get("threshold") or 0),
+                    created_at=r.get("created_at"),
+                    resolved_at=r.get("resolved_at"),
+                    operator=r.get("operator") or "",
+                    acknowledged=bool(r.get("acknowledged")),
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def set_kill_switch(self, record: KillSwitchRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO kill_switch (
+                  scope, scope_id, engaged, reason, engaged_at,
+                  engaged_by, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, scope_id) DO UPDATE SET
+                  engaged=excluded.engaged,
+                  reason=excluded.reason,
+                  engaged_at=excluded.engaged_at,
+                  engaged_by=excluded.engaged_by,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.scope,
+                    record.scope_id,
+                    1 if record.engaged else 0,
+                    record.reason,
+                    record.engaged_at,
+                    record.engaged_by,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_kill_switch(self, scope: str, scope_id: str) -> KillSwitchRecord:
+        rows = d1_client.query(
+            "SELECT * FROM kill_switch WHERE scope=? AND scope_id=?",
+            [scope, scope_id],
+        )
+        if not rows:
+            raise KeyError("kill switch not found")
+        r = rows[0]
+        return KillSwitchRecord(
+            scope=r["scope"],
+            scope_id=r["scope_id"],
+            engaged=bool(r.get("engaged")),
+            reason=r.get("reason") or "",
+            engaged_at=r.get("engaged_at"),
+            engaged_by=r.get("engaged_by") or "",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_safety_rule(self, record: SafetyRuleRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO safety_rule (
+                  rule_id, enabled, threshold, action, scope, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                  enabled=excluded.enabled,
+                  threshold=excluded.threshold,
+                  action=excluded.action,
+                  scope=excluded.scope,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.rule_id,
+                    1 if record.enabled else 0,
+                    float(record.threshold),
+                    record.action,
+                    record.scope,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_safety_rules(self) -> list[SafetyRuleRecord]:
+        try:
+            rows = d1_client.query("SELECT * FROM safety_rule") or []
+            return [
+                SafetyRuleRecord(
+                    rule_id=r["rule_id"],
+                    enabled=bool(r.get("enabled")),
+                    threshold=float(r.get("threshold") or 0),
+                    action=r.get("action") or "",
+                    scope=r.get("scope") or "",
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
 
 
 def get_default_registry(root: Path | None = None) -> ResearchRegistry:

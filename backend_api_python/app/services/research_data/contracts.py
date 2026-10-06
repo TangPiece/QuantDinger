@@ -1078,3 +1078,58 @@ class ReconciliationGateRecord(_ContractModel):
     finding_id: str = ""
     updated_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SafetyStateRecord(_ContractModel):
+    """Phase 6G：按 scope 持久化的安全状态（热路径走 Registry）。"""
+
+    scope: str
+    scope_id: str
+    state: str = "NORMAL"
+    acknowledged: bool = False
+    reason: str = ""
+    updated_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SafetyEventSummary(_ContractModel):
+    """Phase 6G：SafetyEvent Registry 索引（明细在 R2）。"""
+
+    event_id: str
+    scope: str = "ACCOUNT"
+    scope_id: str = ""
+    rule: str = ""
+    severity: str = "WARNING"
+    state_before: str = "NORMAL"
+    state_after: str = "HALTED"
+    reason: str = ""
+    trigger_value: float = 0.0
+    threshold: float = 0.0
+    created_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    operator: str = ""
+    acknowledged: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KillSwitchRecord(_ContractModel):
+    """Phase 6G：Kill Switch 持久化行。"""
+
+    scope: str
+    scope_id: str
+    engaged: bool = False
+    reason: str = ""
+    engaged_at: Optional[str] = None
+    engaged_by: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SafetyRuleRecord(_ContractModel):
+    """Phase 6G：可配置规则 Registry 行。"""
+
+    rule_id: str
+    enabled: bool = True
+    threshold: float = 0.0
+    action: str = "BLOCK_NEW_ORDER"
+    scope: str = "ACCOUNT"
+    metadata: dict[str, Any] = Field(default_factory=dict)

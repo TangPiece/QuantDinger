@@ -37,6 +37,7 @@ class ReconciliationService:
         broker_adapter_service: Any = None,
         broker_adapter: Any = None,
         artifact_store: ReconciliationArtifactStore | None = None,
+        safety_service: Any = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -47,6 +48,7 @@ class ReconciliationService:
         self._writer = ReconciliationWriter(registry, artifact_store=artifact_store)
         self._gate = TradingGate(repository=self._writer)
         self._cursors = CursorStore(repository=self._writer)
+        self._safety = safety_service
 
     def _resolve_adapter(self) -> Any:
         if self._adapter is not None:
@@ -87,6 +89,7 @@ class ReconciliationService:
             broker_adapter=adapter,
             inject=inject,
             salt=salt,
+            safety_service=self._safety,
         )
         return run
 
@@ -142,6 +145,11 @@ class ReconciliationService:
         ]
         if crit:
             return
+        if self._safety is not None:
+            try:
+                self._safety.ingest_reconciliation(account_id, critical=False)
+            except Exception:
+                pass
         self._gate.clear(account_id, reason="no open CRITICAL")
         if self._portfolio is not None:
             try:

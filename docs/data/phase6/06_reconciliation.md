@@ -45,7 +45,8 @@ ReconciliationService(store, registry, *,
 .refresh_and_retry(account_id, portfolio_id)  # snapshot refresh only; no orders
 .is_trading_blocked(account_id) -> bool
 
-OMSService(..., trading_gate=recon.gate)  # or oms.set_trading_gate(recon.gate)
+ReconciliationService(..., safety_service=safety)  # CRITICAL → Safety
+OMSService.set_trading_gate(safety.gate)  # 6G authoritative (not recon.gate)
 ```
 
 ## Finding types (P0)
@@ -64,9 +65,10 @@ OMSService(..., trading_gate=recon.gate)  # or oms.set_trading_gate(recon.gate)
 
 ## Trading Gate
 
-CRITICAL OPEN Finding → `GateState.block_new_orders` + Account
-`RECONCILIATION_REQUIRED` (6B).  
-All CRITICAL resolved → clear gate + restore `ACTIVE`.
+CRITICAL OPEN Finding → 6F `GateState.block_new_orders` + Account
+`RECONCILIATION_REQUIRED` (6B), and **`SafetyService.report_source(RECONCILIATION_CRITICAL)`**
+when `ReconciliationService(..., safety_service=...)` is wired (6G OMS gate).  
+All CRITICAL resolved → clear 6F gate + restore `ACTIVE` + clear Safety recon source.
 
 ## Storage
 

@@ -614,6 +614,29 @@ def production_reconciliation_snapshot_key(
     )
 
 
+def production_safety_prefix(*, scope: str = "") -> str:
+    """Phase 6G：``qd/production/safety/[scope]``。"""
+    base = f"{_root()}/production/safety"
+    if scope:
+        base = f"{base}/{scope}"
+    return base
+
+
+def production_safety_event_key(
+    *,
+    scope: str,
+    year: str,
+    month: str,
+    day: str,
+    event_id: str,
+) -> str:
+    """``qd/production/safety/{scope}/{yyyy}/{mm}/{dd}/{event_id}.json``。"""
+    return (
+        f"{production_safety_prefix(scope=scope)}"
+        f"/{year}/{month}/{day}/{event_id}.json"
+    )
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

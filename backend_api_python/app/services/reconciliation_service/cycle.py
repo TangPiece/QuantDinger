@@ -46,6 +46,7 @@ def run_reconciliation(
     broker_adapter: Any,
     inject: Mapping[str, Any] | None = None,
     salt: str = "",
+    safety_service: Any = None,
 ) -> tuple[ReconciliationRun, list[ReconciliationFinding]]:
     """执行一次对账；观察者，不改 OMS 持仓。"""
     started = _now()
@@ -130,6 +131,18 @@ def run_reconciliation(
         writer.write_finding(f)
 
     gate_state = gate.apply_findings(account_id, findings)
+    crit_open = [f for f in findings if str(f.severity).upper() == "CRITICAL"]
+    if safety_service is not None and crit_open:
+        try:
+            safety_service.report_source(
+                "RECONCILIATION_CRITICAL",
+                "ACCOUNT",
+                account_id,
+                severity="CRITICAL",
+                payload={"finding_count": len(crit_open), "run_id": run_id},
+            )
+        except Exception:
+            pass
     # CRITICAL → 6B RECONCILIATION_REQUIRED
     if gate_state.blocked and hasattr(portfolio_service, "reconcile"):
         try:
