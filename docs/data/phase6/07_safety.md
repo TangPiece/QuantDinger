@@ -81,3 +81,5 @@ QUANTDINGER_SKIP_APP_INIT=1 python scripts/verify_phase6g_safety.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase6g_safety.py -q --confcutdir=tests/research_data
 ```
+
+**Next:** observability and immutable audit — [08_ops_monitoring.md](08_ops_monitoring.md) (Phase 6H).

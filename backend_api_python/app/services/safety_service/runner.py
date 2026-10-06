@@ -47,12 +47,14 @@ class SafetyService:
         oms_service: Any = None,
         artifact_store: SafetyArtifactStore | None = None,
         broker_port: Any = None,
+        ops_service: Any = None,
     ) -> None:
         self._store = store
         self._registry = registry
         self._portfolio = portfolio_service
         self._oms = oms_service
         self._broker = broker_port
+        self._ops = ops_service
         self._writer = SafetyWriter(registry, artifact_store=artifact_store)
         self._kill = KillSwitchStore(repository=self._writer)
         self._rate = OrderRateLimiter()
@@ -83,6 +85,10 @@ class SafetyService:
 
     def set_broker_port(self, port: Any) -> None:
         self._broker = port
+
+    def set_ops_service(self, ops_service: Any) -> None:
+        """6H：Kill Switch / resume 审计。"""
+        self._ops = ops_service
 
     @property
     def source_flags(self) -> SourceFlags:
@@ -196,6 +202,17 @@ class SafetyService:
         self._kill.engage(
             scope, scope_id, reason=reason, operator=operator
         )
+        if self._ops is not None:
+            try:
+                self._ops.audit_kill_switch(
+                    engaged=True,
+                    scope=str(scope),
+                    scope_id=scope_id,
+                    operator=operator,
+                    reason=reason,
+                )
+            except Exception:
+                pass
         target = "EMERGENCY" if str(scope).upper() == "GLOBAL" else "HALTED"
         st = self._get_or_create_state(str(scope), scope_id)
         new_st = transition(st, target, reason=reason or "kill switch engaged")  # type: ignore[arg-type]
@@ -247,6 +264,13 @@ class SafetyService:
             self._writer.write_event(updated)
             st = self._get_or_create_state(str(ev.scope), ev.scope_id)
             self._writer.set_state(acknowledge_state(st, operator=operator))
+            if self._ops is not None:
+                try:
+                    self._ops.audit_safety_acknowledge(
+                        target=key, operator=operator
+                    )
+                except Exception:
+                    pass
             return
         except KeyError:
             pass
@@ -258,6 +282,13 @@ class SafetyService:
 
         st = self._get_or_create_state(scope, scope_id)
         self._writer.set_state(acknowledge_state(st, operator=operator))
+        if self._ops is not None:
+            try:
+                self._ops.audit_safety_acknowledge(
+                    target=key, operator=operator
+                )
+            except Exception:
+                pass
 
     def resume(
         self,
@@ -274,6 +305,15 @@ class SafetyService:
         st = self._get_or_create_state(str(scope), scope_id)
         new_st = resume_state(st, operator=operator)
         self._writer.set_state(new_st)
+        if self._ops is not None:
+            try:
+                self._ops.audit_safety_resume(
+                    scope=str(scope),
+                    scope_id=scope_id,
+                    operator=operator,
+                )
+            except Exception:
+                pass
         return new_st
 
     def report_source(
@@ -298,6 +338,10 @@ class SafetyService:
         if sk == "RECONCILIATION_CRITICAL":
             if acct:
                 self._sources.set_recon_critical(str(acct), sev == "CRITICAL")
+        elif sk == "UNEXPECTED_FILL":
+            # 6H：CRITICAL 意外成交与 Recon 同级 Fail-Closed 源
+            if acct and sev == "CRITICAL":
+                self._sources.set_recon_critical(str(acct), True)
         elif sk == "BROKER_DISCONNECT":
             if self._broker is not None and hasattr(self._broker, "set_connected"):
                 self._broker.set_connected(sev != "CRITICAL")

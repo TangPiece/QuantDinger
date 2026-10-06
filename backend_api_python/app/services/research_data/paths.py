@@ -637,6 +637,30 @@ def production_safety_event_key(
     )
 
 
+def production_ops_prefix(*, kind: str = "") -> str:
+    """Phase 6H：``qd/production/ops`` 或子目录。"""
+    base = f"{_root()}/production/ops"
+    if kind:
+        base = f"{base}/{kind}"
+    return base
+
+
+def production_audit_event_key(
+    *,
+    year: str,
+    month: str,
+    day: str,
+    event_id: str,
+) -> str:
+    """``qd/production/audit/{yyyy}/{mm}/{dd}/{event_id}.json``。"""
+    return f"{_root()}/production/audit/{year}/{month}/{day}/{event_id}.json"
+
+
+def production_incident_key(*, incident_id: str) -> str:
+    """``qd/production/incidents/{incident_id}.json``。"""
+    return f"{_root()}/production/incidents/{incident_id}.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

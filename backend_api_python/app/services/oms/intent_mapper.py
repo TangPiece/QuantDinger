@@ -63,6 +63,10 @@ def intent_to_order(
     meta.setdefault("intent_reason", reason)
     meta.setdefault("signal_id", intent.signal_id)
     meta.setdefault("urgency", intent.urgency)
+    # Phase 6H：trace 写入 Order.metadata 供 Fill/审计关联
+    tid = str(getattr(intent, "trace_id", "") or "").strip()
+    if tid:
+        meta.setdefault("trace_id", tid)
     return Order(
         order_id=derive_order_id(idem),
         client_order_id=derive_client_order_id(idem),

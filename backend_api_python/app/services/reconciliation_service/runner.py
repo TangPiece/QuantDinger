@@ -38,6 +38,7 @@ class ReconciliationService:
         broker_adapter: Any = None,
         artifact_store: ReconciliationArtifactStore | None = None,
         safety_service: Any = None,
+        ops_service: Any = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -49,6 +50,7 @@ class ReconciliationService:
         self._gate = TradingGate(repository=self._writer)
         self._cursors = CursorStore(repository=self._writer)
         self._safety = safety_service
+        self._ops = ops_service
 
     def _resolve_adapter(self) -> Any:
         if self._adapter is not None:
@@ -90,6 +92,7 @@ class ReconciliationService:
             inject=inject,
             salt=salt,
             safety_service=self._safety,
+            ops_service=self._ops,
         )
         return run
 

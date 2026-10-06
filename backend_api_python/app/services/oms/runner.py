@@ -38,11 +38,13 @@ class OMSService:
         artifact_store: OmsArtifactStore | None = None,
         broker_adapter_service: Any = None,
         trading_gate: Any = None,
+        ops_service: Any = None,
     ) -> None:
         self._store = store
         self._registry = registry
         self._portfolio = portfolio_service
         self._trading_gate = trading_gate
+        self._ops = ops_service
         # 默认 PaperBroker；可由 6E PaperBrokerAdapter / Simulated 注入
         if broker_port is not None:
             self._port: BrokerPort = broker_port
@@ -78,6 +80,10 @@ class OMSService:
         """6F：注入 TradingGate（阻断新 submit）。"""
         self._trading_gate = gate
 
+    def set_ops_service(self, ops_service: Any) -> None:
+        """6H：Monitoring / Audit 钩子。"""
+        self._ops = ops_service
+
     def submit_intents(
         self,
         intents: Sequence[OrderIntent] | list[OrderIntent],
@@ -107,6 +113,7 @@ class OMSService:
                 prices=prices,
                 metadata=meta,
                 trading_gate=self._trading_gate,
+                ops_service=self._ops,
             )
         except StateMachineError as exc:
             raise OMSError(str(exc)) from exc
@@ -126,6 +133,7 @@ class OMSService:
                 reason=reason,
                 writer=self._writer,
                 broker_port=self._port,
+                ops_service=self._ops,
             )
         except StateMachineError as exc:
             raise OMSError(str(exc)) from exc

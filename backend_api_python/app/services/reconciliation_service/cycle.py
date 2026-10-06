@@ -47,6 +47,7 @@ def run_reconciliation(
     inject: Mapping[str, Any] | None = None,
     salt: str = "",
     safety_service: Any = None,
+    ops_service: Any = None,
 ) -> tuple[ReconciliationRun, list[ReconciliationFinding]]:
     """执行一次对账；观察者，不改 OMS 持仓。"""
     started = _now()
@@ -140,6 +141,15 @@ def run_reconciliation(
                 account_id,
                 severity="CRITICAL",
                 payload={"finding_count": len(crit_open), "run_id": run_id},
+            )
+        except Exception:
+            pass
+    if ops_service is not None and crit_open:
+        try:
+            ops_service.notify_reconciliation_critical(
+                account_id,
+                run_id=run_id,
+                finding_count=len(crit_open),
             )
         except Exception:
             pass

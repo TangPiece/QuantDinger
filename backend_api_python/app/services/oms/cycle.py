@@ -22,6 +22,49 @@ from .validation import ValidationError, validate_order
 _ALLOWED_ENV = frozenset({"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER"})
 
 
+def _ops_audit_order(
+    ops_service: Any,
+    *,
+    event_type: str,
+    order: Any,
+    account_id: str,
+    strategy_id: str = "",
+    reason: str = "",
+) -> None:
+    """6H：OMS 侧审计 + 低基数 metrics。"""
+    if ops_service is None:
+        return
+    meta = dict(getattr(order, "metadata", None) or {})
+    trace_id = str(meta.get("trace_id") or "")
+    broker = str(meta.get("broker_id") or meta.get("environment") or "")
+    try:
+        ops_service.emit_audit(
+            event_type=event_type,
+            trace_id=trace_id,
+            account_id=account_id,
+            strategy_id=strategy_id,
+            order_id=str(getattr(order, "order_id", "") or ""),
+            entity_type="order",
+            entity_id=str(getattr(order, "order_id", "") or ""),
+            reason=reason,
+            salt=str(getattr(order, "order_id", "") or event_type),
+        )
+        counter = {
+            "ORDER_SUBMIT": "orders_submitted_total",
+            "ORDER_CANCEL": "orders_cancelled_total",
+            "EXECUTION_RECEIVED": "fills_total",
+        }.get(event_type)
+        if counter:
+            ops_service.record_order_metric(
+                counter,
+                broker=broker,
+                account=account_id,
+                strategy=strategy_id,
+            )
+    except Exception:
+        pass
+
+
 class TradingGateBlocked(ValidationError):
     """6G Safety / 6F Recon：Fail-Closed 阻断新 submit。"""
 
@@ -81,6 +124,7 @@ def run_submit_intents(
     # 兼容旧调用方
     paper_broker: Any = None,
     trading_gate: Any = None,
+    ops_service: Any = None,
 ) -> SubmitResult:
     """PAPER 默认同步；SANDBOX/SHADOW 或 async_submit → BROKER_SUBMIT outbox。"""
     meta_pre = dict(metadata or {})
@@ -111,6 +155,20 @@ def run_submit_intents(
             blocked = True
             block_reason = f"safety gate error (fail-closed): {exc}"
         if blocked:
+            if ops_service is not None:
+                try:
+                    from app.services.ops_service.trace import trace_id_from_intent
+
+                    ops_service.notify_safety_block(
+                        account_id,
+                        reason=block_reason,
+                        strategy_id=strategy_id,
+                        trace_id=trace_id_from_intent(first_intent)
+                        if first_intent
+                        else "",
+                    )
+                except Exception:
+                    pass
             raise TradingGateBlocked(
                 f"trading blocked for account {account_id}: {block_reason}"
             )
@@ -213,6 +271,13 @@ def run_submit_intents(
         )
         writer.persist_order(order, events=events, fills=[], outbox=ob)
         outbox_ids.append(ob.outbox_id)
+        _ops_audit_order(
+            ops_service,
+            event_type="ORDER_SUBMIT",
+            order=order,
+            account_id=account_id,
+            strategy_id=strategy_id,
+        )
 
         if async_submit:
             # 仅 enqueue；由 drain_outbox 推送
@@ -233,6 +298,15 @@ def run_submit_intents(
         orders.append(order)
         all_fills.extend(fills)
         all_events.extend(events)
+        for f in fills:
+            _ops_audit_order(
+                ops_service,
+                event_type="EXECUTION_RECEIVED",
+                order=order,
+                account_id=account_id,
+                strategy_id=strategy_id,
+                reason=str(getattr(f, "fill_id", "") or "fill"),
+            )
 
     return SubmitResult(
         orders=orders,
@@ -258,10 +332,20 @@ def run_cancel(
     writer: Any,
     broker_port: BrokerPort | None = None,
     paper_broker: Any = None,
+    ops_service: Any = None,
 ) -> Order:
     port = broker_port or paper_broker
     cur, events, req = apply_cancel(order, reason=reason, paper_broker=port)
     writer.persist_cancel(cur, events=events, request=req)
+    meta = dict(getattr(cur, "metadata", None) or {})
+    _ops_audit_order(
+        ops_service,
+        event_type="ORDER_CANCEL",
+        order=cur,
+        account_id=str(getattr(cur, "account_id", "") or ""),
+        strategy_id=str(meta.get("strategy_id") or ""),
+        reason=reason,
+    )
     return cur
 
 

@@ -508,6 +508,19 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+验证 Phase 6H Ops（Health / Audit / Alert；trace_id；Incident；CRITICAL→Safety；WARNING 不 HALT；审计不可覆盖；禁止 live_trading / pending_orders / qlib）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase6h_ops.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase6h_ops.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 Phase 6 说明：[docs/data/phase6/README.md](data/phase6/README.md)。

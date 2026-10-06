@@ -318,6 +318,8 @@ class OrderIntent(_ContractModel):
     signal_time: Optional[datetime] = None
     intended_execution_time: Optional[datetime] = None
     reason: Optional[str] = None
+    # Phase 6H：贯穿 Signal→Fill 的可追溯 id
+    trace_id: Optional[str] = None
 
 
 class SignalRunRecord(_ContractModel):
@@ -1132,4 +1134,93 @@ class SafetyRuleRecord(_ContractModel):
     threshold: float = 0.0
     action: str = "BLOCK_NEW_ORDER"
     scope: str = "ACCOUNT"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpsAuditEventSummary(_ContractModel):
+    """Phase 6H：Audit Registry 索引（明细在 R2；只追加）。"""
+
+    event_id: str
+    event_type: str = ""
+    timestamp: Optional[str] = None
+    actor_type: str = "SYSTEM"
+    actor_id: str = ""
+    trace_id: str = ""
+    account_id: str = ""
+    strategy_id: str = ""
+    order_id: str = ""
+    entity_type: str = ""
+    entity_id: str = ""
+    reason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpsHealthSnapshotRecord(_ContractModel):
+    """Phase 6H：健康快照。"""
+
+    snapshot_id: str
+    captured_at: Optional[str] = None
+    overall_status: str = "HEALTHY"
+    health_json: dict[str, Any] = Field(default_factory=dict)
+    counters_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qd_ops@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpsAlertRuleRecord(_ContractModel):
+    """Phase 6H：告警规则。"""
+
+    rule_id: str
+    enabled: bool = True
+    metric_or_signal: str = ""
+    severity: str = "WARNING"
+    threshold: float = 0.0
+    comparison: str = "GT"
+    description: str = ""
+    safety_source_kind: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpsAlertEventSummary(_ContractModel):
+    """Phase 6H：告警事件。"""
+
+    alert_id: str
+    rule_id: str = ""
+    severity: str = "WARNING"
+    fired_at: Optional[str] = None
+    message: str = ""
+    account_id: str = ""
+    strategy_id: str = ""
+    trace_id: str = ""
+    incident_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpsIncidentSummary(_ContractModel):
+    """Phase 6H：Incident 索引。"""
+
+    incident_id: str
+    title: str = ""
+    severity: str = "WARNING"
+    status: str = "OPEN"
+    account_id: str = ""
+    strategy_id: str = ""
+    trace_id: str = ""
+    opened_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    timeline_event_ids: list[str] = Field(default_factory=list)
+    alert_ids: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpsSloDefinitionRecord(_ContractModel):
+    """Phase 6H：SLO 配置。"""
+
+    slo_id: str
+    name: str = ""
+    target_ratio: float = 0.999
+    window_sec: float = 86400.0
+    metric_name: str = ""
+    enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)

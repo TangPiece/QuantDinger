@@ -59,6 +59,12 @@ from .contracts import (
     ReconciliationGateRecord,
     ReconciliationRunSummary,
     KillSwitchRecord,
+    OpsAlertEventSummary,
+    OpsAlertRuleRecord,
+    OpsAuditEventSummary,
+    OpsHealthSnapshotRecord,
+    OpsIncidentSummary,
+    OpsSloDefinitionRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
     SafetyStateRecord,
@@ -518,6 +524,47 @@ class ResearchRegistry(Protocol):
     def upsert_safety_rule(self, record: SafetyRuleRecord) -> None: ...
 
     def list_safety_rules(self) -> list[SafetyRuleRecord]: ...
+
+    def append_ops_audit_event(self, record: OpsAuditEventSummary) -> None: ...
+
+    def get_ops_audit_event(self, event_id: str) -> OpsAuditEventSummary: ...
+
+    def list_ops_audit_events(
+        self,
+        *,
+        account_id: str = "",
+        strategy_id: str = "",
+        order_id: str = "",
+        trace_id: str = "",
+        event_type: str = "",
+        limit: int = 200,
+    ) -> list[OpsAuditEventSummary]: ...
+
+    def upsert_ops_health_snapshot(
+        self, record: OpsHealthSnapshotRecord
+    ) -> None: ...
+
+    def get_ops_health_snapshot(
+        self, snapshot_id: str
+    ) -> OpsHealthSnapshotRecord: ...
+
+    def upsert_ops_alert_rule(self, record: OpsAlertRuleRecord) -> None: ...
+
+    def list_ops_alert_rules(self) -> list[OpsAlertRuleRecord]: ...
+
+    def upsert_ops_alert_event(self, record: OpsAlertEventSummary) -> None: ...
+
+    def get_ops_alert_event(self, alert_id: str) -> OpsAlertEventSummary: ...
+
+    def upsert_ops_incident(self, record: OpsIncidentSummary) -> None: ...
+
+    def get_ops_incident(self, incident_id: str) -> OpsIncidentSummary: ...
+
+    def upsert_ops_slo_definition(
+        self, record: OpsSloDefinitionRecord
+    ) -> None: ...
+
+    def list_ops_slo_definitions(self) -> list[OpsSloDefinitionRecord]: ...
 
 
 class LocalJsonRegistry:
@@ -1867,6 +1914,132 @@ class LocalJsonRegistry:
         data = self._read()
         rows = list((data.get("safety_rules") or {}).values())
         return [SafetyRuleRecord.model_validate(r) for r in rows]
+
+    def append_ops_audit_event(self, record: OpsAuditEventSummary) -> None:
+        """只追加；同 event_id 且内容不同则拒绝（6H 审计不可覆盖）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("ops_audit_events", {})
+            payload = record.model_dump(mode="json")
+            existing = (data.get("ops_audit_events") or {}).get(record.event_id)
+            if existing is not None and existing != payload:
+                raise ValueError(
+                    f"ops audit event already exists: {record.event_id!r}"
+                )
+            if existing is None:
+                data["ops_audit_events"][record.event_id] = payload
+                self._write(data)
+
+    def get_ops_audit_event(self, event_id: str) -> OpsAuditEventSummary:
+        data = self._read()
+        raw = (data.get("ops_audit_events") or {}).get(event_id)
+        if not raw:
+            raise KeyError(f"ops audit event not found: {event_id!r}")
+        return OpsAuditEventSummary.model_validate(raw)
+
+    def list_ops_audit_events(
+        self,
+        *,
+        account_id: str = "",
+        strategy_id: str = "",
+        order_id: str = "",
+        trace_id: str = "",
+        event_type: str = "",
+        limit: int = 200,
+    ) -> list[OpsAuditEventSummary]:
+        data = self._read()
+        rows = list((data.get("ops_audit_events") or {}).values())
+        out: list[OpsAuditEventSummary] = []
+        for raw in rows:
+            if account_id and str(raw.get("account_id") or "") != account_id:
+                continue
+            if strategy_id and str(raw.get("strategy_id") or "") != strategy_id:
+                continue
+            if order_id and str(raw.get("order_id") or "") != order_id:
+                continue
+            if trace_id and str(raw.get("trace_id") or "") != trace_id:
+                continue
+            if event_type and str(raw.get("event_type") or "") != event_type:
+                continue
+            out.append(OpsAuditEventSummary.model_validate(raw))
+        out.sort(key=lambda r: str(r.timestamp or ""))
+        return out[: max(1, int(limit))]
+
+    def upsert_ops_health_snapshot(
+        self, record: OpsHealthSnapshotRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("ops_health_snapshots", {})
+            data["ops_health_snapshots"][record.snapshot_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_ops_health_snapshot(
+        self, snapshot_id: str
+    ) -> OpsHealthSnapshotRecord:
+        data = self._read()
+        raw = (data.get("ops_health_snapshots") or {}).get(snapshot_id)
+        if not raw:
+            raise KeyError(f"ops health snapshot not found: {snapshot_id!r}")
+        return OpsHealthSnapshotRecord.model_validate(raw)
+
+    def upsert_ops_alert_rule(self, record: OpsAlertRuleRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("ops_alert_rules", {})
+            data["ops_alert_rules"][record.rule_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def list_ops_alert_rules(self) -> list[OpsAlertRuleRecord]:
+        data = self._read()
+        rows = list((data.get("ops_alert_rules") or {}).values())
+        return [OpsAlertRuleRecord.model_validate(r) for r in rows]
+
+    def upsert_ops_alert_event(self, record: OpsAlertEventSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("ops_alert_events", {})
+            data["ops_alert_events"][record.alert_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_ops_alert_event(self, alert_id: str) -> OpsAlertEventSummary:
+        data = self._read()
+        raw = (data.get("ops_alert_events") or {}).get(alert_id)
+        if not raw:
+            raise KeyError(f"ops alert event not found: {alert_id!r}")
+        return OpsAlertEventSummary.model_validate(raw)
+
+    def upsert_ops_incident(self, record: OpsIncidentSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("ops_incidents", {})
+            data["ops_incidents"][record.incident_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_ops_incident(self, incident_id: str) -> OpsIncidentSummary:
+        data = self._read()
+        raw = (data.get("ops_incidents") or {}).get(incident_id)
+        if not raw:
+            raise KeyError(f"ops incident not found: {incident_id!r}")
+        return OpsIncidentSummary.model_validate(raw)
+
+    def upsert_ops_slo_definition(
+        self, record: OpsSloDefinitionRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("ops_slo_definitions", {})
+            data["ops_slo_definitions"][record.slo_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_ops_slo_definitions(self) -> list[OpsSloDefinitionRecord]:
+        data = self._read()
+        rows = list((data.get("ops_slo_definitions") or {}).values())
+        return [OpsSloDefinitionRecord.model_validate(r) for r in rows]
 
 
 class D1ResearchRegistry:
@@ -5832,6 +6005,381 @@ class D1ResearchRegistry:
                     threshold=float(r.get("threshold") or 0),
                     action=r.get("action") or "",
                     scope=r.get("scope") or "",
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def append_ops_audit_event(self, record: OpsAuditEventSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO ops_audit_event (
+                  event_id, event_type, timestamp, actor_type, actor_id,
+                  trace_id, account_id, strategy_id, order_id, entity_type,
+                  entity_id, reason, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    record.event_id,
+                    record.event_type,
+                    record.timestamp,
+                    record.actor_type,
+                    record.actor_id,
+                    record.trace_id,
+                    record.account_id,
+                    record.strategy_id,
+                    record.order_id,
+                    record.entity_type,
+                    record.entity_id,
+                    record.reason,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                existing = self.get_ops_audit_event(record.event_id)
+                if existing.model_dump(mode="json") != record.model_dump(mode="json"):
+                    raise ValueError(
+                        f"ops audit event already exists: {record.event_id!r}"
+                    ) from exc
+            return
+
+    def get_ops_audit_event(self, event_id: str) -> OpsAuditEventSummary:
+        rows = d1_client.query(
+            "SELECT * FROM ops_audit_event WHERE event_id=?",
+            [event_id],
+        )
+        if not rows:
+            raise KeyError("ops audit event not found")
+        r = rows[0]
+        return OpsAuditEventSummary(
+            event_id=r["event_id"],
+            event_type=r.get("event_type") or "",
+            timestamp=r.get("timestamp"),
+            actor_type=r.get("actor_type") or "SYSTEM",
+            actor_id=r.get("actor_id") or "",
+            trace_id=r.get("trace_id") or "",
+            account_id=r.get("account_id") or "",
+            strategy_id=r.get("strategy_id") or "",
+            order_id=r.get("order_id") or "",
+            entity_type=r.get("entity_type") or "",
+            entity_id=r.get("entity_id") or "",
+            reason=r.get("reason") or "",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def list_ops_audit_events(
+        self,
+        *,
+        account_id: str = "",
+        strategy_id: str = "",
+        order_id: str = "",
+        trace_id: str = "",
+        event_type: str = "",
+        limit: int = 200,
+    ) -> list[OpsAuditEventSummary]:
+        try:
+            sql = "SELECT * FROM ops_audit_event WHERE 1=1"
+            params: list[Any] = []
+            if account_id:
+                sql += " AND account_id=?"
+                params.append(account_id)
+            if strategy_id:
+                sql += " AND strategy_id=?"
+                params.append(strategy_id)
+            if order_id:
+                sql += " AND order_id=?"
+                params.append(order_id)
+            if trace_id:
+                sql += " AND trace_id=?"
+                params.append(trace_id)
+            if event_type:
+                sql += " AND event_type=?"
+                params.append(event_type)
+            sql += " ORDER BY timestamp LIMIT ?"
+            params.append(max(1, int(limit)))
+            rows = d1_client.query(sql, params) or []
+            return [
+                OpsAuditEventSummary(
+                    event_id=r["event_id"],
+                    event_type=r.get("event_type") or "",
+                    timestamp=r.get("timestamp"),
+                    actor_type=r.get("actor_type") or "SYSTEM",
+                    actor_id=r.get("actor_id") or "",
+                    trace_id=r.get("trace_id") or "",
+                    account_id=r.get("account_id") or "",
+                    strategy_id=r.get("strategy_id") or "",
+                    order_id=r.get("order_id") or "",
+                    entity_type=r.get("entity_type") or "",
+                    entity_id=r.get("entity_id") or "",
+                    reason=r.get("reason") or "",
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def upsert_ops_health_snapshot(
+        self, record: OpsHealthSnapshotRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO ops_health_snapshot (
+                  snapshot_id, captured_at, overall_status, health_json,
+                  counters_json, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                  captured_at=excluded.captured_at,
+                  overall_status=excluded.overall_status,
+                  health_json=excluded.health_json,
+                  counters_json=excluded.counters_json,
+                  engine_version=excluded.engine_version,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.snapshot_id,
+                    record.captured_at,
+                    record.overall_status,
+                    json.dumps(record.health_json or {}, ensure_ascii=False),
+                    json.dumps(record.counters_json or {}, ensure_ascii=False),
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_ops_health_snapshot(
+        self, snapshot_id: str
+    ) -> OpsHealthSnapshotRecord:
+        rows = d1_client.query(
+            "SELECT * FROM ops_health_snapshot WHERE snapshot_id=?",
+            [snapshot_id],
+        )
+        if not rows:
+            raise KeyError("ops health snapshot not found")
+        r = rows[0]
+        return OpsHealthSnapshotRecord(
+            snapshot_id=r["snapshot_id"],
+            captured_at=r.get("captured_at"),
+            overall_status=r.get("overall_status") or "HEALTHY",
+            health_json=json.loads(r.get("health_json") or "{}"),
+            counters_json=json.loads(r.get("counters_json") or "{}"),
+            engine_version=r.get("engine_version") or "qd_ops@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_ops_alert_rule(self, record: OpsAlertRuleRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO ops_alert_rule (
+                  rule_id, enabled, metric_or_signal, severity, threshold,
+                  comparison, description, safety_source_kind, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                  enabled=excluded.enabled,
+                  metric_or_signal=excluded.metric_or_signal,
+                  severity=excluded.severity,
+                  threshold=excluded.threshold,
+                  comparison=excluded.comparison,
+                  description=excluded.description,
+                  safety_source_kind=excluded.safety_source_kind,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.rule_id,
+                    1 if record.enabled else 0,
+                    record.metric_or_signal,
+                    record.severity,
+                    float(record.threshold),
+                    record.comparison,
+                    record.description,
+                    record.safety_source_kind,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_ops_alert_rules(self) -> list[OpsAlertRuleRecord]:
+        try:
+            rows = d1_client.query("SELECT * FROM ops_alert_rule") or []
+            return [
+                OpsAlertRuleRecord(
+                    rule_id=r["rule_id"],
+                    enabled=bool(r.get("enabled")),
+                    metric_or_signal=r.get("metric_or_signal") or "",
+                    severity=r.get("severity") or "WARNING",
+                    threshold=float(r.get("threshold") or 0),
+                    comparison=r.get("comparison") or "GT",
+                    description=r.get("description") or "",
+                    safety_source_kind=r.get("safety_source_kind") or "",
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def upsert_ops_alert_event(self, record: OpsAlertEventSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO ops_alert_event (
+                  alert_id, rule_id, severity, fired_at, message, account_id,
+                  strategy_id, trace_id, incident_id, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(alert_id) DO UPDATE SET
+                  incident_id=excluded.incident_id,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.alert_id,
+                    record.rule_id,
+                    record.severity,
+                    record.fired_at,
+                    record.message,
+                    record.account_id,
+                    record.strategy_id,
+                    record.trace_id,
+                    record.incident_id,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_ops_alert_event(self, alert_id: str) -> OpsAlertEventSummary:
+        rows = d1_client.query(
+            "SELECT * FROM ops_alert_event WHERE alert_id=?",
+            [alert_id],
+        )
+        if not rows:
+            raise KeyError("ops alert event not found")
+        r = rows[0]
+        return OpsAlertEventSummary(
+            alert_id=r["alert_id"],
+            rule_id=r.get("rule_id") or "",
+            severity=r.get("severity") or "WARNING",
+            fired_at=r.get("fired_at"),
+            message=r.get("message") or "",
+            account_id=r.get("account_id") or "",
+            strategy_id=r.get("strategy_id") or "",
+            trace_id=r.get("trace_id") or "",
+            incident_id=r.get("incident_id") or "",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_ops_incident(self, record: OpsIncidentSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO ops_incident (
+                  incident_id, title, severity, status, account_id, strategy_id,
+                  trace_id, opened_at, updated_at, resolved_at,
+                  timeline_event_ids_json, alert_ids_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(incident_id) DO UPDATE SET
+                  status=excluded.status,
+                  updated_at=excluded.updated_at,
+                  resolved_at=excluded.resolved_at,
+                  timeline_event_ids_json=excluded.timeline_event_ids_json,
+                  alert_ids_json=excluded.alert_ids_json,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.incident_id,
+                    record.title,
+                    record.severity,
+                    record.status,
+                    record.account_id,
+                    record.strategy_id,
+                    record.trace_id,
+                    record.opened_at,
+                    record.updated_at,
+                    record.resolved_at,
+                    json.dumps(record.timeline_event_ids or []),
+                    json.dumps(record.alert_ids or []),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_ops_incident(self, incident_id: str) -> OpsIncidentSummary:
+        rows = d1_client.query(
+            "SELECT * FROM ops_incident WHERE incident_id=?",
+            [incident_id],
+        )
+        if not rows:
+            raise KeyError("ops incident not found")
+        r = rows[0]
+        return OpsIncidentSummary(
+            incident_id=r["incident_id"],
+            title=r.get("title") or "",
+            severity=r.get("severity") or "WARNING",
+            status=r.get("status") or "OPEN",
+            account_id=r.get("account_id") or "",
+            strategy_id=r.get("strategy_id") or "",
+            trace_id=r.get("trace_id") or "",
+            opened_at=r.get("opened_at"),
+            updated_at=r.get("updated_at"),
+            resolved_at=r.get("resolved_at"),
+            timeline_event_ids=json.loads(
+                r.get("timeline_event_ids_json") or "[]"
+            ),
+            alert_ids=json.loads(r.get("alert_ids_json") or "[]"),
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_ops_slo_definition(
+        self, record: OpsSloDefinitionRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO ops_slo_definition (
+                  slo_id, name, target_ratio, window_sec, metric_name,
+                  enabled, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(slo_id) DO UPDATE SET
+                  name=excluded.name,
+                  target_ratio=excluded.target_ratio,
+                  window_sec=excluded.window_sec,
+                  metric_name=excluded.metric_name,
+                  enabled=excluded.enabled,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.slo_id,
+                    record.name,
+                    float(record.target_ratio),
+                    float(record.window_sec),
+                    record.metric_name,
+                    1 if record.enabled else 0,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_ops_slo_definitions(self) -> list[OpsSloDefinitionRecord]:
+        try:
+            rows = d1_client.query("SELECT * FROM ops_slo_definition") or []
+            return [
+                OpsSloDefinitionRecord(
+                    slo_id=r["slo_id"],
+                    name=r.get("name") or "",
+                    target_ratio=float(r.get("target_ratio") or 0.999),
+                    window_sec=float(r.get("window_sec") or 86400),
+                    metric_name=r.get("metric_name") or "",
+                    enabled=bool(r.get("enabled")),
                     metadata=json.loads(r.get("metadata_json") or "{}"),
                 )
                 for r in rows
