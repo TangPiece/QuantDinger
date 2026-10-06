@@ -199,6 +199,7 @@ class QlibStrategyService:
 
         metrics = dict(worker_result.get("metrics") or {})
         mode = str(worker_result.get("mode") or "")
+        nav_curve = list(worker_result.get("nav_curve") or [])
         # 合成 NAV：无真实 Qlib 结果时用 price_bars
         if (
             metrics.get("total_return") is None
@@ -213,6 +214,7 @@ class QlibStrategyService:
                 start=spec.start_date,
                 end=spec.end_date,
             )
+            nav_curve = list(syn.pop("nav_curve", None) or nav_curve)
             metrics.update(syn)
             mode = mode or "synthetic_weight_nav"
 
@@ -227,6 +229,8 @@ class QlibStrategyService:
             metrics=metrics,
             weights=weights,
             predictions=predictions if isinstance(predictions, pd.Series) else None,
+            nav_curve=nav_curve,
+            backtest_hash=str(meta.get("backtest_hash") or ""),
             force=force,
         )
         return QlibRunResult(

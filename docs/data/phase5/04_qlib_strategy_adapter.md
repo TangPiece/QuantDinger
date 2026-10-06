@@ -107,6 +107,7 @@ Golden 四层：数据映射 / Signal / Portfolio 权重 / GROSS 收益方向；
 ❌ Broker / live / RL / Level2
 ```
 
-## 5E 预留
+## 5E 衔接
 
-同一 `strategy_hash` + 窗口产出可比 `metrics_json` + `compatibility_json`，供跨引擎差异归因。
+同一 `strategy_hash` + 窗口产出可比 `metrics_json` + `compatibility_json` + `nav/daily.json`；
+`backtest_hash` 可由 5E runner 填入。详见 [05_cross_validation.md](05_cross_validation.md)。

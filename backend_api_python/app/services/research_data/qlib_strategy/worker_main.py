@@ -141,10 +141,30 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
     metrics = mapped.get("metrics") or {}
     if hasattr(metrics, "model_dump"):
         metrics = metrics.model_dump(mode="json")
+    # 将 equity_curve 转为 5E 可消费的 nav_curve
+    nav_curve: list[dict[str, Any]] = []
+    for pt in mapped.get("equity_curve") or []:
+        if hasattr(pt, "model_dump"):
+            d = pt.model_dump(mode="json")
+        elif isinstance(pt, dict):
+            d = pt
+        else:
+            continue
+        eq = d.get("equity", d.get("nav"))
+        if eq is None:
+            continue
+        nav_curve.append(
+            {
+                "trading_date": str(d.get("trading_date") or "")[:10],
+                "nav": float(eq),
+                "portfolio_return": d.get("portfolio_return"),
+            }
+        )
     return {
         "ok": True,
         "mode": "qlib_backtest",
         "metrics": metrics if isinstance(metrics, dict) else {},
+        "nav_curve": nav_curve,
         "weights_count": len(weights_records),
     }
 

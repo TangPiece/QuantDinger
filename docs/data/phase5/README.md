@@ -1,6 +1,6 @@
 # Phase 5 — Strategy Research
 
-> **Status:** Phase 5A + 5B + 5C + 5D implemented. 5E Cross Validation not started.
+> **Status:** Phase 5A–5E implemented. 5F Research → Production Bridge not started.
 
 ## Roadmap
 
@@ -9,7 +9,7 @@ Phase 5A  Strategy Definition / Contract   ← done
 Phase 5B  Strategy Backtest               ← done
 Phase 5C  Cost / Execution Model          ← done
 Phase 5D  Qlib Strategy / Model Integration ← done
-Phase 5E  QuantDinger ↔ Qlib Cross Validation
+Phase 5E  QuantDinger ↔ Qlib Cross Validation ← done
 Phase 5F  Production Strategy
 ```
 
@@ -19,6 +19,7 @@ Phase 5F  Production Strategy
 2. [02_research_backtest.md](02_research_backtest.md)
 3. [03_research_execution.md](03_research_execution.md)
 4. [04_qlib_strategy_adapter.md](04_qlib_strategy_adapter.md)
+5. [05_cross_validation.md](05_cross_validation.md)
 
 ## Commands
 
@@ -38,11 +39,18 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase5d_qlib_strategy.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase5e_cross_validation.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/qd_research_validate.py --golden
+
+QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase5a_strategy_research.py \
   tests/research_data/test_phase5b_research_backtest.py \
   tests/research_data/test_phase5c_research_execution.py \
-  tests/research_data/test_phase5d_qlib_strategy.py -q \
+  tests/research_data/test_phase5d_qlib_strategy.py \
+  tests/research_data/test_phase5e_cross_validation.py -q \
   --confcutdir=tests/research_data
 ```
 

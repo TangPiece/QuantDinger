@@ -439,6 +439,31 @@ def qlib_run_compatibility_key(*, qlib_run_hash: str) -> str:
     return f"{qlib_run_prefix(qlib_run_hash=qlib_run_hash)}/compatibility.json"
 
 
+def qlib_run_nav_key(*, qlib_run_hash: str) -> str:
+    """Phase 5D/5E：日频 NAV 曲线。"""
+    return f"{qlib_run_prefix(qlib_run_hash=qlib_run_hash)}/nav/daily.json"
+
+
+def cross_validation_prefix(*, cv_hash: str, kind: str = "") -> str:
+    """Phase 5E：``qd/cross_validation/{cv_hash}/[kind]``。"""
+    base = f"{_root()}/cross_validation/{cv_hash}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def cross_validation_manifest_key(*, cv_hash: str) -> str:
+    return f"{cross_validation_prefix(cv_hash=cv_hash)}/manifest.json"
+
+
+def cross_validation_report_key(*, cv_hash: str) -> str:
+    return f"{cross_validation_prefix(cv_hash=cv_hash)}/report.json"
+
+
+def cross_validation_attribution_key(*, cv_hash: str) -> str:
+    return f"{cross_validation_prefix(cv_hash=cv_hash)}/attribution.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

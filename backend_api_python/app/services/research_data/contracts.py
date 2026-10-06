@@ -608,3 +608,25 @@ class QlibRunSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CrossValidationSummary(_ContractModel):
+    """Phase 5E：双引擎交叉验证汇总；明细在 R2。"""
+
+    cv_hash: str
+    strategy_hash: str
+    backtest_hash: str = ""
+    qlib_run_hash: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    realism: str = "GROSS"
+    execution_policy: str = "NEXT_OPEN"
+    status: str = "FAILED"
+    layer_results_json: dict[str, Any] = Field(default_factory=dict)
+    attribution_json: dict[str, Any] = Field(default_factory=dict)
+    metrics_side_by_side_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qd_cross_validation@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

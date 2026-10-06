@@ -14,6 +14,7 @@ from app.services.research_data.paths import (
     qlib_run_compatibility_key,
     qlib_run_manifest_key,
     qlib_run_metrics_key,
+    qlib_run_nav_key,
     qlib_run_summary_key,
 )
 
@@ -43,6 +44,7 @@ class QlibRunArtifactStore:
         metrics: dict[str, Any] | None = None,
         prediction_records: list[dict[str, Any]] | None = None,
         weight_records: list[dict[str, Any]] | None = None,
+        nav_curve: list[dict[str, Any]] | None = None,
     ) -> ArtifactRecord:
         rh = manifest.qlib_run_hash
         dest = self.dir_for(rh)
@@ -110,6 +112,23 @@ class QlibRunArtifactStore:
             wdir.mkdir(parents=True, exist_ok=True)
             (wdir / "weights.json").write_text(
                 json.dumps(weight_records, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        # 5E：日频 NAV（与 QD portfolio panel 对齐消费）
+        if nav_curve is not None:
+            ndir = dest / "nav"
+            ndir.mkdir(parents=True, exist_ok=True)
+            (ndir / "daily.json").write_text(
+                json.dumps(
+                    {
+                        "qlib_run_hash": rh,
+                        "nav_curve": nav_curve,
+                        "r2_key": qlib_run_nav_key(qlib_run_hash=rh),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                ),
                 encoding="utf-8",
             )
 

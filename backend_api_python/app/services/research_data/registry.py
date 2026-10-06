@@ -30,6 +30,7 @@ from .contracts import (
     ModelVersionRecord,
     PricePolicy,
     ProcessorDefinition,
+    CrossValidationSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -239,6 +240,14 @@ class ResearchRegistry(Protocol):
 
     def get_research_qlib_run(self, qlib_run_hash: str) -> QlibRunSummary: ...
 
+    def upsert_research_cross_validation(
+        self, record: CrossValidationSummary
+    ) -> None: ...
+
+    def get_research_cross_validation(
+        self, cv_hash: str
+    ) -> CrossValidationSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -274,6 +283,7 @@ class LocalJsonRegistry:
                     "strategy_research": {},
                     "research_backtests": {},
                     "research_qlib_runs": {},
+                    "research_cross_validations": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -801,6 +811,25 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"research_qlib_run not found: {qlib_run_hash!r}")
         return QlibRunSummary.model_validate(raw)
+
+    def upsert_research_cross_validation(
+        self, record: CrossValidationSummary
+    ) -> None:
+        """登记 Cross Validation Summary（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("research_cross_validations", {})
+            data["research_cross_validations"][record.cv_hash] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_research_cross_validation(self, cv_hash: str) -> CrossValidationSummary:
+        data = self._read()
+        raw = (data.get("research_cross_validations") or {}).get(cv_hash)
+        if not raw:
+            raise KeyError(f"research_cross_validation not found: {cv_hash!r}")
+        return CrossValidationSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -2537,6 +2566,104 @@ class D1ResearchRegistry:
             engine_version=row.get("engine_version")
             or "qlib_strategy_adapter@1",
             recorder_id=row.get("recorder_id") or "",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_research_cross_validation(
+        self, record: CrossValidationSummary
+    ) -> None:
+        """D1：写 research_cross_validation；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO research_cross_validation (
+                  cv_hash, strategy_hash, backtest_hash, qlib_run_hash,
+                  start_date, end_date, realism, execution_policy, status,
+                  layer_results_json, attribution_json, metrics_side_by_side_json,
+                  engine_version, storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(cv_hash) DO UPDATE SET
+                  status=excluded.status,
+                  layer_results_json=excluded.layer_results_json,
+                  attribution_json=excluded.attribution_json,
+                  metrics_side_by_side_json=excluded.metrics_side_by_side_json,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.cv_hash,
+                    record.strategy_hash,
+                    record.backtest_hash,
+                    record.qlib_run_hash,
+                    record.start_date,
+                    record.end_date,
+                    record.realism,
+                    record.execution_policy,
+                    record.status,
+                    json.dumps(
+                        record.layer_results_json or {}, ensure_ascii=False
+                    ),
+                    json.dumps(record.attribution_json or {}, ensure_ascii=False),
+                    json.dumps(
+                        record.metrics_side_by_side_json or {}, ensure_ascii=False
+                    ),
+                    record.engine_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_research_cross_validation(self, cv_hash: str) -> CrossValidationSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM research_cross_validation
+                WHERE cv_hash=?
+                """,
+                [cv_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"research_cross_validation not found: {cv_hash!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return CrossValidationSummary(
+            cv_hash=row["cv_hash"],
+            strategy_hash=row["strategy_hash"],
+            backtest_hash=row.get("backtest_hash") or "",
+            qlib_run_hash=row.get("qlib_run_hash") or "",
+            start_date=row.get("start_date") or "",
+            end_date=row.get("end_date") or "",
+            realism=row.get("realism") or "GROSS",
+            execution_policy=row.get("execution_policy") or "NEXT_OPEN",
+            status=row.get("status") or "FAILED",
+            layer_results_json=_loads("layer_results_json", {}),
+            attribution_json=_loads("attribution_json", {}),
+            metrics_side_by_side_json=_loads("metrics_side_by_side_json", {}),
+            engine_version=row.get("engine_version") or "qd_cross_validation@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

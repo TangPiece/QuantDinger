@@ -107,9 +107,12 @@ def synthetic_weight_nav(
     prev_close: dict[str, float] = {}
     last_w: dict[str, float] = {}
     rets: list[float] = []
+    # 日频曲线供 5E NAV Diff 消费
+    nav_curve: list[dict[str, Any]] = []
     for i, d in enumerate(dates):
         if d in w_by_day:
             last_w = dict(w_by_day[d])
+        day_r: float | None = None
         # 日收益：持仓权重 × 标的 close-to-close；首日无收益
         if i > 0 and last_w:
             day_r = 0.0
@@ -132,6 +135,13 @@ def synthetic_weight_nav(
                 if c == c and c > 0:
                     prev_close[inst] = c
         _ = fill_field  # 合成路径用 close-to-close；fill 留给真实 Qlib
+        nav_curve.append(
+            {
+                "trading_date": d.isoformat(),
+                "nav": float(nav),
+                "portfolio_return": day_r,
+            }
+        )
 
     total = nav / float(initial_nav) - 1.0 if initial_nav else None
     return {
@@ -140,4 +150,5 @@ def synthetic_weight_nav(
         "n_days": len(dates),
         "n_return_days": len(rets),
         "mode": "synthetic_weight_nav",
+        "nav_curve": nav_curve,
     }
