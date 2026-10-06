@@ -1,6 +1,6 @@
 # Phase 6 — Production / Live Trading
 
-> **Status:** Phase 6A–6C implemented. 6D+ not started.
+> **Status:** Phase 6A–6D implemented. 6E+ not started.
 
 ## Roadmap
 
@@ -8,7 +8,7 @@
 Phase 6A  Production Runtime / Online Data   ← done
 Phase 6B  Account / Position SSOT            ← done
 Phase 6C  Risk Engine                        ← done
-Phase 6D  OMS / Order Lifecycle
+Phase 6D  OMS / Order Lifecycle              ← done
 Phase 6E  Broker Adapter / LIVE
 Phase 6F  Reconciliation / P&L
 ```
@@ -18,6 +18,7 @@ Phase 6F  Reconciliation / P&L
 1. [01_production_runtime.md](01_production_runtime.md)
 2. [02_portfolio_service.md](02_portfolio_service.md)
 3. [03_risk_engine.md](03_risk_engine.md)
+4. [04_oms.md](04_oms.md)
 
 ## Commands
 
@@ -34,13 +35,17 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase6c_risk_engine.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase6d_oms.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
-  tests/research_data/test_phase6c_risk_engine.py -q \
+  tests/research_data/test_phase6d_oms.py -q \
   --confcutdir=tests/research_data
 ```
 
-## Boundary
+## Notes
 
-- **6A:** DEPLOYED Bundle → PAPER/SHADOW → OrderIntent (dry-run via 5F)
-- **6B:** TargetPosition → Portfolio / PositionDelta → PAPER fill → Snapshot
+- **6A:** Bundle → Online Feature → 5F infer → OrderIntent（dry）
+- **6B:** Account / Position / Event / Snapshot；SHADOW_DRY / PAPER_FILL
 - **6C:** PositionDelta → RiskDecision → OrderIntent（无 OMS/Broker）
+- **6D:** OrderIntent → Order 状态机 → Paper Broker → Fill → 6B PositionEvent

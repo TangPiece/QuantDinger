@@ -46,6 +46,10 @@ from .contracts import (
     RiskDecisionEventRecord,
     RiskPolicySummary,
     RiskRunSummary,
+    OmsFillSummary,
+    OmsOrderEventRecord,
+    OmsOrderSummary,
+    OmsOutboxRecord,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -388,6 +392,36 @@ class ResearchRegistry(Protocol):
     def append_risk_decision_event(
         self, record: RiskDecisionEventRecord
     ) -> None: ...
+
+    def upsert_oms_order(self, record: OmsOrderSummary) -> None: ...
+
+    def get_oms_order(self, order_id: str) -> OmsOrderSummary: ...
+
+    def get_order_by_idempotency(self, idempotency_key: str) -> OmsOrderSummary: ...
+
+    def list_oms_orders(
+        self, *, account_id: str = "", status: str = ""
+    ) -> list[OmsOrderSummary]: ...
+
+    def upsert_oms_order_version(self, version: Any) -> None: ...
+
+    def append_order_event(self, record: OmsOrderEventRecord) -> None: ...
+
+    def list_order_events(self, order_id: str) -> list[OmsOrderEventRecord]: ...
+
+    def upsert_fill(self, record: OmsFillSummary) -> None: ...
+
+    def list_oms_fills(self, order_id: str) -> list[OmsFillSummary]: ...
+
+    def enqueue_outbox(self, record: OmsOutboxRecord) -> None: ...
+
+    def list_outbox(self, *, limit: int = 100) -> list[OmsOutboxRecord]: ...
+
+    def mark_outbox(self, outbox_id: str, status: str) -> None: ...
+
+    def upsert_cancel_request(self, request: Any) -> None: ...
+
+    def upsert_replace_request(self, request: Any) -> None: ...
 
 
 class LocalJsonRegistry:
@@ -1331,6 +1365,143 @@ class LocalJsonRegistry:
             data["risk_decision_events"][record.event_id] = record.model_dump(
                 mode="json"
             )
+            self._write(data)
+
+    def upsert_oms_order(self, record: OmsOrderSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_orders", {})
+            data.setdefault("oms_orders_by_idempotency", {})
+            data.setdefault("oms_orders_by_client", {})
+            payload = record.model_dump(mode="json")
+            data["oms_orders"][record.order_id] = payload
+            data["oms_orders_by_idempotency"][record.idempotency_key] = record.order_id
+            data["oms_orders_by_client"][record.client_order_id] = record.order_id
+            self._write(data)
+
+    def get_oms_order(self, order_id: str) -> OmsOrderSummary:
+        data = self._read()
+        raw = (data.get("oms_orders") or {}).get(order_id)
+        if not raw:
+            raise KeyError(f"oms_order not found: {order_id!r}")
+        return OmsOrderSummary.model_validate(raw)
+
+    def get_order_by_idempotency(self, idempotency_key: str) -> OmsOrderSummary:
+        data = self._read()
+        oid = (data.get("oms_orders_by_idempotency") or {}).get(idempotency_key)
+        if not oid:
+            raise KeyError(f"oms idempotency not found: {idempotency_key!r}")
+        return self.get_oms_order(oid)
+
+    def list_oms_orders(
+        self, *, account_id: str = "", status: str = ""
+    ) -> list[OmsOrderSummary]:
+        data = self._read()
+        out: list[OmsOrderSummary] = []
+        for raw in (data.get("oms_orders") or {}).values():
+            if account_id and raw.get("account_id") != account_id:
+                continue
+            if status and raw.get("status") != status:
+                continue
+            out.append(OmsOrderSummary.model_validate(raw))
+        return out
+
+    def upsert_oms_order_version(self, version: Any) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_order_versions", {})
+            payload = (
+                version.model_dump(mode="json")
+                if hasattr(version, "model_dump")
+                else dict(version)
+            )
+            key = f"{payload.get('order_id')}@{payload.get('version')}"
+            data["oms_order_versions"][key] = payload
+            self._write(data)
+
+    def append_order_event(self, record: OmsOrderEventRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_order_events", {})
+            data["oms_order_events"][record.event_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def list_order_events(self, order_id: str) -> list[OmsOrderEventRecord]:
+        data = self._read()
+        out: list[OmsOrderEventRecord] = []
+        for raw in (data.get("oms_order_events") or {}).values():
+            if raw.get("order_id") == order_id:
+                out.append(OmsOrderEventRecord.model_validate(raw))
+        out.sort(key=lambda e: e.created_at or "")
+        return out
+
+    def upsert_fill(self, record: OmsFillSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_fills", {})
+            data["oms_fills"][record.fill_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def list_oms_fills(self, order_id: str) -> list[OmsFillSummary]:
+        data = self._read()
+        out: list[OmsFillSummary] = []
+        for raw in (data.get("oms_fills") or {}).values():
+            if raw.get("order_id") == order_id:
+                out.append(OmsFillSummary.model_validate(raw))
+        return out
+
+    def enqueue_outbox(self, record: OmsOutboxRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_outbox", {})
+            data["oms_outbox"][record.outbox_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def list_outbox(self, *, limit: int = 100) -> list[OmsOutboxRecord]:
+        data = self._read()
+        pending = [
+            OmsOutboxRecord.model_validate(raw)
+            for raw in (data.get("oms_outbox") or {}).values()
+            if raw.get("status") == "PENDING"
+        ]
+        pending.sort(key=lambda r: r.created_at or "")
+        return pending[:limit]
+
+    def mark_outbox(self, outbox_id: str, status: str) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_outbox", {})
+            raw = data["oms_outbox"].get(outbox_id)
+            if not raw:
+                return
+            raw["status"] = status
+            if status == "SENT":
+                raw["sent_at"] = _utc_now()
+            data["oms_outbox"][outbox_id] = raw
+            self._write(data)
+
+    def upsert_cancel_request(self, request: Any) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_cancel_requests", {})
+            payload = (
+                request.model_dump(mode="json")
+                if hasattr(request, "model_dump")
+                else dict(request)
+            )
+            data["oms_cancel_requests"][payload.get("request_id")] = payload
+            self._write(data)
+
+    def upsert_replace_request(self, request: Any) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("oms_replace_requests", {})
+            payload = (
+                request.model_dump(mode="json")
+                if hasattr(request, "model_dump")
+                else dict(request)
+            )
+            data["oms_replace_requests"][payload.get("request_id")] = payload
             self._write(data)
 
 
@@ -4284,6 +4455,398 @@ class D1ResearchRegistry:
                     record.limit_value,
                     json.dumps(record.payload_json or {}, ensure_ascii=False),
                     record.created_at or _utc_now(),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_oms_order(self, record: OmsOrderSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO oms_order (
+                  order_id, client_order_id, broker_order_id, account_id,
+                  portfolio_id, risk_run_id, policy_hash, instrument_key,
+                  side, order_type, tif, quantity, limit_price,
+                  filled_quantity, avg_fill_price, status, version,
+                  idempotency_key, trading_date, engine_version, storage_uri,
+                  created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                  broker_order_id=excluded.broker_order_id,
+                  filled_quantity=excluded.filled_quantity,
+                  avg_fill_price=excluded.avg_fill_price,
+                  status=excluded.status,
+                  version=excluded.version,
+                  limit_price=excluded.limit_price,
+                  quantity=excluded.quantity,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.order_id,
+                    record.client_order_id,
+                    record.broker_order_id,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.risk_run_id,
+                    record.policy_hash,
+                    record.instrument_key,
+                    record.side,
+                    record.order_type,
+                    record.tif,
+                    record.quantity,
+                    record.limit_price,
+                    record.filled_quantity,
+                    record.avg_fill_price,
+                    record.status,
+                    record.version,
+                    record.idempotency_key,
+                    record.trading_date,
+                    record.engine_version,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_oms_order(self, order_id: str) -> OmsOrderSummary:
+        rows = d1_client.query(
+            "SELECT * FROM oms_order WHERE order_id = ? LIMIT 1", [order_id]
+        )
+        if not rows:
+            raise KeyError(f"oms_order not found: {order_id!r}")
+        return self._oms_order_from_row(rows[0])
+
+    def get_order_by_idempotency(self, idempotency_key: str) -> OmsOrderSummary:
+        rows = d1_client.query(
+            "SELECT * FROM oms_order WHERE idempotency_key = ? LIMIT 1",
+            [idempotency_key],
+        )
+        if not rows:
+            raise KeyError(f"oms idempotency not found: {idempotency_key!r}")
+        return self._oms_order_from_row(rows[0])
+
+    def list_oms_orders(
+        self, *, account_id: str = "", status: str = ""
+    ) -> list[OmsOrderSummary]:
+        try:
+            sql = "SELECT * FROM oms_order WHERE 1=1"
+            args: list[Any] = []
+            if account_id:
+                sql += " AND account_id = ?"
+                args.append(account_id)
+            if status:
+                sql += " AND status = ?"
+                args.append(status)
+            rows = d1_client.query(sql, args)
+            return [self._oms_order_from_row(r) for r in rows or []]
+        except Exception:
+            return []
+
+    def _oms_order_from_row(self, row: dict[str, Any]) -> OmsOrderSummary:
+        meta = row.get("metadata_json") or "{}"
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        return OmsOrderSummary(
+            order_id=row["order_id"],
+            client_order_id=row.get("client_order_id") or "",
+            broker_order_id=row.get("broker_order_id") or "",
+            account_id=row.get("account_id") or "",
+            portfolio_id=row.get("portfolio_id") or "",
+            risk_run_id=row.get("risk_run_id") or "",
+            policy_hash=row.get("policy_hash") or "",
+            instrument_key=row.get("instrument_key") or "",
+            side=row.get("side") or "BUY",
+            order_type=row.get("order_type") or "MARKET",
+            tif=row.get("tif") or "DAY",
+            quantity=float(row.get("quantity") or 0),
+            limit_price=row.get("limit_price"),
+            filled_quantity=float(row.get("filled_quantity") or 0),
+            avg_fill_price=float(row.get("avg_fill_price") or 0),
+            status=row.get("status") or "CREATED",
+            version=int(row.get("version") or 1),
+            idempotency_key=row.get("idempotency_key") or "",
+            trading_date=row.get("trading_date") or "",
+            engine_version=row.get("engine_version") or "qd_oms@1",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_oms_order_version(self, version: Any) -> None:
+        try:
+            payload = (
+                version.model_dump(mode="json")
+                if hasattr(version, "model_dump")
+                else dict(version)
+            )
+            d1_client.query(
+                """
+                INSERT INTO oms_order_version (
+                  order_id, version, quantity, limit_price, status,
+                  created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id, version) DO UPDATE SET
+                  quantity=excluded.quantity,
+                  limit_price=excluded.limit_price,
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    payload.get("order_id"),
+                    payload.get("version"),
+                    payload.get("quantity") or 0,
+                    payload.get("limit_price"),
+                    payload.get("status") or "",
+                    payload.get("created_at") or _utc_now(),
+                    json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def append_order_event(self, record: OmsOrderEventRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO oms_order_event (
+                  event_id, order_id, event_type, previous_status, new_status,
+                  source, message, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+                [
+                    record.event_id,
+                    record.order_id,
+                    record.event_type,
+                    record.previous_status,
+                    record.new_status,
+                    record.source,
+                    record.message,
+                    json.dumps(record.payload_json or {}, ensure_ascii=False),
+                    record.created_at or _utc_now(),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_order_events(self, order_id: str) -> list[OmsOrderEventRecord]:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM oms_order_event WHERE order_id = ? ORDER BY created_at",
+                [order_id],
+            )
+            out: list[OmsOrderEventRecord] = []
+            for row in rows or []:
+                payload = row.get("payload_json") or "{}"
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                out.append(
+                    OmsOrderEventRecord(
+                        event_id=row["event_id"],
+                        order_id=row["order_id"],
+                        event_type=row.get("event_type") or "",
+                        previous_status=row.get("previous_status") or "",
+                        new_status=row.get("new_status") or "",
+                        source=row.get("source") or "OMS",
+                        message=row.get("message") or "",
+                        payload_json=payload if isinstance(payload, dict) else {},
+                        created_at=row.get("created_at"),
+                    )
+                )
+            return out
+        except Exception:
+            return []
+
+    def upsert_fill(self, record: OmsFillSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO oms_fill (
+                  fill_id, order_id, instrument_key, side, quantity, price,
+                  fee, trading_date, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(fill_id) DO UPDATE SET
+                  quantity=excluded.quantity,
+                  price=excluded.price,
+                  fee=excluded.fee,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.fill_id,
+                    record.order_id,
+                    record.instrument_key,
+                    record.side,
+                    record.quantity,
+                    record.price,
+                    record.fee,
+                    record.trading_date,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_oms_fills(self, order_id: str) -> list[OmsFillSummary]:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM oms_fill WHERE order_id = ?", [order_id]
+            )
+            out: list[OmsFillSummary] = []
+            for row in rows or []:
+                meta = row.get("metadata_json") or "{}"
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                out.append(
+                    OmsFillSummary(
+                        fill_id=row["fill_id"],
+                        order_id=row["order_id"],
+                        instrument_key=row.get("instrument_key") or "",
+                        side=row.get("side") or "BUY",
+                        quantity=float(row.get("quantity") or 0),
+                        price=float(row.get("price") or 0),
+                        fee=float(row.get("fee") or 0),
+                        trading_date=row.get("trading_date") or "",
+                        created_at=row.get("created_at"),
+                        metadata=meta if isinstance(meta, dict) else {},
+                    )
+                )
+            return out
+        except Exception:
+            return []
+
+    def enqueue_outbox(self, record: OmsOutboxRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO oms_outbox (
+                  outbox_id, aggregate_type, aggregate_id, event_type,
+                  status, payload_json, created_at, sent_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(outbox_id) DO UPDATE SET
+                  status=excluded.status,
+                  payload_json=excluded.payload_json,
+                  sent_at=excluded.sent_at
+                """,
+                [
+                    record.outbox_id,
+                    record.aggregate_type,
+                    record.aggregate_id,
+                    record.event_type,
+                    record.status,
+                    json.dumps(record.payload_json or {}, ensure_ascii=False),
+                    record.created_at or _utc_now(),
+                    record.sent_at,
+                ],
+            )
+        except Exception:
+            return
+
+    def list_outbox(self, *, limit: int = 100) -> list[OmsOutboxRecord]:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM oms_outbox WHERE status = 'PENDING'
+                ORDER BY created_at LIMIT ?
+                """,
+                [limit],
+            )
+            out: list[OmsOutboxRecord] = []
+            for row in rows or []:
+                payload = row.get("payload_json") or "{}"
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                out.append(
+                    OmsOutboxRecord(
+                        outbox_id=row["outbox_id"],
+                        aggregate_type=row.get("aggregate_type") or "ORDER",
+                        aggregate_id=row.get("aggregate_id") or "",
+                        event_type=row.get("event_type") or "",
+                        status=row.get("status") or "PENDING",
+                        payload_json=payload if isinstance(payload, dict) else {},
+                        created_at=row.get("created_at"),
+                        sent_at=row.get("sent_at"),
+                    )
+                )
+            return out
+        except Exception:
+            return []
+
+    def mark_outbox(self, outbox_id: str, status: str) -> None:
+        try:
+            sent = _utc_now() if status == "SENT" else None
+            d1_client.query(
+                "UPDATE oms_outbox SET status = ?, sent_at = COALESCE(?, sent_at) WHERE outbox_id = ?",
+                [status, sent, outbox_id],
+            )
+        except Exception:
+            return
+
+    def upsert_cancel_request(self, request: Any) -> None:
+        try:
+            payload = (
+                request.model_dump(mode="json")
+                if hasattr(request, "model_dump")
+                else dict(request)
+            )
+            d1_client.query(
+                """
+                INSERT INTO oms_cancel_request (
+                  request_id, order_id, status, reason, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET status=excluded.status
+                """,
+                [
+                    payload.get("request_id"),
+                    payload.get("order_id"),
+                    payload.get("status") or "PENDING",
+                    payload.get("reason") or "",
+                    payload.get("created_at") or _utc_now(),
+                    json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_replace_request(self, request: Any) -> None:
+        try:
+            payload = (
+                request.model_dump(mode="json")
+                if hasattr(request, "model_dump")
+                else dict(request)
+            )
+            d1_client.query(
+                """
+                INSERT INTO oms_replace_request (
+                  request_id, order_id, status, quantity, limit_price,
+                  created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET status=excluded.status
+                """,
+                [
+                    payload.get("request_id"),
+                    payload.get("order_id"),
+                    payload.get("status") or "PENDING",
+                    payload.get("quantity"),
+                    payload.get("limit_price"),
+                    payload.get("created_at") or _utc_now(),
+                    json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
                 ],
             )
         except Exception:

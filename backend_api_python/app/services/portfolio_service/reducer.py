@@ -73,19 +73,29 @@ def apply_event(state: PortfolioState, event: PositionEvent) -> PortfolioState:
         q = float(event.quantity)
         px = float(event.price)
         fee = float(event.fee)
-        if float(pos.available_quantity) + 1e-9 < q:
+        # Phase 6D OMS：卖出可先 FREEZE；成交优先扣减 frozen，再扣 available
+        frozen = float(pos.frozen_quantity)
+        avail = float(pos.available_quantity)
+        if frozen + avail + 1e-9 < q:
             raise ReducerError(
-                f"insufficient available qty for SELL {event.instrument_key}: "
-                f"need {q}, have {pos.available_quantity}"
+                f"insufficient qty for SELL {event.instrument_key}: "
+                f"need {q}, available={avail}, frozen={frozen}"
             )
+        if frozen + 1e-9 >= q:
+            new_frozen = frozen - q
+            new_avail = avail
+        else:
+            need = q - frozen
+            new_frozen = 0.0
+            new_avail = avail - need
         realized = (px - float(pos.avg_cost)) * q
         new_qty = float(pos.quantity) - q
-        new_avail = float(pos.available_quantity) - q
         proceeds = q * px - fee
         pos = pos.model_copy(
             update={
                 "quantity": max(0.0, new_qty),
                 "available_quantity": max(0.0, new_avail),
+                "frozen_quantity": max(0.0, new_frozen),
                 "avg_cost": float(pos.avg_cost) if new_qty > 1e-12 else 0.0,
                 "as_of": event.trading_date or pos.as_of,
             }

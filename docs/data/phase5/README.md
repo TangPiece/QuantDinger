@@ -1,6 +1,6 @@
 # Phase 5 — Strategy Research
 
-> **Status:** Phase 5A–5F implemented. Phase 6A–6C started — see [../phase6/README.md](../phase6/README.md).
+> **Status:** Phase 5A–5F implemented. Phase 6A–6D started — see [../phase6/README.md](../phase6/README.md).
 
 ## Roadmap
 
@@ -14,6 +14,7 @@ Phase 5F  Research → Production Bridge    ← done
 Phase 6A  Production Runtime / Online Data ← done (see phase6/)
 Phase 6B  Portfolio & Position Service     ← done (see phase6/)
 Phase 6C  Risk Engine                      ← done (see phase6/)
+Phase 6D  OMS / Order Lifecycle            ← done (see phase6/)
 Phase 6+  OMS / Broker
 ```
 

@@ -549,6 +549,18 @@ def production_risk_decision_key(*, risk_run_id: str) -> str:
     return f"{production_risk_prefix(risk_run_id=risk_run_id)}/decision.json"
 
 
+def production_oms_prefix(*, order_id: str, kind: str = "") -> str:
+    """Phase 6D：``qd/production/oms/{order_id}/[kind]``。"""
+    base = f"{_root()}/production/oms/{order_id}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def production_oms_order_key(*, order_id: str) -> str:
+    return f"{production_oms_prefix(order_id=order_id)}/order.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

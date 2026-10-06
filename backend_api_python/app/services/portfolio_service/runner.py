@@ -306,6 +306,38 @@ class PortfolioService:
             self._writer.write_account(account)
         return report
 
+    def apply_position_events(
+        self,
+        portfolio_id: str,
+        events: Sequence[Any],
+        *,
+        account_id: str = "",
+    ) -> PortfolioState:
+        """Phase 6D OMS Fill bridge：写入并归约 PositionEvent。"""
+        from .protocol import PortfolioState, PositionEvent
+        from .reducer import apply_events
+
+        portfolio = self._load_portfolio(portfolio_id)
+        aid = account_id or portfolio.account_id
+        account = self._load_account(aid)
+        positions = self._load_positions(portfolio_id)
+        state = PortfolioState(
+            account=account, portfolio=portfolio, positions=positions
+        )
+        typed: list[PositionEvent] = []
+        for e in events:
+            if isinstance(e, PositionEvent):
+                typed.append(e)
+            else:
+                typed.append(PositionEvent.model_validate(e))
+        apply_events(state, typed)
+        for ev in typed:
+            self._writer.write_event(ev)
+        self._writer.write_account(state.account)
+        self._writer.write_portfolio(state.portfolio)
+        self._writer.write_positions(portfolio_id, list(state.positions.values()))
+        return state
+
     def _load_account(self, account_id: str) -> Account:
         try:
             s = self._registry.get_production_account(account_id)

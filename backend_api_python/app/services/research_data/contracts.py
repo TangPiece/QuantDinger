@@ -904,3 +904,73 @@ class RiskDecisionEventRecord(_ContractModel):
     limit_value: float = 0.0
     payload_json: dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[str] = None
+
+
+class OmsOrderSummary(_ContractModel):
+    """Phase 6D：OMS 订单 Registry 行。"""
+
+    order_id: str
+    client_order_id: str
+    broker_order_id: str = ""
+    account_id: str = ""
+    portfolio_id: str = ""
+    risk_run_id: str = ""
+    policy_hash: str = ""
+    instrument_key: str = ""
+    side: str = "BUY"
+    order_type: str = "MARKET"
+    tif: str = "DAY"
+    quantity: float = 0.0
+    limit_price: Optional[float] = None
+    filled_quantity: float = 0.0
+    avg_fill_price: float = 0.0
+    status: str = "CREATED"
+    version: int = 1
+    idempotency_key: str = ""
+    trading_date: str = ""
+    engine_version: str = "qd_oms@1"
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OmsOrderEventRecord(_ContractModel):
+    """Phase 6D：订单事件行。"""
+
+    event_id: str
+    order_id: str
+    event_type: str
+    previous_status: str = ""
+    new_status: str = ""
+    source: str = "OMS"
+    message: str = ""
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+
+
+class OmsFillSummary(_ContractModel):
+    """Phase 6D：成交 Registry 行。"""
+
+    fill_id: str
+    order_id: str
+    instrument_key: str = ""
+    side: str = "BUY"
+    quantity: float = 0.0
+    price: float = 0.0
+    fee: float = 0.0
+    trading_date: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OmsOutboxRecord(_ContractModel):
+    """Phase 6D：Outbox 行。"""
+
+    outbox_id: str
+    aggregate_type: str = "ORDER"
+    aggregate_id: str = ""
+    event_type: str = ""
+    status: str = "PENDING"
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    sent_at: Optional[str] = None

@@ -67,4 +67,4 @@ RiskEngineService(store, registry).register_policy(policy) -> RiskPolicy
 
 - 6A/6B/5F unchanged
 - Optional [`SixCRiskGatePort`](../../../backend_api_python/app/services/risk_engine/gate_adapter.py) implements 6A `RiskGatePort`
-- 6D reserved fields: `risk_run_id`, `policy_hash`, `order_intents`
+- Downstream 6D：[`OMSService.submit_intents`](../../../backend_api_python/app/services/oms/runner.py) 消费 `order_intents` + `risk_run_id` / `policy_hash`
