@@ -34,6 +34,9 @@ from .contracts import (
     ProductionBundleSummary,
     ProductionDeploymentRunSummary,
     ProductionDeploymentSummary,
+    ProductionRuntimeEventRecord,
+    ProductionRuntimeRunSummary,
+    ProductionRuntimeSummary,
     QlibRunSummary,
     ResearchBacktestSummary,
     ResearchStrategyRecord,
@@ -279,6 +282,32 @@ class ResearchRegistry(Protocol):
         self, run_id: str
     ) -> ProductionDeploymentRunSummary: ...
 
+    def upsert_production_runtime(
+        self, record: ProductionRuntimeSummary
+    ) -> None: ...
+
+    def get_production_runtime(
+        self, runtime_id: str
+    ) -> ProductionRuntimeSummary: ...
+
+    def append_runtime_event(
+        self, record: ProductionRuntimeEventRecord
+    ) -> None: ...
+
+    def list_runtime_events(
+        self, runtime_id: str, *, limit: int = 200
+    ) -> list[ProductionRuntimeEventRecord]: ...
+
+    def upsert_runtime_run(
+        self, record: ProductionRuntimeRunSummary
+    ) -> None: ...
+
+    def get_runtime_run_by_idempotency(
+        self, idempotency_key: str
+    ) -> ProductionRuntimeRunSummary: ...
+
+    def get_runtime_run(self, run_id: str) -> ProductionRuntimeRunSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -318,6 +347,10 @@ class LocalJsonRegistry:
                     "production_bundles": {},
                     "production_deployments": {},
                     "production_deployment_runs": {},
+                    "production_runtimes": {},
+                    "production_runtime_events": {},
+                    "production_runtime_runs": {},
+                    "production_runtime_runs_by_idempotency": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -936,6 +969,74 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"deployment_run not found: {run_id!r}")
         return ProductionDeploymentRunSummary.model_validate(raw)
+
+    def upsert_production_runtime(self, record: ProductionRuntimeSummary) -> None:
+        """登记 Production Runtime 实例（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_runtimes", {})
+            data["production_runtimes"][record.runtime_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_production_runtime(self, runtime_id: str) -> ProductionRuntimeSummary:
+        data = self._read()
+        raw = (data.get("production_runtimes") or {}).get(runtime_id)
+        if not raw:
+            raise KeyError(f"production_runtime not found: {runtime_id!r}")
+        return ProductionRuntimeSummary.model_validate(raw)
+
+    def append_runtime_event(self, record: ProductionRuntimeEventRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_runtime_events", {})
+            data["production_runtime_events"][record.event_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_runtime_events(
+        self, runtime_id: str, *, limit: int = 200
+    ) -> list[ProductionRuntimeEventRecord]:
+        data = self._read()
+        evs = data.get("production_runtime_events") or {}
+        rows = [
+            ProductionRuntimeEventRecord.model_validate(v)
+            for v in evs.values()
+            if v.get("runtime_id") == runtime_id
+        ]
+        rows.sort(key=lambda e: e.created_at or "")
+        return rows[-int(limit) :]
+
+    def upsert_runtime_run(self, record: ProductionRuntimeRunSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_runtime_runs", {})
+            data.setdefault("production_runtime_runs_by_idempotency", {})
+            payload = record.model_dump(mode="json")
+            data["production_runtime_runs"][record.run_id] = payload
+            data["production_runtime_runs_by_idempotency"][
+                record.idempotency_key
+            ] = record.run_id
+            self._write(data)
+
+    def get_runtime_run_by_idempotency(
+        self, idempotency_key: str
+    ) -> ProductionRuntimeRunSummary:
+        data = self._read()
+        idx = data.get("production_runtime_runs_by_idempotency") or {}
+        run_id = idx.get(idempotency_key)
+        if not run_id:
+            raise KeyError(f"runtime_run idempotency not found: {idempotency_key!r}")
+        return self.get_runtime_run(run_id)
+
+    def get_runtime_run(self, run_id: str) -> ProductionRuntimeRunSummary:
+        data = self._read()
+        raw = (data.get("production_runtime_runs") or {}).get(run_id)
+        if not raw:
+            raise KeyError(f"runtime_run not found: {run_id!r}")
+        return ProductionRuntimeRunSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -3013,6 +3114,208 @@ class D1ResearchRegistry:
             n_signals=int(row.get("n_signals") or 0),
             n_intents=int(row.get("n_intents") or 0),
             gate_json=gate if isinstance(gate, dict) else {},
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_production_runtime(self, record: ProductionRuntimeSummary) -> None:
+        """D1：写 production_runtime；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_runtime (
+                  runtime_id, bundle_hash, strategy_code, market, environment,
+                  status, session_phase, trading_date, started_at, last_heartbeat,
+                  engine_version, storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(runtime_id) DO UPDATE SET
+                  status=excluded.status,
+                  session_phase=excluded.session_phase,
+                  trading_date=excluded.trading_date,
+                  last_heartbeat=excluded.last_heartbeat,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.runtime_id,
+                    record.bundle_hash,
+                    record.strategy_code,
+                    record.market,
+                    record.environment,
+                    record.status,
+                    record.session_phase,
+                    record.trading_date,
+                    record.started_at,
+                    record.last_heartbeat,
+                    record.engine_version,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_production_runtime(self, runtime_id: str) -> ProductionRuntimeSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_runtime WHERE runtime_id=?",
+                [runtime_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"production_runtime not found: {runtime_id!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionRuntimeSummary(
+            runtime_id=row["runtime_id"],
+            bundle_hash=row["bundle_hash"],
+            strategy_code=row.get("strategy_code") or "",
+            market=row.get("market") or "CN_A",
+            environment=row.get("environment") or "PAPER",
+            status=row.get("status") or "STARTING",
+            session_phase=row.get("session_phase") or "PRE_MARKET",
+            trading_date=row.get("trading_date") or "",
+            started_at=row.get("started_at"),
+            last_heartbeat=row.get("last_heartbeat"),
+            engine_version=row.get("engine_version") or "qd_production_runtime@1",
+            storage_uri=row.get("storage_uri") or "",
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def append_runtime_event(self, record: ProductionRuntimeEventRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_runtime_event (
+                  event_id, runtime_id, event_type, trading_date, session_phase,
+                  message, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+                [
+                    record.event_id,
+                    record.runtime_id,
+                    record.event_type,
+                    record.trading_date,
+                    record.session_phase,
+                    record.message,
+                    json.dumps(record.payload_json or {}, ensure_ascii=False),
+                    record.created_at or _utc_now(),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_runtime_events(
+        self, runtime_id: str, *, limit: int = 200
+    ) -> list[ProductionRuntimeEventRecord]:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM production_runtime_event
+                WHERE runtime_id=?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                [runtime_id, int(limit)],
+            )
+        except Exception:
+            rows = []
+        out: list[ProductionRuntimeEventRecord] = []
+        for row in rows or []:
+            payload = json.loads(row.get("payload_json") or "{}")
+            out.append(
+                ProductionRuntimeEventRecord(
+                    event_id=row["event_id"],
+                    runtime_id=row["runtime_id"],
+                    event_type=row.get("event_type") or "",
+                    trading_date=row.get("trading_date") or "",
+                    session_phase=row.get("session_phase") or "",
+                    message=row.get("message") or "",
+                    payload_json=payload if isinstance(payload, dict) else {},
+                    created_at=row.get("created_at"),
+                )
+            )
+        return out
+
+    def upsert_runtime_run(self, record: ProductionRuntimeRunSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO production_runtime_run (
+                  run_id, runtime_id, bundle_hash, idempotency_key,
+                  trading_date, session_phase, status, n_signals, n_intents,
+                  bridge_run_id, storage_uri, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  status=excluded.status,
+                  n_signals=excluded.n_signals,
+                  n_intents=excluded.n_intents,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    record.runtime_id,
+                    record.bundle_hash,
+                    record.idempotency_key,
+                    record.trading_date,
+                    record.session_phase,
+                    record.status,
+                    record.n_signals,
+                    record.n_intents,
+                    record.bridge_run_id,
+                    record.storage_uri,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_runtime_run_by_idempotency(
+        self, idempotency_key: str
+    ) -> ProductionRuntimeRunSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_runtime_run WHERE idempotency_key=?",
+                [idempotency_key],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"runtime_run idempotency not found: {idempotency_key!r}")
+        return self._runtime_run_from_row(rows[0])
+
+    def get_runtime_run(self, run_id: str) -> ProductionRuntimeRunSummary:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM production_runtime_run WHERE run_id=?",
+                [run_id],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"runtime_run not found: {run_id!r}")
+        return self._runtime_run_from_row(rows[0])
+
+    def _runtime_run_from_row(self, row: dict[str, Any]) -> ProductionRuntimeRunSummary:
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return ProductionRuntimeRunSummary(
+            run_id=row["run_id"],
+            runtime_id=row["runtime_id"],
+            bundle_hash=row["bundle_hash"],
+            idempotency_key=row["idempotency_key"],
+            trading_date=row.get("trading_date") or "",
+            session_phase=row.get("session_phase") or "",
+            status=row.get("status") or "OK",
+            n_signals=int(row.get("n_signals") or 0),
+            n_intents=int(row.get("n_intents") or 0),
+            bridge_run_id=row.get("bridge_run_id") or "",
             storage_uri=row.get("storage_uri") or "",
             created_at=row.get("created_at"),
             metadata=meta if isinstance(meta, dict) else {},

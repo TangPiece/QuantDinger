@@ -417,8 +417,22 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+验证 Phase 6A Production Runtime（DEPLOYED Bundle；TradingSession；Online Feature→5F infer→OrderIntent；幂等；PAPER/SHADOW；不接 Broker）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase6a_production_runtime.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase6a_production_runtime.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
+Phase 6 说明：[docs/data/phase6/README.md](data/phase6/README.md)。
 
 ## Level2 因子 D1 Worker
 

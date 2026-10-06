@@ -488,6 +488,22 @@ def production_run_prefix(*, run_id: str, kind: str = "") -> str:
     return base
 
 
+def production_runtime_prefix(*, runtime_id: str, kind: str = "") -> str:
+    """Phase 6A：``qd/production/runtime/{runtime_id}/[kind]``。"""
+    base = f"{_root()}/production/runtime/{runtime_id}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def production_runtime_manifest_key(*, runtime_id: str) -> str:
+    return f"{production_runtime_prefix(runtime_id=runtime_id)}/manifest.json"
+
+
+def production_runtime_run_key(*, runtime_id: str, run_id: str) -> str:
+    return f"{production_runtime_prefix(runtime_id=runtime_id)}/runs/{run_id}/inference.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

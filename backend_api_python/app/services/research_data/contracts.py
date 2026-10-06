@@ -695,3 +695,53 @@ class ProductionDeploymentRunSummary(_ContractModel):
     storage_uri: str = ""
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionRuntimeSummary(_ContractModel):
+    """Phase 6A：Production Runtime 实例汇总。"""
+
+    runtime_id: str
+    bundle_hash: str
+    strategy_code: str = ""
+    market: str = "CN_A"
+    environment: str = "PAPER"
+    status: str = "STARTING"
+    session_phase: str = "PRE_MARKET"
+    trading_date: str = ""
+    started_at: Optional[str] = None
+    last_heartbeat: Optional[str] = None
+    engine_version: str = "qd_production_runtime@1"
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionRuntimeEventRecord(_ContractModel):
+    """Phase 6A：Runtime 事件日志行。"""
+
+    event_id: str
+    runtime_id: str
+    event_type: str
+    trading_date: str = ""
+    session_phase: str = ""
+    message: str = ""
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+
+
+class ProductionRuntimeRunSummary(_ContractModel):
+    """Phase 6A：幂等 tick / inference run。"""
+
+    run_id: str
+    runtime_id: str
+    bundle_hash: str
+    idempotency_key: str
+    trading_date: str = ""
+    session_phase: str = ""
+    status: str = "OK"
+    n_signals: int = 0
+    n_intents: int = 0
+    bridge_run_id: str = ""
+    storage_uri: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
