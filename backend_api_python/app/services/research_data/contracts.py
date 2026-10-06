@@ -584,3 +584,27 @@ class ResearchBacktestSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class QlibRunSummary(_ContractModel):
+    """Phase 5D：Qlib Strategy Adapter 运行汇总；明细在 R2。"""
+
+    qlib_run_hash: str
+    strategy_hash: str
+    start_date: str
+    end_date: str
+    execution_policy: str = "NEXT_OPEN"
+    realism: str = "GROSS"
+    market_rule: str = ""
+    dataset_ref: str = ""
+    dataset_hash: str = ""
+    materialization_id: str = ""
+    backtest_hash: str = ""
+    compatibility_json: dict[str, Any] = Field(default_factory=dict)
+    metrics_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qlib_strategy_adapter@1"
+    recorder_id: str = ""
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

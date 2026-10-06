@@ -375,6 +375,19 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+验证 Phase 5D Qlib Strategy Adapter（5A→Qlib 适配；WeightStrategy；ExecutionCompatibility；spawn 隔离；无 pyqlib 走合成路径）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase5d_qlib_strategy.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase5d_qlib_strategy.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 

@@ -415,6 +415,30 @@ def research_backtest_metrics_key(*, backtest_hash: str) -> str:
     return f"{_root()}/backtest/{backtest_hash}/metrics/summary.json"
 
 
+def qlib_run_prefix(*, qlib_run_hash: str, kind: str = "") -> str:
+    """Phase 5D：``qd/qlib_run/{hash}/[kind]``。"""
+    base = f"{_root()}/qlib_run/{qlib_run_hash}"
+    if kind:
+        return f"{base}/{kind}"
+    return base
+
+
+def qlib_run_manifest_key(*, qlib_run_hash: str) -> str:
+    return f"{qlib_run_prefix(qlib_run_hash=qlib_run_hash)}/manifest.json"
+
+
+def qlib_run_summary_key(*, qlib_run_hash: str) -> str:
+    return f"{qlib_run_prefix(qlib_run_hash=qlib_run_hash)}/summary.json"
+
+
+def qlib_run_metrics_key(*, qlib_run_hash: str) -> str:
+    return f"{qlib_run_prefix(qlib_run_hash=qlib_run_hash)}/metrics/summary.json"
+
+
+def qlib_run_compatibility_key(*, qlib_run_hash: str) -> str:
+    return f"{qlib_run_prefix(qlib_run_hash=qlib_run_hash)}/compatibility.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

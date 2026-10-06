@@ -100,7 +100,7 @@ QUANTDINGER_SKIP_APP_INIT=1 python -m pytest \
 ❌ ProductionBacktestEngine
 ❌ Level2 / order book / VWAP/TWAP fill model / RL
 ❌ Broker / OMS / live orders
-❌ Qlib adapter (5D)
+❌ Qlib Strategy Adapter details (see 04; 5C stays on QD engine)
 ❌ Corporate-action full adjust on positions (v1: adjustment=none only)
 ❌ Hardcode CN fees inside engine loop
 ```
