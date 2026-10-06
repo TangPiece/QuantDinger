@@ -490,6 +490,187 @@ def write_metric_ic_panel(
     return result
 
 
+def _norm_eval_date(item: dict[str, Any]) -> dict[str, Any]:
+    ed = item.get("evaluation_date")
+    if isinstance(ed, str):
+        item["evaluation_date"] = date.fromisoformat(ed[:10])
+    elif hasattr(ed, "date") and not isinstance(ed, date):
+        item["evaluation_date"] = ed.date()
+    return item
+
+
+def write_group_membership_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    group_evaluation_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4E：分位成员分区。"""
+    norm = []
+    for r in rows:
+        item = _norm_eval_date(dict(r))
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_groups_key(
+        group_evaluation_hash=group_evaluation_hash,
+        kind="group_membership",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.group_membership_schema(),
+        required_columns=["evaluation_date", "horizon", "instrument_key", "group"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_GROUP_MEMBERSHIP,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"group_mem_{group_evaluation_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_GROUP_MEMBERSHIP,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_group_return_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    group_evaluation_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4E：分位收益分区。"""
+    float_cols = (
+        "group_return",
+        "long_return",
+        "short_return",
+        "long_short_return",
+        "estimated_cost",
+        "net_long_short_return",
+    )
+    norm = []
+    for r in rows:
+        item = _norm_eval_date(dict(r))
+        item.setdefault("data_version", version)
+        for col in float_cols:
+            if item.get(col) is None:
+                item[col] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_groups_key(
+        group_evaluation_hash=group_evaluation_hash,
+        kind="group_returns",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.group_return_daily_schema(),
+        required_columns=["evaluation_date", "horizon", "group", "sample_count"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_GROUP_RETURN,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"group_ret_{group_evaluation_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_GROUP_RETURN,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_group_turnover_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    group_evaluation_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 4E：换手分区。"""
+    norm = []
+    for r in rows:
+        item = _norm_eval_date(dict(r))
+        item.setdefault("data_version", version)
+        if item.get("turnover") is None:
+            item["turnover"] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.evaluation_groups_key(
+        group_evaluation_hash=group_evaluation_hash,
+        kind="turnover",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.group_turnover_daily_schema(),
+        required_columns=["evaluation_date", "horizon", "portfolio"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_GROUP_TURNOVER,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"group_to_{group_evaluation_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_GROUP_TURNOVER,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_snapshot_manifest(
     store: CanonicalStore,
     *,

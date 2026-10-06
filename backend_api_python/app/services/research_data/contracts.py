@@ -426,3 +426,31 @@ class FactorEvaluationSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GroupEvaluationSummary(_ContractModel):
+    """Phase 4E：分位组合 / 换手 / 成本估算汇总（明细在 R2）。"""
+
+    group_evaluation_hash: str
+    evaluation_hash: str
+    factor_dataset_id: str = ""
+    horizon: int
+    group_count: int = 10
+    weighting_method: str = "EQUAL_WEIGHT"
+    direction: Literal["POSITIVE", "NEGATIVE"] = "POSITIVE"
+    portfolio_mode: str = "BOTH"
+    long_group: int = 1
+    short_group: int = 10
+    mean_long_return: Optional[float] = None
+    mean_short_return: Optional[float] = None
+    mean_long_short_return: Optional[float] = None
+    mean_turnover: Optional[float] = None
+    mean_estimated_cost: Optional[float] = None
+    mean_net_long_short_return: Optional[float] = None
+    valid_day_count: int = 0
+    total_day_count: int = 0
+    group_version: str = "qd_factor_groups@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

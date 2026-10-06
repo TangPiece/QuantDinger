@@ -21,6 +21,7 @@ from .contracts import (
     FactorDatasetRecord,
     FactorEvaluationSummary,
     FeatureDefinition,
+    GroupEvaluationSummary,
     ModelDefinition,
     ModelVersionRecord,
     PricePolicy,
@@ -162,6 +163,14 @@ class ResearchRegistry(Protocol):
         self, metric_hash: str, horizon: int
     ) -> FactorEvaluationSummary: ...
 
+    def upsert_factor_group_evaluation(
+        self, record: GroupEvaluationSummary
+    ) -> None: ...
+
+    def get_factor_group_evaluation(
+        self, group_evaluation_hash: str, horizon: int
+    ) -> GroupEvaluationSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -188,6 +197,7 @@ class LocalJsonRegistry:
                     "factor_datasets": {},
                     "evaluation_datasets": {},
                     "factor_evaluation_summaries": {},
+                    "factor_group_evaluations": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -543,6 +553,29 @@ class LocalJsonRegistry:
                 f"factor_evaluation_summary not found: {metric_hash!r} h={horizon}"
             )
         return FactorEvaluationSummary.model_validate(raw)
+
+    def upsert_factor_group_evaluation(
+        self, record: GroupEvaluationSummary
+    ) -> None:
+        """登记 Group Evaluation Summary（Local JSON）。"""
+        key = f"{record.group_evaluation_hash}:{int(record.horizon)}"
+        with self._lock:
+            data = self._read()
+            data.setdefault("factor_group_evaluations", {})
+            data["factor_group_evaluations"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_factor_group_evaluation(
+        self, group_evaluation_hash: str, horizon: int
+    ) -> GroupEvaluationSummary:
+        data = self._read()
+        key = f"{group_evaluation_hash}:{int(horizon)}"
+        raw = (data.get("factor_group_evaluations") or {}).get(key)
+        if not raw:
+            raise KeyError(
+                f"factor_group_evaluation not found: {group_evaluation_hash!r} h={horizon}"
+            )
+        return GroupEvaluationSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1462,6 +1495,106 @@ class D1ResearchRegistry:
             total_day_count=int(row.get("total_day_count") or 0),
             direction=row.get("direction") or "AUTO",
             metric_version=row.get("metric_version") or "qd_factor_metrics@1",
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_factor_group_evaluation(
+        self, record: GroupEvaluationSummary
+    ) -> None:
+        """D1：写 factor_group_evaluation；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO factor_group_evaluation (
+                  group_evaluation_hash, horizon, evaluation_hash, factor_dataset_id,
+                  group_count, weighting_method, direction, portfolio_mode,
+                  long_group, short_group,
+                  mean_long_return, mean_short_return, mean_long_short_return,
+                  mean_turnover, mean_estimated_cost, mean_net_long_short_return,
+                  valid_day_count, total_day_count, group_version,
+                  storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(group_evaluation_hash, horizon) DO UPDATE SET
+                  mean_long_short_return=excluded.mean_long_short_return,
+                  mean_turnover=excluded.mean_turnover,
+                  mean_net_long_short_return=excluded.mean_net_long_short_return,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.group_evaluation_hash,
+                    int(record.horizon),
+                    record.evaluation_hash,
+                    record.factor_dataset_id,
+                    int(record.group_count),
+                    record.weighting_method,
+                    record.direction,
+                    record.portfolio_mode,
+                    int(record.long_group),
+                    int(record.short_group),
+                    record.mean_long_return,
+                    record.mean_short_return,
+                    record.mean_long_short_return,
+                    record.mean_turnover,
+                    record.mean_estimated_cost,
+                    record.mean_net_long_short_return,
+                    record.valid_day_count,
+                    record.total_day_count,
+                    record.group_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_factor_group_evaluation(
+        self, group_evaluation_hash: str, horizon: int
+    ) -> GroupEvaluationSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM factor_group_evaluation
+                WHERE group_evaluation_hash=? AND horizon=?
+                """,
+                [group_evaluation_hash, int(horizon)],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(
+                f"factor_group_evaluation not found: {group_evaluation_hash!r} h={horizon}"
+            )
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+        return GroupEvaluationSummary(
+            group_evaluation_hash=row["group_evaluation_hash"],
+            evaluation_hash=row["evaluation_hash"],
+            factor_dataset_id=row.get("factor_dataset_id") or "",
+            horizon=int(row["horizon"]),
+            group_count=int(row.get("group_count") or 10),
+            weighting_method=row.get("weighting_method") or "EQUAL_WEIGHT",
+            direction=row.get("direction") or "POSITIVE",
+            portfolio_mode=row.get("portfolio_mode") or "BOTH",
+            long_group=int(row.get("long_group") or 1),
+            short_group=int(row.get("short_group") or 10),
+            mean_long_return=row.get("mean_long_return"),
+            mean_short_return=row.get("mean_short_return"),
+            mean_long_short_return=row.get("mean_long_short_return"),
+            mean_turnover=row.get("mean_turnover"),
+            mean_estimated_cost=row.get("mean_estimated_cost"),
+            mean_net_long_short_return=row.get("mean_net_long_short_return"),
+            valid_day_count=int(row.get("valid_day_count") or 0),
+            total_day_count=int(row.get("total_day_count") or 0),
+            group_version=row.get("group_version") or "qd_factor_groups@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

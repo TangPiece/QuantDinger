@@ -146,6 +146,38 @@ def evaluation_metrics_summary_key(*, metric_hash: str) -> str:
     return f"{_root()}/evaluation/metrics/{metric_hash}/summary.json"
 
 
+def evaluation_groups_prefix(
+    *, group_evaluation_hash: str, kind: str, year: int, month: int
+) -> str:
+    """Phase 4E：``qd/evaluation/groups/{hash}/{kind}/year=/month=``。"""
+    return (
+        f"{_root()}/evaluation/groups/{group_evaluation_hash}/{kind}/"
+        f"year={int(year):04d}/month={int(month):02d}"
+    )
+
+
+def evaluation_groups_key(
+    *,
+    group_evaluation_hash: str,
+    kind: str,
+    year: int,
+    month: int,
+    part: str = "part-000.parquet",
+) -> str:
+    return (
+        f"{evaluation_groups_prefix(group_evaluation_hash=group_evaluation_hash, kind=kind, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def evaluation_groups_manifest_key(*, group_evaluation_hash: str) -> str:
+    return f"{_root()}/evaluation/groups/{group_evaluation_hash}/manifest.json"
+
+
+def evaluation_groups_summary_key(*, group_evaluation_hash: str) -> str:
+    return f"{_root()}/evaluation/groups/{group_evaluation_hash}/summary.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

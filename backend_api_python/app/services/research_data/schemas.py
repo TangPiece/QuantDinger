@@ -15,6 +15,9 @@ SCHEMA_VERSION_FACTOR_LONG = "factor_daily_long@1"
 SCHEMA_VERSION_FACTOR_WIDE = "factor_daily_wide@1"
 SCHEMA_VERSION_EVALUATION = "evaluation_panel@1"
 SCHEMA_VERSION_METRIC_IC = "metric_ic_daily@1"
+SCHEMA_VERSION_GROUP_MEMBERSHIP = "group_membership@1"
+SCHEMA_VERSION_GROUP_RETURN = "group_return_daily@1"
+SCHEMA_VERSION_GROUP_TURNOVER = "group_turnover_daily@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -161,6 +164,56 @@ def metric_ic_daily_schema() -> pa.Schema:
             ("rank_ic", pa.float64()),
             ("sample_count", pa.int32()),
             ("valid", pa.bool_()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def group_membership_schema() -> pa.Schema:
+    """Phase 4E：分位成员。"""
+    return pa.schema(
+        [
+            ("evaluation_date", pa.date32()),
+            ("horizon", pa.int32()),
+            ("instrument_key", pa.string()),
+            ("factor_value", pa.float64()),
+            ("factor_rank", pa.float64()),
+            ("group", pa.int32()),
+            ("weight", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def group_return_daily_schema() -> pa.Schema:
+    """Phase 4E：分位收益。"""
+    return pa.schema(
+        [
+            ("evaluation_date", pa.date32()),
+            ("horizon", pa.int32()),
+            ("group", pa.int32()),
+            ("group_return", pa.float64()),
+            ("sample_count", pa.int32()),
+            ("long_return", pa.float64()),
+            ("short_return", pa.float64()),
+            ("long_short_return", pa.float64()),
+            ("estimated_cost", pa.float64()),
+            ("net_long_short_return", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def group_turnover_daily_schema() -> pa.Schema:
+    """Phase 4E：换手。"""
+    return pa.schema(
+        [
+            ("evaluation_date", pa.date32()),
+            ("horizon", pa.int32()),
+            ("portfolio", pa.string()),
+            ("turnover", pa.float64()),
+            ("previous_weight_count", pa.int32()),
+            ("current_weight_count", pa.int32()),
             ("data_version", pa.string()),
         ]
     )
