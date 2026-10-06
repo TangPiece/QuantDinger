@@ -1,12 +1,12 @@
 # Phase 5 — Strategy Research
 
-> **Status:** Phase 5A implemented. 5B Research Backtest not started.
+> **Status:** Phase 5A + 5B implemented. 5C Cost / Execution Model not started.
 
 ## Roadmap
 
 ```text
 Phase 5A  Strategy Definition / Contract   ← done
-Phase 5B  Strategy Backtest
+Phase 5B  Strategy Backtest               ← done
 Phase 5C  Cost / Execution Model
 Phase 5D  Qlib Strategy / Model Integration
 Phase 5E  QuantDinger ↔ Qlib Cross Validation
@@ -16,6 +16,7 @@ Phase 5F  Production Strategy
 ## Reading
 
 1. [01_strategy_research.md](01_strategy_research.md)
+2. [02_research_backtest.md](02_research_backtest.md)
 
 ## Commands
 
@@ -26,8 +27,12 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   python scripts/verify_phase5a_strategy_research.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase5b_research_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
-  tests/research_data/test_phase5a_strategy_research.py -q \
+  tests/research_data/test_phase5a_strategy_research.py \
+  tests/research_data/test_phase5b_research_backtest.py -q \
   --confcutdir=tests/research_data
 ```
 

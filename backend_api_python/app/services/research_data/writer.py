@@ -1378,6 +1378,236 @@ def write_strategy_target_position_panel(
     return result
 
 
+def write_research_backtest_nav_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    backtest_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5B：写研究回测 NAV 分区。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.research_backtest_key(
+        backtest_hash=backtest_hash,
+        kind="portfolio",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.research_backtest_nav_schema(),
+        required_columns=["trading_date", "nav"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_BT_NAV,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"bt_nav_{backtest_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_BT_NAV,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_research_backtest_return_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    backtest_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5B：写研究回测日收益分区。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        for col in ("portfolio_return", "benchmark_return", "excess_return"):
+            if item.get(col) is None:
+                item[col] = float("nan")
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.research_backtest_key(
+        backtest_hash=backtest_hash,
+        kind="returns",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.research_backtest_return_schema(),
+        required_columns=["trading_date", "portfolio_return"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_BT_RETURN,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"bt_ret_{backtest_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_BT_RETURN,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_research_backtest_position_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    backtest_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5B：写研究回测日持仓分区。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.research_backtest_key(
+        backtest_hash=backtest_hash,
+        kind="positions",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.research_backtest_position_schema(),
+        required_columns=["trading_date", "instrument_key", "shares"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_BT_POSITION,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"bt_pos_{backtest_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_BT_POSITION,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
+def write_research_backtest_turnover_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    backtest_hash: str,
+    year: int,
+    month: int,
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """Phase 5B：写研究回测换手分区。"""
+    norm = []
+    for r in rows:
+        item = dict(r)
+        item.setdefault("data_version", version)
+        td = item.get("trading_date")
+        if isinstance(td, str):
+            item["trading_date"] = date.fromisoformat(td[:10])
+        if item.get("turnover") is None:
+            item["turnover"] = float("nan")
+        item["rebalanced"] = bool(item.get("rebalanced", False))
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    key = paths.research_backtest_key(
+        backtest_hash=backtest_hash,
+        kind="turnover",
+        year=year,
+        month=month,
+        part=part,
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=schemas.research_backtest_turnover_schema(),
+        required_columns=["trading_date", "turnover"],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_BT_TURNOVER,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        result["data_version_id"] = registry.upsert_data_version(
+            dataset_code=f"bt_to_{backtest_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_BT_TURNOVER,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+    return result
+
+
 def write_composite_factor_panel(
     store: CanonicalStore,
     rows: list[dict[str, Any]],

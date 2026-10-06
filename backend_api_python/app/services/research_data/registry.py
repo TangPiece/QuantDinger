@@ -30,6 +30,7 @@ from .contracts import (
     ModelVersionRecord,
     PricePolicy,
     ProcessorDefinition,
+    ResearchBacktestSummary,
     ResearchStrategyRecord,
     SignalRunRecord,
     SnapshotRef,
@@ -225,6 +226,14 @@ class ResearchRegistry(Protocol):
         self, strategy_hash: str
     ) -> StrategyResearchSummary: ...
 
+    def upsert_research_backtest(
+        self, record: ResearchBacktestSummary
+    ) -> None: ...
+
+    def get_research_backtest(
+        self, backtest_hash: str
+    ) -> ResearchBacktestSummary: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -258,6 +267,7 @@ class LocalJsonRegistry:
                     "factor_portfolios": {},
                     "research_strategies": {},
                     "strategy_research": {},
+                    "research_backtests": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -751,6 +761,23 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"strategy_research not found: {strategy_hash!r}")
         return StrategyResearchSummary.model_validate(raw)
+
+    def upsert_research_backtest(self, record: ResearchBacktestSummary) -> None:
+        """登记研究回测 Summary（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("research_backtests", {})
+            data["research_backtests"][record.backtest_hash] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_research_backtest(self, backtest_hash: str) -> ResearchBacktestSummary:
+        data = self._read()
+        raw = (data.get("research_backtests") or {}).get(backtest_hash)
+        if not raw:
+            raise KeyError(f"research_backtest not found: {backtest_hash!r}")
+        return ResearchBacktestSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -2283,6 +2310,96 @@ class D1ResearchRegistry:
             snapshot_id=row.get("snapshot_id") or "",
             signal_row_count=int(row.get("signal_row_count") or 0),
             position_row_count=int(row.get("position_row_count") or 0),
+            storage_uri=row.get("storage_uri") or "",
+            checksum=row.get("checksum"),
+            created_at=row.get("created_at"),
+            metadata=meta if isinstance(meta, dict) else {},
+        )
+
+    def upsert_research_backtest(self, record: ResearchBacktestSummary) -> None:
+        """D1：写 research_backtest_run；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO research_backtest_run (
+                  backtest_hash, strategy_hash, start_date, end_date,
+                  execution_policy, benchmark_mode, benchmark_instrument_key,
+                  metrics_json, benchmark_metrics_json,
+                  engine_version, return_calculation_version,
+                  storage_uri, checksum, created_at, metadata_json
+                ) VALUES (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(backtest_hash) DO UPDATE SET
+                  metrics_json=excluded.metrics_json,
+                  benchmark_metrics_json=excluded.benchmark_metrics_json,
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.backtest_hash,
+                    record.strategy_hash,
+                    record.start_date,
+                    record.end_date,
+                    record.execution_policy,
+                    record.benchmark_mode,
+                    record.benchmark_instrument_key,
+                    json.dumps(record.metrics_json or {}, ensure_ascii=False),
+                    json.dumps(
+                        record.benchmark_metrics_json or {}, ensure_ascii=False
+                    ),
+                    record.engine_version,
+                    record.return_calculation_version,
+                    record.storage_uri,
+                    record.checksum,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_research_backtest(self, backtest_hash: str) -> ResearchBacktestSummary:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT * FROM research_backtest_run
+                WHERE backtest_hash=?
+                """,
+                [backtest_hash],
+            )
+        except Exception:
+            rows = []
+        if not rows:
+            raise KeyError(f"research_backtest not found: {backtest_hash!r}")
+        row = rows[0]
+        meta = json.loads(row.get("metadata_json") or "{}")
+
+        def _loads(key: str, default):
+            raw = row.get(key)
+            if raw is None or raw == "":
+                return default
+            if isinstance(raw, (list, dict)):
+                return raw
+            try:
+                return json.loads(raw)
+            except Exception:
+                return default
+
+        return ResearchBacktestSummary(
+            backtest_hash=row["backtest_hash"],
+            strategy_hash=row["strategy_hash"],
+            start_date=row.get("start_date") or "",
+            end_date=row.get("end_date") or "",
+            execution_policy=row.get("execution_policy") or "NEXT_OPEN",
+            benchmark_mode=row.get("benchmark_mode") or "NONE",
+            benchmark_instrument_key=row.get("benchmark_instrument_key") or "",
+            metrics_json=_loads("metrics_json", {}),
+            benchmark_metrics_json=_loads("benchmark_metrics_json", {}),
+            engine_version=row.get("engine_version") or "qd_research_backtest@1",
+            return_calculation_version=row.get("return_calculation_version")
+            or "research_nav@1",
             storage_uri=row.get("storage_uri") or "",
             checksum=row.get("checksum"),
             created_at=row.get("created_at"),

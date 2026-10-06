@@ -560,3 +560,23 @@ class StrategyResearchSummary(_ContractModel):
     checksum: Optional[str] = None
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchBacktestSummary(_ContractModel):
+    """Phase 5B：研究回测汇总；日明细在 R2，D1 仅 Summary。"""
+
+    backtest_hash: str
+    strategy_hash: str
+    start_date: str
+    end_date: str
+    execution_policy: str = "NEXT_OPEN"
+    benchmark_mode: str = "NONE"
+    benchmark_instrument_key: str = ""
+    metrics_json: dict[str, Any] = Field(default_factory=dict)
+    benchmark_metrics_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qd_research_backtest@1"
+    return_calculation_version: str = "research_nav@1"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

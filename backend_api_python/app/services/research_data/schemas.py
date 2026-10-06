@@ -34,6 +34,10 @@ SCHEMA_VERSION_PORT_RETURN = "portfolio_return_daily@1"
 SCHEMA_VERSION_PORT_TURNOVER = "portfolio_turnover_daily@1"
 SCHEMA_VERSION_STRAT_SIGNAL = "strategy_signal@1"
 SCHEMA_VERSION_STRAT_POSITION = "strategy_target_position@1"
+SCHEMA_VERSION_BT_NAV = "research_backtest_nav@1"
+SCHEMA_VERSION_BT_RETURN = "research_backtest_return@1"
+SCHEMA_VERSION_BT_POSITION = "research_backtest_position@1"
+SCHEMA_VERSION_BT_TURNOVER = "research_backtest_turnover@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -477,6 +481,58 @@ def strategy_target_position_schema() -> pa.Schema:
             ("target_weight", pa.float64()),
             ("signal_id", pa.string()),
             ("leg", pa.string()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def research_backtest_nav_schema() -> pa.Schema:
+    """Phase 5B：组合 NAV 日序列。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("nav", pa.float64()),
+            ("cash", pa.float64()),
+            ("gross_exposure", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def research_backtest_return_schema() -> pa.Schema:
+    """Phase 5B：组合 / 基准 / 超额日收益。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("portfolio_return", pa.float64()),
+            ("benchmark_return", pa.float64()),
+            ("excess_return", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def research_backtest_position_schema() -> pa.Schema:
+    """Phase 5B：日终持仓（份额口径）。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("instrument_key", pa.string()),
+            ("shares", pa.float64()),
+            ("weight", pa.float64()),
+            ("price", pa.float64()),
+            ("data_version", pa.string()),
+        ]
+    )
+
+
+def research_backtest_turnover_schema() -> pa.Schema:
+    """Phase 5B：调仓日换手。"""
+    return pa.schema(
+        [
+            ("trading_date", pa.date32()),
+            ("turnover", pa.float64()),
+            ("rebalanced", pa.bool_()),
             ("data_version", pa.string()),
         ]
     )

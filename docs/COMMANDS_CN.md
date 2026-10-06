@@ -349,7 +349,20 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
-Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。  
+验证 Phase 5B Research Backtest（消费 5A TargetPosition；NEXT_OPEN/NoCost；NAV/绩效/基准；不撮合）：
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  python scripts/verify_phase5b_research_backtest.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase5b_research_backtest.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 
 ## Level2 因子 D1 Worker

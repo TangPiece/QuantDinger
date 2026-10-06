@@ -373,6 +373,48 @@ def strategy_research_snapshot_key(*, strategy_hash: str) -> str:
     return f"{_root()}/strategy/{strategy_hash}/snapshots/strategy_spec.json"
 
 
+def research_backtest_prefix(
+    *,
+    backtest_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+) -> str:
+    """Phase 5B：``qd/backtest/{hash}/{kind}/[year=/month=]``。"""
+    base = f"{_root()}/backtest/{backtest_hash}/{kind}"
+    if year is None or month is None:
+        return base
+    return f"{base}/year={int(year):04d}/month={int(month):02d}"
+
+
+def research_backtest_key(
+    *,
+    backtest_hash: str,
+    kind: str,
+    year: int | None = None,
+    month: int | None = None,
+    part: str = "part-000.parquet",
+) -> str:
+    if year is None or month is None:
+        return f"{research_backtest_prefix(backtest_hash=backtest_hash, kind=kind)}/{part}"
+    return (
+        f"{research_backtest_prefix(backtest_hash=backtest_hash, kind=kind, year=year, month=month)}"
+        f"/{part}"
+    )
+
+
+def research_backtest_manifest_key(*, backtest_hash: str) -> str:
+    return f"{_root()}/backtest/{backtest_hash}/manifest.json"
+
+
+def research_backtest_summary_key(*, backtest_hash: str) -> str:
+    return f"{_root()}/backtest/{backtest_hash}/summary.json"
+
+
+def research_backtest_metrics_key(*, backtest_hash: str) -> str:
+    return f"{_root()}/backtest/{backtest_hash}/metrics/summary.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config
