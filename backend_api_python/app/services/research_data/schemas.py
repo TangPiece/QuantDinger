@@ -13,6 +13,7 @@ SCHEMA_VERSION_CORPORATE_ACTION = "corporate_action@1"
 SCHEMA_VERSION_TRADING_STATUS = "trading_status@1"
 SCHEMA_VERSION_FACTOR_LONG = "factor_daily_long@1"
 SCHEMA_VERSION_FACTOR_WIDE = "factor_daily_wide@1"
+SCHEMA_VERSION_EVALUATION = "evaluation_panel@1"
 
 
 def market_bar_daily_schema() -> pa.Schema:
@@ -127,6 +128,25 @@ def factor_daily_wide_schema(*, factor_columns: Iterable[str] | None = None) -> 
     ]
     for col in factor_columns or ():
         fields.append((str(col), pa.float64()))
+    return pa.schema(fields)
+
+
+def evaluation_panel_schema(*, horizons: Iterable[int] | None = None) -> pa.Schema:
+    """评价面板：因子 + 多 horizon 远期收益 + sample_status。"""
+    fields = [
+        ("instrument_key", pa.string()),
+        ("factor_date", pa.date32()),
+        ("factor_value", pa.float64()),
+        ("entry_date", pa.date32()),
+        ("exit_date", pa.date32()),
+        ("universe_code", pa.string()),
+        ("snapshot_id", pa.string()),
+        ("sample_status", pa.string()),
+        ("mode", pa.string()),
+        ("data_version", pa.string()),
+    ]
+    for h in horizons or ():
+        fields.append((f"forward_return_{int(h)}d", pa.float64()))
     return pa.schema(fields)
 
 

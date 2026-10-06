@@ -369,3 +369,27 @@ class FactorDatasetRecord(_ContractModel):
     status: Literal["ACTIVE", "FAILED"] = "ACTIVE"
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvaluationDatasetRecord(_ContractModel):
+    """Phase 4C：评价面板 Registry 索引（明细在 R2；D1 仅存元数据）。"""
+
+    evaluation_hash: str
+    factor_dataset_id: str
+    factor_dataset_hash: str
+    snapshot_id: str
+    universe_code: str = ""
+    universe_version: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    return_spec: dict[str, Any] = Field(default_factory=dict)
+    price_policy: Optional["PricePolicy"] = None
+    evaluator_version: str = "qd_factor_eval@1"
+    mode: Literal["CROSS_SECTIONAL", "TIME_SERIES"] = "CROSS_SECTIONAL"
+    storage_uri: str = ""
+    checksum: Optional[str] = None
+    row_count: Optional[int] = None
+    schema_version: str = "evaluation_panel@1"
+    status: Literal["ACTIVE", "FAILED"] = "ACTIVE"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

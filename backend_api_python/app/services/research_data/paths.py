@@ -93,6 +93,29 @@ def factor_dataset_manifest_key(*, factor_dataset_id: str) -> str:
     return f"{_root()}/dataset/factor/{factor_dataset_id}/manifest.json"
 
 
+def evaluation_factor_prefix(*, evaluation_hash: str, year: int, month: int) -> str:
+    """Phase 4C：``qd/evaluation/factor/{hash}/year=/month=``。"""
+    return (
+        f"{_root()}/evaluation/factor/{evaluation_hash}/"
+        f"year={int(year):04d}/month={int(month):02d}"
+    )
+
+
+def evaluation_factor_key(
+    *,
+    evaluation_hash: str,
+    year: int,
+    month: int,
+    part: str = "part-000.parquet",
+) -> str:
+    return f"{evaluation_factor_prefix(evaluation_hash=evaluation_hash, year=year, month=month)}/{part}"
+
+
+def evaluation_manifest_key(*, evaluation_hash: str) -> str:
+    """Phase 4C：``qd/evaluation/factor/{evaluation_hash}/manifest.json``。"""
+    return f"{_root()}/evaluation/factor/{evaluation_hash}/manifest.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

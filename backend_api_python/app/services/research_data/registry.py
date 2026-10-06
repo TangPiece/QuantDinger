@@ -16,6 +16,7 @@ from .contracts import (
     DataVersionRef,
     DatasetDefinition,
     DatasetHandle,
+    EvaluationDatasetRecord,
     ExperimentDefinition,
     FactorDatasetRecord,
     FeatureDefinition,
@@ -148,6 +149,10 @@ class ResearchRegistry(Protocol):
 
     def get_factor_dataset(self, factor_dataset_id: str) -> FactorDatasetRecord: ...
 
+    def upsert_evaluation_dataset(self, record: EvaluationDatasetRecord) -> None: ...
+
+    def get_evaluation_dataset(self, evaluation_hash: str) -> EvaluationDatasetRecord: ...
+
 
 class LocalJsonRegistry:
     """本地 JSON Registry，测试默认后端。"""
@@ -172,6 +177,7 @@ class LocalJsonRegistry:
                     "signal_runs": {},
                     "consistency_runs": {},
                     "factor_datasets": {},
+                    "evaluation_datasets": {},
                     "universe_refs": {},
                     "_seq": 0,
                 }
@@ -487,6 +493,23 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(f"factor_dataset not found: {factor_dataset_id!r}")
         return FactorDatasetRecord.model_validate(raw)
+
+    def upsert_evaluation_dataset(self, record: EvaluationDatasetRecord) -> None:
+        """登记 Evaluation Dataset 索引（Local JSON）。"""
+        with self._lock:
+            data = self._read()
+            data.setdefault("evaluation_datasets", {})
+            data["evaluation_datasets"][record.evaluation_hash] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_evaluation_dataset(self, evaluation_hash: str) -> EvaluationDatasetRecord:
+        data = self._read()
+        raw = (data.get("evaluation_datasets") or {}).get(evaluation_hash)
+        if not raw:
+            raise KeyError(f"evaluation_dataset not found: {evaluation_hash!r}")
+        return EvaluationDatasetRecord.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -1200,6 +1223,103 @@ class D1ResearchRegistry:
             checksum=art.checksum,
             layout=meta.get("layout") or "long",
             schema_version=str(meta.get("schema_version") or "factor_daily_long@1"),
+            metadata=meta,
+        )
+
+    def upsert_evaluation_dataset(self, record: EvaluationDatasetRecord) -> None:
+        """D1：写 evaluation_dataset 表；未 migration 时静默跳过。"""
+        try:
+            d1_client.query(
+                """
+                INSERT INTO evaluation_dataset (
+                  evaluation_hash, factor_dataset_id, factor_dataset_hash,
+                  snapshot_id, universe_code, universe_version,
+                  start_date, end_date, return_spec_json, price_policy_json,
+                  evaluator_version, mode, storage_uri, checksum, row_count,
+                  schema_version, status, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evaluation_hash) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  checksum=excluded.checksum,
+                  row_count=excluded.row_count,
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.evaluation_hash,
+                    record.factor_dataset_id,
+                    record.factor_dataset_hash,
+                    record.snapshot_id,
+                    record.universe_code,
+                    record.universe_version,
+                    record.start_date,
+                    record.end_date,
+                    json.dumps(record.return_spec or {}, ensure_ascii=False),
+                    json.dumps(
+                        record.price_policy.model_dump(mode="json")
+                        if record.price_policy
+                        else {},
+                        ensure_ascii=False,
+                    ),
+                    record.evaluator_version,
+                    record.mode,
+                    record.storage_uri,
+                    record.checksum,
+                    record.row_count,
+                    record.schema_version,
+                    record.status,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_evaluation_dataset(self, evaluation_hash: str) -> EvaluationDatasetRecord:
+        """从 evaluation_dataset 表或 artifact 元数据读取。"""
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM evaluation_dataset WHERE evaluation_hash=?",
+                [evaluation_hash],
+            )
+        except Exception:
+            rows = []
+        if rows:
+            row = rows[0]
+            meta = json.loads(row.get("metadata_json") or "{}")
+            pp_raw = json.loads(row.get("price_policy_json") or "{}")
+            return EvaluationDatasetRecord(
+                evaluation_hash=row["evaluation_hash"],
+                factor_dataset_id=row["factor_dataset_id"],
+                factor_dataset_hash=row["factor_dataset_hash"],
+                snapshot_id=row["snapshot_id"],
+                universe_code=row.get("universe_code") or "",
+                universe_version=row.get("universe_version") or "",
+                start_date=row.get("start_date") or "",
+                end_date=row.get("end_date") or "",
+                return_spec=json.loads(row.get("return_spec_json") or "{}"),
+                price_policy=PricePolicy.model_validate(pp_raw) if pp_raw else None,
+                evaluator_version=row.get("evaluator_version") or "qd_factor_eval@1",
+                mode=row.get("mode") or "CROSS_SECTIONAL",
+                storage_uri=row.get("storage_uri") or "",
+                checksum=row.get("checksum"),
+                row_count=row.get("row_count"),
+                schema_version=row.get("schema_version") or "evaluation_panel@1",
+                status=row.get("status") or "ACTIVE",
+                created_at=row.get("created_at"),
+                metadata=meta if isinstance(meta, dict) else {},
+            )
+        art = self.get_artifact(evaluation_hash)
+        meta = dict(art.metadata or {})
+        return EvaluationDatasetRecord(
+            evaluation_hash=evaluation_hash,
+            factor_dataset_id=str(meta.get("factor_dataset_id") or ""),
+            factor_dataset_hash=str(meta.get("factor_dataset_hash") or ""),
+            snapshot_id=str(meta.get("snapshot_id") or ""),
+            universe_code=str(meta.get("universe_code") or ""),
+            storage_uri=art.storage_uri,
+            checksum=art.checksum,
+            schema_version=str(meta.get("schema_version") or "evaluation_panel@1"),
             metadata=meta,
         )
 

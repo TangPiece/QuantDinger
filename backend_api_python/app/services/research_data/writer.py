@@ -367,6 +367,70 @@ def write_factor_wide(
     return result
 
 
+def write_evaluation_panel(
+    store: CanonicalStore,
+    rows: list[dict[str, Any]],
+    *,
+    evaluation_hash: str,
+    year: int,
+    month: int,
+    horizons: list[int],
+    version: str,
+    registry: ResearchRegistry | None = None,
+    part: str = "part-000.parquet",
+) -> dict[str, Any]:
+    """写入评价面板分区 parquet（Phase 4C）。"""
+    norm: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        for col in ("factor_date", "entry_date", "exit_date"):
+            v = item.get(col)
+            if v is None:
+                continue
+            if isinstance(v, str):
+                item[col] = date.fromisoformat(v[:10])
+            elif hasattr(v, "date") and not isinstance(v, date):
+                item[col] = v.date()
+        item.setdefault("data_version", version)
+        norm.append(item)
+    table = pa.Table.from_pylist(norm)
+    expected = schemas.evaluation_panel_schema(horizons=horizons)
+    key = paths.evaluation_factor_key(
+        evaluation_hash=evaluation_hash, year=year, month=month, part=part
+    )
+    checksum = put_parquet(
+        store,
+        key,
+        table,
+        expected_schema=expected,
+        required_columns=[
+            "instrument_key",
+            "factor_date",
+            "sample_status",
+        ],
+    )
+    uri = paths.r2_uri(key)
+    result: dict[str, Any] = {
+        "key": key,
+        "checksum": checksum,
+        "r2_uri": uri,
+        "schema_version": schemas.SCHEMA_VERSION_EVALUATION,
+        "row_count": table.num_rows,
+    }
+    if registry is not None:
+        dv_id = registry.upsert_data_version(
+            dataset_code=f"evaluation_{evaluation_hash[:16]}",
+            version=version,
+            schema_version=schemas.SCHEMA_VERSION_EVALUATION,
+            status="ACTIVE",
+            checksum=checksum,
+            r2_uri=uri,
+            row_count=table.num_rows,
+        )
+        result["data_version_id"] = dv_id
+    return result
+
+
 def write_snapshot_manifest(
     store: CanonicalStore,
     *,
