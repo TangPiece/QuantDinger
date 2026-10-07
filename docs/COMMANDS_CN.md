@@ -710,6 +710,28 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 8H Production → Research Feedback Loop
+
+Fake inject + LocalJson 默认；说明：[08_production_research_feedback.md](data/phase8/08_production_research_feedback.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8h_production_research_feedback.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8h_production_research_feedback.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 8G verify 仍应绿：
+
+```bash
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase8g_strategy_guardrails.py
+```
+
 ### Phase 8G Strategy Governance & Auto Guardrails（Runtime 保护）
 
 Fake inject + LocalJson 默认；说明：[07_strategy_governance_guardrails.md](data/phase8/07_strategy_governance_guardrails.md)。

@@ -118,8 +118,13 @@ from .contracts import (
     GuardrailGovernanceEventSummary,
     GuardrailPolicySummary,
     GuardrailRollbackRecordSummary,
+    FeedbackExperimentLinkSummary,
     GovernanceDecisionSummary,
     GovernanceIncidentSummary,
+    ProductionFeedbackDatasetSummary,
+    ProductionRealitySnapshotSummary,
+    ResearchFailureCaseSummary,
+    ResearchHypothesisSummary,
     StrategyRuntimeStateSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
@@ -997,6 +1002,42 @@ class ResearchRegistry(Protocol):
     def list_guardrail_rollback_records(
         self, strategy_code: str | None = None
     ) -> list[GuardrailRollbackRecordSummary]: ...
+
+    def upsert_production_feedback_dataset(
+        self, record: ProductionFeedbackDatasetSummary
+    ) -> None: ...
+
+    def get_production_feedback_dataset(self, dataset_id: str) -> ProductionFeedbackDatasetSummary: ...
+
+    def list_production_feedback_datasets(
+        self, strategy_code: str | None = None
+    ) -> list[ProductionFeedbackDatasetSummary]: ...
+
+    def upsert_production_reality_snapshot(
+        self, record: ProductionRealitySnapshotSummary
+    ) -> None: ...
+
+    def get_production_reality_snapshot(self, snapshot_id: str) -> ProductionRealitySnapshotSummary: ...
+
+    def list_production_reality_snapshots(
+        self, strategy_code: str | None = None, *, reality_kind: str | None = None
+    ) -> list[ProductionRealitySnapshotSummary]: ...
+
+    def upsert_research_failure_case(self, record: ResearchFailureCaseSummary) -> None: ...
+
+    def get_research_failure_case(self, case_id: str) -> ResearchFailureCaseSummary: ...
+
+    def list_research_failure_cases(
+        self, strategy_code: str | None = None
+    ) -> list[ResearchFailureCaseSummary]: ...
+
+    def upsert_research_hypothesis(self, record: ResearchHypothesisSummary) -> None: ...
+
+    def get_research_hypothesis(self, hypothesis_id: str) -> ResearchHypothesisSummary: ...
+
+    def upsert_feedback_experiment_link(self, record: FeedbackExperimentLinkSummary) -> None: ...
+
+    def get_feedback_experiment_link(self, link_id: str) -> FeedbackExperimentLinkSummary: ...
 
 
 class LocalJsonRegistry:
@@ -3605,6 +3646,141 @@ class LocalJsonRegistry:
             out = [r for r in out if r.strategy_code == code]
         out.sort(key=lambda r: r.created_at or "")
         return out
+
+    def upsert_production_feedback_dataset(
+        self, record: ProductionFeedbackDatasetSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_feedback_dataset", {})
+            data["production_feedback_dataset"][record.dataset_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_production_feedback_dataset(self, dataset_id: str) -> ProductionFeedbackDatasetSummary:
+        did = str(dataset_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("production_feedback_dataset") or {}).get(did)
+        if not raw:
+            raise KeyError(f"production_feedback_dataset missing: {did}")
+        return ProductionFeedbackDatasetSummary.model_validate(raw)
+
+    def list_production_feedback_datasets(
+        self, strategy_code: str | None = None
+    ) -> list[ProductionFeedbackDatasetSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("production_feedback_dataset") or {}).values()
+        out = [ProductionFeedbackDatasetSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_production_reality_snapshot(
+        self, record: ProductionRealitySnapshotSummary
+    ) -> None:
+        key = f"{record.snapshot_id}@{record.snapshot_version}"
+        with self._lock:
+            data = self._read()
+            data.setdefault("production_reality_snapshot", {})
+            data["production_reality_snapshot"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_production_reality_snapshot(self, snapshot_id: str) -> ProductionRealitySnapshotSummary:
+        sid = str(snapshot_id or "").strip()
+        with self._lock:
+            data = self._read()
+            rows = (data.get("production_reality_snapshot") or {}).values()
+        matches = [
+            ProductionRealitySnapshotSummary.model_validate(r)
+            for r in rows
+            if str(r.get("snapshot_id") or "") == sid
+        ]
+        if not matches:
+            raise KeyError(f"production_reality_snapshot missing: {sid}")
+        matches.sort(key=lambda r: int(r.snapshot_version or 1))
+        return matches[-1]
+
+    def list_production_reality_snapshots(
+        self, strategy_code: str | None = None, *, reality_kind: str | None = None
+    ) -> list[ProductionRealitySnapshotSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("production_reality_snapshot") or {}).values()
+        out = [ProductionRealitySnapshotSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        if reality_kind:
+            rk = str(reality_kind).strip().upper()
+            out = [r for r in out if str(r.reality_kind or "").upper() == rk]
+        out.sort(key=lambda r: (r.snapshot_id, int(r.snapshot_version or 1)))
+        return out
+
+    def upsert_research_failure_case(self, record: ResearchFailureCaseSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("research_failure_case", {})
+            data["research_failure_case"][record.case_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_research_failure_case(self, case_id: str) -> ResearchFailureCaseSummary:
+        cid = str(case_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("research_failure_case") or {}).get(cid)
+        if not raw:
+            raise KeyError(f"research_failure_case missing: {cid}")
+        return ResearchFailureCaseSummary.model_validate(raw)
+
+    def list_research_failure_cases(
+        self, strategy_code: str | None = None
+    ) -> list[ResearchFailureCaseSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("research_failure_case") or {}).values()
+        out = [ResearchFailureCaseSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_research_hypothesis(self, record: ResearchHypothesisSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("research_hypothesis", {})
+            data["research_hypothesis"][record.hypothesis_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_research_hypothesis(self, hypothesis_id: str) -> ResearchHypothesisSummary:
+        hid = str(hypothesis_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("research_hypothesis") or {}).get(hid)
+        if not raw:
+            raise KeyError(f"research_hypothesis missing: {hid}")
+        return ResearchHypothesisSummary.model_validate(raw)
+
+    def upsert_feedback_experiment_link(self, record: FeedbackExperimentLinkSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("feedback_experiment_link", {})
+            data["feedback_experiment_link"][record.link_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_feedback_experiment_link(self, link_id: str) -> FeedbackExperimentLinkSummary:
+        lid = str(link_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("feedback_experiment_link") or {}).get(lid)
+        if not raw:
+            raise KeyError(f"feedback_experiment_link missing: {lid}")
+        return FeedbackExperimentLinkSummary.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -10663,6 +10839,369 @@ class D1ResearchRegistry:
         except Exception:
             return []
         return [_guardrail_rollback_record_from_row(r) for r in rows or []]
+
+    def upsert_production_feedback_dataset(
+        self, record: ProductionFeedbackDatasetSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO production_feedback_dataset (
+              dataset_id, strategy_code, feedback_type, dataset_hash, schema_version,
+              filter_spec_json, window_start, window_end, processor_id, processor_version,
+              quality_gate_verdict, lineage_json, session_id, storage_uri, engine_version,
+              created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dataset_id) DO UPDATE SET
+              dataset_hash=excluded.dataset_hash,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.dataset_id,
+                record.strategy_code,
+                record.feedback_type,
+                record.dataset_hash,
+                record.schema_version,
+                json.dumps(record.filter_spec_json or {}, ensure_ascii=False),
+                record.window_start,
+                record.window_end,
+                record.processor_id,
+                record.processor_version,
+                record.quality_gate_verdict,
+                json.dumps(record.lineage_json or {}, ensure_ascii=False),
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_production_feedback_dataset(self, dataset_id: str) -> ProductionFeedbackDatasetSummary:
+        rows = d1_client.query(
+            "SELECT * FROM production_feedback_dataset WHERE dataset_id = ?",
+            [dataset_id],
+        )
+        if not rows:
+            raise KeyError(f"production_feedback_dataset missing: {dataset_id}")
+        return _production_feedback_dataset_from_row(rows[0])
+
+    def list_production_feedback_datasets(
+        self, strategy_code: str | None = None
+    ) -> list[ProductionFeedbackDatasetSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM production_feedback_dataset
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM production_feedback_dataset ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_production_feedback_dataset_from_row(r) for r in rows or []]
+
+    def upsert_production_reality_snapshot(
+        self, record: ProductionRealitySnapshotSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO production_reality_snapshot (
+              snapshot_id, snapshot_version, supersedes_snapshot_id, strategy_code,
+              reality_kind, as_of_time, pnl_total, metrics_json, dataset_id, content_hash,
+              lineage_json, session_id, storage_uri, engine_version, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(snapshot_id, snapshot_version) DO UPDATE SET
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.snapshot_id,
+                int(record.snapshot_version or 1),
+                record.supersedes_snapshot_id,
+                record.strategy_code,
+                record.reality_kind,
+                record.as_of_time or "",
+                float(record.pnl_total or 0.0),
+                json.dumps(record.metrics_json or {}, ensure_ascii=False),
+                record.dataset_id,
+                record.content_hash,
+                json.dumps(record.lineage_json or {}, ensure_ascii=False),
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_production_reality_snapshot(self, snapshot_id: str) -> ProductionRealitySnapshotSummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM production_reality_snapshot
+            WHERE snapshot_id = ? ORDER BY snapshot_version DESC LIMIT 1
+            """,
+            [snapshot_id],
+        )
+        if not rows:
+            raise KeyError(f"production_reality_snapshot missing: {snapshot_id}")
+        return _production_reality_snapshot_from_row(rows[0])
+
+    def list_production_reality_snapshots(
+        self, strategy_code: str | None = None, *, reality_kind: str | None = None
+    ) -> list[ProductionRealitySnapshotSummary]:
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if strategy_code:
+                clauses.append("strategy_code = ?")
+                params.append(strategy_code)
+            if reality_kind:
+                clauses.append("reality_kind = ?")
+                params.append(str(reality_kind).upper())
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            rows = d1_client.query(
+                f"SELECT * FROM production_reality_snapshot{where} ORDER BY created_at",
+                params,
+            )
+        except Exception:
+            return []
+        return [_production_reality_snapshot_from_row(r) for r in rows or []]
+
+    def upsert_research_failure_case(self, record: ResearchFailureCaseSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO research_failure_case (
+              case_id, strategy_code, incident_id, governance_decision_id, dataset_hash,
+              feedback_dataset_id, category, severity, summary, lineage_json, session_id,
+              storage_uri, engine_version, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(case_id) DO UPDATE SET
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.case_id,
+                record.strategy_code,
+                record.incident_id,
+                record.governance_decision_id,
+                record.dataset_hash,
+                record.feedback_dataset_id,
+                record.category,
+                record.severity,
+                record.summary,
+                json.dumps(record.lineage_json or {}, ensure_ascii=False),
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_research_failure_case(self, case_id: str) -> ResearchFailureCaseSummary:
+        rows = d1_client.query(
+            "SELECT * FROM research_failure_case WHERE case_id = ?",
+            [case_id],
+        )
+        if not rows:
+            raise KeyError(f"research_failure_case missing: {case_id}")
+        return _research_failure_case_from_row(rows[0])
+
+    def list_research_failure_cases(
+        self, strategy_code: str | None = None
+    ) -> list[ResearchFailureCaseSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM research_failure_case
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query("SELECT * FROM research_failure_case ORDER BY created_at")
+        except Exception:
+            return []
+        return [_research_failure_case_from_row(r) for r in rows or []]
+
+    def upsert_research_hypothesis(self, record: ResearchHypothesisSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO research_hypothesis (
+              hypothesis_id, strategy_code, status, failure_case_ids_json,
+              feedback_dataset_id, title, description, session_id, storage_uri,
+              engine_version, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hypothesis_id) DO UPDATE SET
+              status=excluded.status,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.hypothesis_id,
+                record.strategy_code,
+                record.status,
+                json.dumps(record.failure_case_ids_json or [], ensure_ascii=False),
+                record.feedback_dataset_id,
+                record.title,
+                record.description,
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_research_hypothesis(self, hypothesis_id: str) -> ResearchHypothesisSummary:
+        rows = d1_client.query(
+            "SELECT * FROM research_hypothesis WHERE hypothesis_id = ?",
+            [hypothesis_id],
+        )
+        if not rows:
+            raise KeyError(f"research_hypothesis missing: {hypothesis_id}")
+        return _research_hypothesis_from_row(rows[0])
+
+    def upsert_feedback_experiment_link(self, record: FeedbackExperimentLinkSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO feedback_experiment_link (
+              link_id, experiment_id, strategy_code, parent_feedback_dataset_id,
+              parent_failure_case_ids_json, parent_incident_ids_json, hypothesis_id,
+              session_id, storage_uri, engine_version, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(link_id) DO UPDATE SET
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.link_id,
+                record.experiment_id,
+                record.strategy_code,
+                record.parent_feedback_dataset_id,
+                json.dumps(record.parent_failure_case_ids_json or [], ensure_ascii=False),
+                json.dumps(record.parent_incident_ids_json or [], ensure_ascii=False),
+                record.hypothesis_id,
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_feedback_experiment_link(self, link_id: str) -> FeedbackExperimentLinkSummary:
+        rows = d1_client.query(
+            "SELECT * FROM feedback_experiment_link WHERE link_id = ?",
+            [link_id],
+        )
+        if not rows:
+            raise KeyError(f"feedback_experiment_link missing: {link_id}")
+        return _feedback_experiment_link_from_row(rows[0])
+
+
+def _production_feedback_dataset_from_row(row: dict[str, Any]) -> ProductionFeedbackDatasetSummary:
+    return ProductionFeedbackDatasetSummary(
+        dataset_id=row["dataset_id"],
+        strategy_code=row["strategy_code"],
+        feedback_type=row.get("feedback_type") or "",
+        dataset_hash=row.get("dataset_hash") or "",
+        schema_version=row.get("schema_version") or "pf_schema@1",
+        filter_spec_json=_json_field(row.get("filter_spec_json"), {}),
+        window_start=row.get("window_start") or "",
+        window_end=row.get("window_end") or "",
+        processor_id=row.get("processor_id") or "pf_processor@1",
+        processor_version=row.get("processor_version") or "1",
+        quality_gate_verdict=row.get("quality_gate_verdict") or "PASS",
+        lineage_json=_json_field(row.get("lineage_json"), {}),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_production_research_feedback@1",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _production_reality_snapshot_from_row(row: dict[str, Any]) -> ProductionRealitySnapshotSummary:
+    return ProductionRealitySnapshotSummary(
+        snapshot_id=row["snapshot_id"],
+        snapshot_version=int(row.get("snapshot_version") or 1),
+        supersedes_snapshot_id=row.get("supersedes_snapshot_id") or "",
+        strategy_code=row["strategy_code"],
+        reality_kind=row.get("reality_kind") or "ACTUAL",
+        as_of_time=row.get("as_of_time"),
+        pnl_total=float(row.get("pnl_total") or 0.0),
+        metrics_json=_json_field(row.get("metrics_json"), {}),
+        dataset_id=row.get("dataset_id") or "",
+        content_hash=row.get("content_hash") or "",
+        lineage_json=_json_field(row.get("lineage_json"), {}),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_production_research_feedback@1",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _research_failure_case_from_row(row: dict[str, Any]) -> ResearchFailureCaseSummary:
+    return ResearchFailureCaseSummary(
+        case_id=row["case_id"],
+        strategy_code=row["strategy_code"],
+        incident_id=row.get("incident_id") or "",
+        governance_decision_id=row.get("governance_decision_id") or "",
+        dataset_hash=row.get("dataset_hash") or "",
+        feedback_dataset_id=row.get("feedback_dataset_id") or "",
+        category=row.get("category") or "SYSTEM",
+        severity=row.get("severity") or "CRITICAL",
+        summary=row.get("summary") or "",
+        lineage_json=_json_field(row.get("lineage_json"), {}),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_production_research_feedback@1",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _research_hypothesis_from_row(row: dict[str, Any]) -> ResearchHypothesisSummary:
+    return ResearchHypothesisSummary(
+        hypothesis_id=row["hypothesis_id"],
+        strategy_code=row["strategy_code"],
+        status=row.get("status") or "DRAFT",
+        failure_case_ids_json=_json_field(row.get("failure_case_ids_json"), []),
+        feedback_dataset_id=row.get("feedback_dataset_id") or "",
+        title=row.get("title") or "",
+        description=row.get("description") or "",
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_production_research_feedback@1",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _feedback_experiment_link_from_row(row: dict[str, Any]) -> FeedbackExperimentLinkSummary:
+    return FeedbackExperimentLinkSummary(
+        link_id=row["link_id"],
+        experiment_id=row["experiment_id"],
+        strategy_code=row["strategy_code"],
+        parent_feedback_dataset_id=row.get("parent_feedback_dataset_id") or "",
+        parent_failure_case_ids_json=_json_field(row.get("parent_failure_case_ids_json"), []),
+        parent_incident_ids_json=_json_field(row.get("parent_incident_ids_json"), []),
+        hypothesis_id=row.get("hypothesis_id") or "",
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_production_research_feedback@1",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
 
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:

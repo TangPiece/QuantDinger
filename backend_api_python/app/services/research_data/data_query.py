@@ -247,6 +247,14 @@ class DataQuery:
     def dataset(self, dataset_ref: str) -> DatasetHandle:
         return self._registry.get_dataset(dataset_ref)
 
+    def production_feedback(self, query):
+        """Phase 8H：只读 Production Feedback（Registry 路径；禁止 Trading DB）。"""
+        from app.services.production_research_feedback.adapter_dataquery import (
+            query_production_feedback,
+        )
+
+        return query_production_feedback(self._registry, query)
+
     def trading_calendar(
         self,
         instrument_keys: Sequence[str],

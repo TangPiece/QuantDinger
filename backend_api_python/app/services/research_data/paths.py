@@ -908,6 +908,50 @@ def strategy_guardrails_rollback_key(*, strategy_code: str, rollback_id: str) ->
     return f"{strategy_guardrails_prefix()}/{safe_code}/rollbacks/{safe_id}.json"
 
 
+def production_research_feedback_prefix() -> str:
+    """Phase 8H：``qd/registry/production_research_feedback``。"""
+    return f"{_root()}/registry/production_research_feedback"
+
+
+def production_research_feedback_dataset_key(*, strategy_code: str, dataset_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(dataset_id or "unknown").replace("/", "_")
+    return f"{production_research_feedback_prefix()}/{safe_code}/datasets/{safe_id}.json"
+
+
+def production_research_feedback_snapshot_key(
+    *, strategy_code: str, snapshot_id: str, snapshot_version: int
+) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(snapshot_id or "unknown").replace("/", "_")
+    ver = int(snapshot_version or 1)
+    return f"{production_research_feedback_prefix()}/{safe_code}/snapshots/{safe_id}_v{ver}.json"
+
+
+def production_research_feedback_failure_case_key(*, strategy_code: str, case_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(case_id or "unknown").replace("/", "_")
+    return f"{production_research_feedback_prefix()}/{safe_code}/cases/{safe_id}.json"
+
+
+def production_research_feedback_hypothesis_key(*, strategy_code: str, hypothesis_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(hypothesis_id or "unknown").replace("/", "_")
+    return f"{production_research_feedback_prefix()}/{safe_code}/hypotheses/{safe_id}.json"
+
+
+def production_research_feedback_experiment_link_key(*, strategy_code: str, link_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(link_id or "unknown").replace("/", "_")
+    return f"{production_research_feedback_prefix()}/{safe_code}/experiment_links/{safe_id}.json"
+
+
+def production_research_feedback_counterfactual_key(*, strategy_code: str, record_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(record_id or "unknown").replace("/", "_")
+    return f"{production_research_feedback_prefix()}/{safe_code}/counterfactuals/{safe_id}.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

@@ -2119,3 +2119,100 @@ class GuardrailRollbackRecordSummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_strategy_guardrails@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionFeedbackDatasetSummary(_ContractModel):
+    """Phase 8H：ProductionFeedbackDataset 索引。"""
+
+    dataset_id: str
+    strategy_code: str
+    feedback_type: str
+    dataset_hash: str
+    schema_version: str = "pf_schema@1"
+    filter_spec_json: dict[str, Any] = Field(default_factory=dict)
+    window_start: str = ""
+    window_end: str = ""
+    processor_id: str = "pf_processor@1"
+    processor_version: str = "1"
+    quality_gate_verdict: str = "PASS"
+    lineage_json: dict[str, Any] = Field(default_factory=dict)
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_production_research_feedback@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProductionRealitySnapshotSummary(_ContractModel):
+    """Phase 8H：ProductionRealitySnapshot 索引（immutable 版本链）。"""
+
+    snapshot_id: str
+    snapshot_version: int = 1
+    supersedes_snapshot_id: str = ""
+    strategy_code: str
+    reality_kind: str = "ACTUAL"
+    as_of_time: Optional[str] = None
+    pnl_total: float = 0.0
+    metrics_json: dict[str, Any] = Field(default_factory=dict)
+    dataset_id: str = ""
+    content_hash: str = ""
+    lineage_json: dict[str, Any] = Field(default_factory=dict)
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_production_research_feedback@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchFailureCaseSummary(_ContractModel):
+    """Phase 8H：ResearchFailureCase 索引。"""
+
+    case_id: str
+    strategy_code: str
+    incident_id: str = ""
+    governance_decision_id: str = ""
+    dataset_hash: str = ""
+    feedback_dataset_id: str = ""
+    category: str = "SYSTEM"
+    severity: str = "CRITICAL"
+    summary: str = ""
+    lineage_json: dict[str, Any] = Field(default_factory=dict)
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_production_research_feedback@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchHypothesisSummary(_ContractModel):
+    """Phase 8H：ResearchHypothesis 索引。"""
+
+    hypothesis_id: str
+    strategy_code: str
+    status: str = "DRAFT"
+    failure_case_ids_json: list[str] = Field(default_factory=list)
+    feedback_dataset_id: str = ""
+    title: str = ""
+    description: str = ""
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_production_research_feedback@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackExperimentLinkSummary(_ContractModel):
+    """Phase 8H：Experiment parent_* lineage 链接。"""
+
+    link_id: str
+    experiment_id: str
+    strategy_code: str
+    parent_feedback_dataset_id: str = ""
+    parent_failure_case_ids_json: list[str] = Field(default_factory=list)
+    parent_incident_ids_json: list[str] = Field(default_factory=list)
+    hypothesis_id: str = ""
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_production_research_feedback@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
