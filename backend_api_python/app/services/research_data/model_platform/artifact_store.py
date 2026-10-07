@@ -11,6 +11,7 @@ from .identity import (
     model_artifact_key,
     model_key,
     model_version_key,
+    training_job_key,
     training_run_key,
 )
 
@@ -39,6 +40,14 @@ class ModelArtifactStore:
     def training_run_path(self, *, training_run_id: str) -> Path:
         return self._rel(training_run_key(training_run_id=training_run_id))
 
+    def training_job_path(self, *, job_id: str) -> Path:
+        return self._rel(training_job_key(job_id=job_id))
+
+    def training_sidecar_dir(self, *, training_run_id: str) -> Path:
+        path = platform_root(self.root) / "training_runs" / training_run_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def artifact_path(self, *, artifact_id: str) -> Path:
         return self._rel(model_artifact_key(artifact_id=artifact_id))
 
@@ -56,6 +65,12 @@ class ModelArtifactStore:
 
     def list_training_run_paths(self) -> list[Path]:
         base = platform_root(self.root) / "training_runs"
+        if not base.is_dir():
+            return []
+        return sorted(p for p in base.glob("*.json") if p.is_file())
+
+    def list_training_job_paths(self) -> list[Path]:
+        base = platform_root(self.root) / "training_jobs"
         if not base.is_dir():
             return []
         return sorted(base.glob("*.json"))

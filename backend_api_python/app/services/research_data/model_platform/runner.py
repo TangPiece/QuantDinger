@@ -1,4 +1,4 @@
-"""ModelPlatformService：9F Registry + 9F-2 Lineage（无 train/LIVE）。"""
+"""ModelPlatformService：9F Registry + Lineage + TrainingRun（无 Qlib/LIVE）。"""
 
 from __future__ import annotations
 
@@ -9,14 +9,17 @@ from typing import Any, Mapping
 from .artifact_store import ModelArtifactStore
 from .bridge_legacy import to_legacy_model_definition, to_legacy_model_version_record
 from .catalog import ModelCatalog
+from .executor import StubExecutorError, run_finalizing_stage, run_prepare_stage, run_running_stage
 from .hashing import compute_model_config_hash
 from .immutability import (
     ModelImmutabilityError,
     assert_training_run_immutable,
     assert_training_run_status_transition,
     assert_version_immutable,
+    is_terminal_status,
     load_json_model,
 )
+from .job import pin_training_job, run_spec_from_job
 from .lifecycle import (
     ModelLifecycleError,
     assert_transition,
@@ -43,13 +46,21 @@ from .protocol import (
     ModelVersion,
     ModelVersionLifecycle,
     ModelVersionSpec,
+    TrainingJob,
+    TrainingJobSpec,
     TrainingRun,
     TrainingRunSpec,
     TrainingRunStatus,
 )
 from .repro import load_repro_manifest, write_repro_manifest
 from .search import search_models, search_versions
-from .writers import write_artifact, write_model, write_training_run, write_version
+from .writers import (
+    write_artifact,
+    write_model,
+    write_training_job,
+    write_training_run,
+    write_version,
+)
 
 
 class ModelPlatformError(RuntimeError):
@@ -88,6 +99,8 @@ class ModelPlatformService:
         self._registry = registry
         self._catalog = ModelCatalog()
         self._runs: dict[str, TrainingRun] = {}
+        self._jobs: dict[str, TrainingJob] = {}
+        self._jobs_by_idem: dict[str, str] = {}
         self._artifacts: dict[str, ModelArtifact] = {}
         self._hydrate()
 
@@ -108,6 +121,12 @@ class ModelPlatformService:
             r = load_json_model(path, TrainingRun)
             if r:
                 self._runs[r.training_run_id] = r
+        for path in self._store.list_training_job_paths():
+            j = load_json_model(path, TrainingJob)
+            if j:
+                self._jobs[j.job_id] = j
+                if j.idempotency_key:
+                    self._jobs_by_idem[j.idempotency_key] = j.job_id
 
     def compute_model_config_hash(self, config: dict[str, Any] | None) -> str:
         return compute_model_config_hash(config)
@@ -196,12 +215,12 @@ class ModelPlatformService:
         artifact_id: str | None = None,
         inject: Mapping[str, Any] | ModelPlatformInject | None = None,
     ) -> ModelVersion:
-        """SUCCEEDED TrainingRun → TRAINED ModelVersion + artifact + repro manifest。"""
+        """SUCCEEDED/FINALIZING TrainingRun → TRAINED ModelVersion + artifact + repro manifest。"""
         inj = _coerce_inject(inject)
         run = self.get_training_run(training_run_id)
-        if run.status != "SUCCEEDED":
+        if run.status not in ("SUCCEEDED", "FINALIZING"):
             raise ModelPlatformError(
-                f"training_run must be SUCCEEDED, got {run.status}"
+                f"training_run must be SUCCEEDED or FINALIZING, got {run.status}"
             )
 
         if lineage_spec is None:
@@ -233,6 +252,8 @@ class ModelPlatformService:
             updates["hyperparameters"] = dict(run.hyperparameters)
         if not lineage_spec.framework:
             updates["framework"] = model.framework
+        if not lineage_spec.tags and model.tags:
+            updates["tags"] = list(model.tags)
         lineage_spec = lineage_spec.model_copy(update=updates)
 
         cfg_hash = compute_model_config_hash(lineage_spec.config)
@@ -413,6 +434,62 @@ class ModelPlatformService:
             "versions": search_versions(self._catalog.list_versions(), query),
         }
 
+    def submit_training_job(
+        self,
+        spec: TrainingJobSpec | dict[str, Any],
+    ) -> TrainingJob:
+        if isinstance(spec, dict):
+            spec = TrainingJobSpec.model_validate(spec)
+        # resolve model
+        model = self.get_model(spec.model_id or spec.model_code)
+        if not spec.force_new and spec.idempotency_key:
+            existing_id = self._jobs_by_idem.get(spec.idempotency_key)
+            if existing_id:
+                job = self.get_job(existing_id)
+                if job.status == "OPEN":
+                    runs = self.list_runs_for_job(job.job_id)
+                    if runs and not is_terminal_status(runs[-1].status):
+                        return job
+                    if runs and runs[-1].status == "SUCCEEDED":
+                        return job
+        job = pin_training_job(
+            spec.model_copy(
+                update={
+                    "model_id": model.model_id,
+                    "model_code": model.model_code,
+                    "framework": spec.framework or model.framework,
+                }
+            )
+        )
+        run = self.create_training_run(run_spec_from_job(job))
+        job = job.model_copy(update={"run_ids": [run.training_run_id]})
+        write_training_job(self._store, job)
+        self._jobs[job.job_id] = job
+        if job.idempotency_key:
+            self._jobs_by_idem[job.idempotency_key] = job.job_id
+        return job
+
+    def get_job(self, job_id: str) -> TrainingJob:
+        job = self._jobs.get(job_id)
+        if job is None:
+            path = self._store.training_job_path(job_id=job_id)
+            job = load_json_model(path, TrainingJob)
+            if job:
+                self._jobs[job_id] = job
+        if job is None:
+            raise ModelPlatformError(f"training job not found: {job_id}")
+        return job
+
+    def list_runs_for_job(self, job_id: str) -> list[TrainingRun]:
+        job = self.get_job(job_id)
+        out: list[TrainingRun] = []
+        for rid in job.run_ids:
+            try:
+                out.append(self.get_training_run(rid))
+            except ModelPlatformError:
+                continue
+        return out
+
     def create_training_run(
         self,
         spec: TrainingRunSpec | dict[str, Any],
@@ -442,6 +519,14 @@ class ModelPlatformService:
         self,
         training_run_id: str,
         status: TrainingRunStatus,
+        *,
+        failure_class: str = "",
+        failure_reason: str = "",
+        failure_detail: str = "",
+        metrics: dict[str, Any] | None = None,
+        logs_uri: str = "",
+        metrics_uri: str = "",
+        model_version_id: str = "",
     ) -> TrainingRun:
         run = self.get_training_run(training_run_id)
         try:
@@ -452,12 +537,30 @@ class ModelPlatformService:
             return run
         now = datetime.now(timezone.utc)
         updates: dict[str, Any] = {"status": status}
+        if status == "PREPARING":
+            updates["lineage_frozen"] = True
+            if run.started_at is None:
+                updates["started_at"] = now
         if status == "RUNNING" and run.started_at is None:
             updates["started_at"] = now
         if status in ("SUCCEEDED", "FAILED", "CANCELLED"):
             updates["finished_at"] = now
             if run.started_at is None:
                 updates["started_at"] = now
+        if failure_class:
+            updates["failure_class"] = failure_class
+        if failure_reason:
+            updates["failure_reason"] = failure_reason
+        if failure_detail:
+            updates["failure_detail"] = failure_detail
+        if metrics is not None:
+            updates["metrics"] = metrics
+        if logs_uri:
+            updates["logs_uri"] = logs_uri
+        if metrics_uri:
+            updates["metrics_uri"] = metrics_uri
+        if model_version_id:
+            updates["model_version_id"] = model_version_id
         updated = run.model_copy(update=updates)
         write_training_run(self._store, updated)
         self._runs[training_run_id] = updated
@@ -473,6 +576,201 @@ class ModelPlatformService:
         if run is None:
             raise ModelPlatformError(f"training run not found: {training_run_id}")
         return run
+
+    def execute_training_run(
+        self,
+        training_run_id: str,
+        *,
+        inject: Mapping[str, Any] | ModelPlatformInject | None = None,
+    ) -> TrainingRun:
+        """同步 Stub 编排：QUEUED→…→SUCCEEDED|FAILED|CANCELLED；成功则 create_version_from_run。"""
+        inj = _coerce_inject(inject)
+        run = self.get_training_run(training_run_id)
+        if is_terminal_status(run.status):
+            raise ModelPlatformError(f"training_run already terminal: {run.status}")
+        if run.status != "QUEUED":
+            raise ModelPlatformError(
+                f"execute_training_run expects QUEUED, got {run.status}"
+            )
+
+        # PREPARING
+        run = self.update_training_run_status(training_run_id, "PREPARING")
+        try:
+            run_prepare_stage(run, inject=inj)
+        except StubExecutorError as exc:
+            return self.update_training_run_status(
+                training_run_id,
+                "FAILED",
+                failure_class=exc.failure_class,
+                failure_reason=str(exc),
+                failure_detail=exc.stage,
+            )
+
+        # RUNNING
+        run = self.update_training_run_status(training_run_id, "RUNNING")
+        try:
+            logs_uri, metrics_uri, metrics = run_running_stage(
+                self._store, run, inject=inj
+            )
+        except StubExecutorError as exc:
+            if exc.failure_class == "CANCELLED":
+                return self.update_training_run_status(
+                    training_run_id,
+                    "CANCELLED",
+                    failure_class="CANCELLED",
+                    failure_reason=str(exc),
+                )
+            return self.update_training_run_status(
+                training_run_id,
+                "FAILED",
+                failure_class=exc.failure_class,
+                failure_reason=str(exc),
+                failure_detail=exc.stage,
+            )
+
+        # FINALIZING
+        run = self.update_training_run_status(
+            training_run_id,
+            "FINALIZING",
+            metrics=metrics,
+            logs_uri=logs_uri,
+            metrics_uri=metrics_uri,
+        )
+        try:
+            checksum = run_finalizing_stage(run, inject=inj)
+        except StubExecutorError as exc:
+            return self.update_training_run_status(
+                training_run_id,
+                "FAILED",
+                failure_class=exc.failure_class,
+                failure_reason=str(exc),
+                failure_detail=exc.stage,
+            )
+
+        model_version_id = ""
+        if not (inj and inj.skip_create_version):
+            version_label = run.requested_model_version or f"run-{run.training_run_id[-8:]}"
+            lineage = ModelVersionSpec(
+                version=version_label,
+                dataset_hash=run.dataset_hash,
+                snapshot_id=run.snapshot_id or (inj.snapshot_id if inj else ""),
+                feature_set_id=run.feature_set_id or (inj.feature_set_id if inj else ""),
+                feature_set_hash=run.feature_set_hash,
+                label_hash=run.label_hash or (inj.label_hash if inj else ""),
+                processor_version=run.processor_version
+                or (inj.processor_version if inj else ""),
+                config=dict(run.training_config or {}),
+                hyperparameters=dict(run.hyperparameters or {}),
+                framework=run.framework,
+                framework_version=run.framework_version,
+                code_version=run.code_version,
+                environment_hash=run.environment_hash,
+                random_seed=run.random_seed,
+                training_run_id=run.training_run_id,
+            )
+            # fill from inject known if still empty
+            if inj:
+                if not lineage.snapshot_id and inj.known_hashes.get("snapshot_id"):
+                    lineage = lineage.model_copy(
+                        update={"snapshot_id": inj.known_hashes["snapshot_id"]}
+                    )
+                if not lineage.feature_set_id and inj.feature_set_id:
+                    lineage = lineage.model_copy(update={"feature_set_id": inj.feature_set_id})
+                if not lineage.label_hash and inj.label_hash:
+                    lineage = lineage.model_copy(update={"label_hash": inj.label_hash})
+                if not lineage.processor_version and inj.processor_version:
+                    lineage = lineage.model_copy(
+                        update={"processor_version": inj.processor_version}
+                    )
+            try:
+                ver = self.create_version_from_run(
+                    run.training_run_id,
+                    version=version_label,
+                    lineage_spec=lineage,
+                    artifact_spec=ModelArtifactSpec(
+                        model_version_id="pending",
+                        artifact_uri=f"qd/artifacts/model/{run.training_run_id}/",
+                        checksum=checksum,
+                        framework=run.framework or "CUSTOM",
+                        framework_version=run.framework_version,
+                    ),
+                    inject=inject,
+                )
+                model_version_id = ver.model_version_id
+            except ModelPlatformError as exc:
+                return self.update_training_run_status(
+                    training_run_id,
+                    "FAILED",
+                    failure_class="ARTIFACT_ERROR",
+                    failure_reason=str(exc),
+                    failure_detail="FINALIZING",
+                )
+
+        run = self.update_training_run_status(
+            training_run_id,
+            "SUCCEEDED",
+            model_version_id=model_version_id,
+            metrics=metrics,
+            logs_uri=logs_uri,
+            metrics_uri=metrics_uri,
+        )
+        if run.job_id:
+            job = self.get_job(run.job_id)
+            closed = job.model_copy(
+                update={
+                    "status": "CLOSED",
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            )
+            write_training_job(self._store, closed)
+            self._jobs[job.job_id] = closed
+        return run
+
+    def retry_training_run(self, training_run_id: str) -> TrainingRun:
+        parent = self.get_training_run(training_run_id)
+        if parent.status not in ("FAILED", "CANCELLED"):
+            raise ModelPlatformError(
+                f"retry requires FAILED/CANCELLED parent, got {parent.status}"
+            )
+        if not parent.job_id:
+            raise ModelPlatformError("parent training_run missing job_id")
+        job = self.get_job(parent.job_id)
+        child = self.create_training_run(
+            run_spec_from_job(
+                job,
+                parent_training_run_id=parent.training_run_id,
+                retry_index=int(parent.retry_index) + 1,
+            )
+        )
+        run_ids = list(job.run_ids) + [child.training_run_id]
+        updated_job = job.model_copy(
+            update={
+                "run_ids": run_ids,
+                "status": "OPEN",
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+        write_training_job(self._store, updated_job)
+        self._jobs[job.job_id] = updated_job
+        return child
+
+    def cancel_training_run(self, training_run_id: str) -> TrainingRun:
+        run = self.get_training_run(training_run_id)
+        if run.status == "QUEUED":
+            return self.update_training_run_status(
+                training_run_id,
+                "CANCELLED",
+                failure_class="CANCELLED",
+                failure_reason="cancelled_while_queued",
+            )
+        if run.status == "RUNNING":
+            return self.update_training_run_status(
+                training_run_id,
+                "CANCELLED",
+                failure_class="CANCELLED",
+                failure_reason="cancelled_while_running",
+            )
+        raise ModelPlatformError(f"cannot cancel from status {run.status}")
 
     def register_artifact(
         self,

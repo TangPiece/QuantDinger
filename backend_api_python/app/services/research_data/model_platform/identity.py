@@ -19,6 +19,10 @@ def new_training_run_id() -> str:
     return f"trun_{uuid.uuid4().hex[:16]}"
 
 
+def new_training_job_id() -> str:
+    return f"tjob_{uuid.uuid4().hex[:16]}"
+
+
 def new_artifact_id() -> str:
     return f"mart_{uuid.uuid4().hex[:16]}"
 
@@ -38,6 +42,11 @@ def training_run_key(*, training_run_id: str) -> str:
     return f"{root}/model_platform/training_runs/{training_run_id}.json"
 
 
+def training_job_key(*, job_id: str) -> str:
+    root = rd_config.canonical_prefix()
+    return f"{root}/model_platform/training_jobs/{job_id}.json"
+
+
 def model_artifact_key(*, artifact_id: str) -> str:
     root = rd_config.canonical_prefix()
     return f"{root}/model_platform/artifacts/{artifact_id}.json"
@@ -55,6 +64,8 @@ __all__ = [
     "new_artifact_id",
     "new_model_id",
     "new_model_version_id",
+    "new_training_job_id",
     "new_training_run_id",
+    "training_job_key",
     "training_run_key",
 ]

@@ -46,7 +46,7 @@ def validate_lineage_for_version(
 ) -> list[str]:
     """返回 reasons；空列表 = PASS。正式路径要求非空关键血缘。"""
     reasons: list[str] = []
-    if training_run.status != "SUCCEEDED":
+    if training_run.status not in ("SUCCEEDED", "FINALIZING"):
         reasons.append(f"training_run_status_{training_run.status}")
     if not (training_run.training_run_id or "").strip():
         reasons.append("training_run_id_missing")

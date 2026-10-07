@@ -1,23 +1,24 @@
-# Phase 9F — Model Platform（9F-1 Registry + 9F-2 Lineage）
+# Phase 9F — Model Platform（9F-1～9F-3）
 
 ## 目标
 
-把 **Model ≠ ModelVersion**、**TrainingRun 不可变**、**Artifact 自描述索引** 与 **完整可复现血缘** 纳入 Research Platform。
+把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact** 与 **可复现血缘** 纳入 Research Platform。
 
 - **9F-1**：契约与注册中心  
-- **9F-2**：正式 ModelVersion 仅由 **SUCCEEDED TrainingRun** 创建；lineage 校验；checksum 绑定；`model_repro_manifest.json`；lineage/active 查询  
+- **9F-2**：正式 ModelVersion 仅由成功训练创建；lineage / repro / active 查询  
+- **9F-3**：TrainingJob + 完整 TrainingRun FSM + Stub Executor（**不**接 Qlib）
 
-**不**执行真实训练、不评价模型、不接 Strategy LIVE。
+**不**调用 `ModelTrainer` / Qlib、不评价模型、不接 Strategy LIVE。
 
 ```text
-Model
-  → TrainingRun (pin → SUCCEEDED)
+TrainingJob
+  → TrainingRun (QUEUED→PREPARING→RUNNING→FINALIZING→SUCCEEDED)
   → create_version_from_run
-  → ModelVersion (TRAINED, immutable lineage)
-       ├── ModelArtifact (checksum-bound)
+  → ModelVersion (TRAINED)
+       ├── ModelArtifact
        └── model_repro_manifest.json
-  ✕ 空血缘直接 register_version
-  ✕ Qlib Adapter / ModelTrainer
+  ✕ 原地改 FAILED run 重跑（须 retry → 新 Run）
+  ✕ Qlib Adapter / ModelTrainer（→ 9F-4）
   ✕ Model Evaluation / Strategy LIVE
 ```
 
@@ -31,9 +32,11 @@ Model
 | `lifecycle.py` | FSM：`DRAFT→…→ACTIVE→DEPRECATED→RETIRED` |
 | `lineage.py` | 正式创建血缘校验 + `get_lineage` 视图 |
 | `repro.py` | `model_repro_manifest.json` |
-| `immutability.py` | TrainingRun / Version lineage 硬化 |
+| `prepare_gate.py` / `executor.py` | PREPARING 门控 + Stub 编排 |
+| `job.py` / `training_config.py` | TrainingJob / TrainingConfig hash |
+| `immutability.py` | TrainingRun FSM + Version lineage 硬化 |
 | `catalog.py` / `search.py` | 注册与检索 |
-| `hashing.py` | `model_config_hash` / `version_content_hash` / `training_run_hash` |
+| `hashing.py` | config / version / training_run hash |
 | `bridge_legacy.py` | → Phase 2D `ModelDefinition` / `ModelVersionRecord` |
 | `runner.py` | `ModelPlatformService` |
 
@@ -49,31 +52,33 @@ Model
 ModelPlatformService(store, registry=None)
 
 .register_model / .get_model / .search
-.register_version  # 须 SUCCEEDED run，或 inject.allow_draft_stub
-.create_version_from_run(training_run_id, *, version, artifact_spec|artifact_id, ...)
+.register_version  # 须 SUCCEEDED/FINALIZING run，或 inject.allow_draft_stub
+.create_version_from_run(...)
+.submit_training_job / .get_job / .list_runs_for_job
+.execute_training_run / .retry_training_run / .cancel_training_run
 .update_training_run_status / .create_training_run / .get_training_run
-.register_artifact  # 仅 DRAFT stub 后绑
 .get_version / .list_versions / .get_active_version
 .get_lineage / .get_artifact_for_version / .get_repro_manifest
 .activate / .deprecate / .retire / .transition
 .delete_version  # 永远拒绝
-.compute_model_config_hash(config) -> str
 ```
 
 **无** `train` / `predict` / `evaluate_model` / `auto_live` / `promote_strategy`。
 
-## 正式创建契约（9F-2）
+## TrainingRun FSM（9F-3）
 
 ```text
-TrainingRun.status == SUCCEEDED
-  → lineage: dataset_hash, snapshot_id, feature_set_id/hash,
-             label_hash, processor_version, model_config_hash,
-             training_run_id, artifact checksum
-  → ModelVersion.lifecycle = TRAINED
-  → write model_repro_manifest.json
+QUEUED → PREPARING | CANCELLED
+PREPARING → RUNNING | FAILED
+RUNNING → FINALIZING | FAILED | CANCELLED
+FINALIZING → SUCCEEDED | FAILED
+SUCCEEDED / FAILED / CANCELLED → ∅
 ```
 
-## Lifecycle
+PREPARING 校验 dataset/feature/label/snapshot；失败分类如 `DATA_MISSING`。  
+Retry：`retry_training_run` 新建 Run（`parent_training_run_id`），禁止改写父 Run。
+
+## ModelVersion Lifecycle
 
 ```text
 DRAFT → TRAINING → TRAINED → EVALUATING → VALIDATED
@@ -109,4 +114,4 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research
 
 ## 后续子阶段（未实现）
 
-9F-3 TrainingRun 执行编排 · 9F-4 Qlib Adapter · 9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro 闭环 · 9F-9 E2E
+9F-4 Qlib Adapter · 9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro 闭环 · 9F-9 E2E

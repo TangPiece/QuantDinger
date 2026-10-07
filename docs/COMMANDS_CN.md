@@ -808,9 +808,9 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
 
-### Phase 9F Model Platform（9F-1 Registry + 9F-2 Lineage）
+### Phase 9F Model Platform（9F-1～9F-3）
 
-Model / ModelVersion / TrainingRun / Artifact 契约；正式版本须 SUCCEEDED run + lineage/repro；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
+Registry / Lineage / TrainingJob+TrainingRun Stub 编排；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
 
 ```bash
 cd backend_api_python
@@ -820,7 +820,8 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
-  tests/research_data/test_phase9f_model_platform.py -q \
+  tests/research_data/test_phase9f_model_platform.py \
+  tests/research_data/test_phase9f3_training_run.py -q \
   --confcutdir=tests/research_data
 ```
 

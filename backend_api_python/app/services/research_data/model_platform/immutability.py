@@ -1,4 +1,4 @@
-"""TrainingRun / ModelVersion lineage 不可覆盖（9F-2 硬化）。"""
+"""TrainingRun / ModelVersion lineage 不可覆盖（9F-2/9F-3 FSM）。"""
 
 from __future__ import annotations
 
@@ -54,6 +54,9 @@ def assert_training_run_immutable(existing: TrainingRun, incoming: TrainingRun) 
         "random_seed",
         "train_start",
         "train_end",
+        "snapshot_id",
+        "label_hash",
+        "training_config_hash",
     ):
         ev = getattr(existing, field, None)
         iv = getattr(incoming, field, None)
@@ -62,10 +65,21 @@ def assert_training_run_immutable(existing: TrainingRun, incoming: TrainingRun) 
     if existing.hyperparameters and incoming.hyperparameters:
         if existing.hyperparameters != incoming.hyperparameters:
             raise ModelImmutabilityError("immutable hyperparameters drift")
+    if existing.lineage_frozen:
+        for field in (
+            "dataset_hash",
+            "snapshot_id",
+            "feature_set_hash",
+            "label_hash",
+            "processor_version",
+            "training_config_hash",
+            "random_seed",
+        ):
+            if getattr(existing, field, None) != getattr(incoming, field, None):
+                raise ModelImmutabilityError(f"frozen lineage field {field} drift")
 
 
 def assert_version_immutable(existing: ModelVersion, incoming: ModelVersion) -> None:
-    """正式 version（非 DRAFT）：lineage 钉字段必须完全一致。"""
     if not existing.immutable:
         return
     formal = existing.lifecycle != "DRAFT"
@@ -87,13 +101,22 @@ def assert_artifact_not_rebound(existing: ModelVersion, new_artifact_id: str) ->
         )
 
 
+# 9F-3 严格 FSM
 _RUN_STATUS_ALLOWED: dict[TrainingRunStatus, set[TrainingRunStatus]] = {
-    "QUEUED": {"RUNNING", "CANCELLED", "SUCCEEDED"},
-    "RUNNING": {"SUCCEEDED", "FAILED", "CANCELLED"},
+    "QUEUED": {"PREPARING", "CANCELLED"},
+    "PREPARING": {"RUNNING", "FAILED"},
+    "RUNNING": {"FINALIZING", "FAILED", "CANCELLED"},
+    "FINALIZING": {"SUCCEEDED", "FAILED"},
     "SUCCEEDED": set(),
     "FAILED": set(),
     "CANCELLED": set(),
 }
+
+_TERMINAL: set[TrainingRunStatus] = {"SUCCEEDED", "FAILED", "CANCELLED"}
+
+
+def is_terminal_status(status: TrainingRunStatus) -> bool:
+    return status in _TERMINAL
 
 
 def assert_training_run_status_transition(
@@ -114,5 +137,6 @@ __all__ = [
     "assert_training_run_immutable",
     "assert_training_run_status_transition",
     "assert_version_immutable",
+    "is_terminal_status",
     "load_json_model",
 ]

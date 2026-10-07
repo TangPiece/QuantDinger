@@ -16,6 +16,10 @@ def compute_model_config_hash(config: dict[str, Any] | None) -> str:
     return _sha256_payload({"kind": "model_config", "config": dict(config or {})})
 
 
+def compute_training_config_hash(config: dict[str, Any] | None) -> str:
+    return _sha256_payload({"kind": "training_config", "config": dict(config or {})})
+
+
 def compute_hyperparameter_hash(hyperparameters: dict[str, Any] | None) -> str:
     return _sha256_payload(
         {"kind": "hyperparameters", "hyperparameters": dict(hyperparameters or {})}
@@ -99,6 +103,7 @@ def compute_training_run_hash(
 __all__ = [
     "compute_hyperparameter_hash",
     "compute_model_config_hash",
+    "compute_training_config_hash",
     "compute_training_run_hash",
     "compute_version_content_hash",
 ]
