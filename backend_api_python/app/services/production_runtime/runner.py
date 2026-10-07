@@ -66,9 +66,11 @@ class ProductionRuntimeService:
     ) -> RuntimeInstance:
         """加载 DEPLOYED Bundle，创建 RuntimeInstance。"""
         env = str(environment)
-        if env not in ("PAPER", "SHADOW"):
+        if env == "LIVE":
+            raise ProductionRuntimeError("LIVE environment forbidden; use LIVE_CONTROLLED")
+        if env not in ("PAPER", "SHADOW", "LIVE_CONTROLLED"):
             raise ProductionRuntimeError(
-                f"environment must be PAPER|SHADOW, got {env!r} (LIVE not implemented)"
+                f"environment must be PAPER|SHADOW|LIVE_CONTROLLED, got {env!r}"
             )
         try:
             summary = self._registry.get_production_bundle(bundle_hash)

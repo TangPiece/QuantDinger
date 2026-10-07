@@ -66,7 +66,7 @@ def require_operator_approval(
 
 
 class ControlledLiveGate:
-    """单 intent 提交前全量校验。"""
+    """单 intent 提交前全量校验；可选 SafetyService.decide。"""
 
     def __init__(
         self,
@@ -74,10 +74,12 @@ class ControlledLiveGate:
         *,
         config: ControlledLiveConfig | None = None,
         kill_switch_checker: Any | None = None,
+        safety: Any | None = None,
     ) -> None:
         self._registry = registry
         self._config = config or load_controlled_live_config()
         self._kill_switch_checker = kill_switch_checker
+        self._safety = safety
 
     def evaluate(
         self,
@@ -124,6 +126,26 @@ class ControlledLiveGate:
 
         if approval is None or approval.status != "APPROVED":
             return GateDecision(False, "operator approval required", "CONTROLLED_LIVE_DENIED")
+        # SESSION 级审批可覆盖多笔；SINGLE_ORDER 仍要求 approval 存在
+        scope = str(approval.scope or "SINGLE_ORDER").upper()
+        if scope not in ("SINGLE_ORDER", "SESSION", "MULTI_ORDER"):
+            return GateDecision(False, "invalid approval scope", "CONTROLLED_LIVE_DENIED")
+
+        if self._safety is not None:
+            try:
+                sd = self._safety.decide(
+                    session.account_id,
+                    intent=intent,
+                    strategy_id=session.approved_strategy_id,
+                )
+                if str(sd.decision).upper() != "ALLOW":
+                    return GateDecision(
+                        False,
+                        sd.reason or "safety blocked",
+                        "CONTROLLED_LIVE_DENIED",
+                    )
+            except Exception:
+                return GateDecision(False, "safety fail-closed", "CONTROLLED_LIVE_DENIED")
 
         if self._kill_switch_engaged(session.account_id):
             return GateDecision(False, "kill_switch engaged", "CONTROLLED_LIVE_DENIED")

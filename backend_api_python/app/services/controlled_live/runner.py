@@ -1,4 +1,4 @@
-"""Phase 7C：ControlledLiveService — 单 session 一笔 LIMIT real submit。"""
+"""Phase 7C/7D：ControlledLiveService — 预算内多笔 LIMIT real submit。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,10 @@ from .gate import ControlledLiveDenied, ControlledLiveGate, require_operator_app
 from .lineage import stamp_lineage
 from .modes import normalize_environment
 from .protocol import ControlledOrder, ControlledSession, OperatorApproval
-from .session import merge_session_update, open_controlled_session
+from . import metrics as cl_metrics
+from . import reconcile_loop
+from .risk_budget import check_order_budget, record_order_submit
+from .session import halt_session, merge_session_update, open_controlled_session
 from .timeout import recover_unknown_order
 from .writers import ControlledLiveWriter
 
@@ -38,6 +41,7 @@ class ControlledLiveService:
         registry: ResearchRegistry,
         *,
         safety: Any | None = None,
+        recon: Any | None = None,
         oms: Any | None = None,
         shadow: Any | None = None,
         ops: Any | None = None,
@@ -48,12 +52,13 @@ class ControlledLiveService:
         self._store = store
         self._registry = registry
         self._safety = safety
+        self._recon = recon
         self._oms = oms
         self._shadow = shadow
         self._ops = ops
         self._broker = broker_port
         self._writer = writer or ControlledLiveWriter(registry)
-        self._gate = gate or ControlledLiveGate(registry)
+        self._gate = gate or ControlledLiveGate(registry, safety=safety)
         self._session: ControlledSession | None = None
         self._environment = "LIVE_READONLY"
         self._approval: OperatorApproval | None = None
@@ -102,6 +107,9 @@ class ControlledLiveService:
         dataset_hash: str,
         model_version: str,
         strategy_version: str,
+        feature_version: str = "",
+        processor_version: str = "",
+        snapshot_id: str = "",
         config: Any | None = None,
     ) -> ControlledSession:
         cfg = config or load_controlled_live_config()
@@ -111,6 +119,9 @@ class ControlledLiveService:
             dataset_hash=dataset_hash,
             model_version=model_version,
             strategy_version=strategy_version,
+            feature_version=feature_version,
+            processor_version=processor_version,
+            snapshot_id=snapshot_id,
             config=cfg,
         )
         self._writer.write_session(session)
@@ -140,6 +151,10 @@ class ControlledLiveService:
         """Gate → 幂等 client_order_id → Gateway POST（至多一次）。"""
         if self._session is None:
             raise ControlledLiveError("no session")
+        if self._session.status in ("SAFETY_HOLD", "HALTED", "CLOSED"):
+            raise ControlledLiveDenied(
+                f"session {self._session.status}: {self._session.stop_reason or 'halted'}"
+            )
         if self._broker is None:
             raise ControlledLiveError("broker_port not configured")
         if normalize_environment(self._environment) != "LIVE_CONTROLLED":
@@ -148,15 +163,39 @@ class ControlledLiveService:
         if strategy_id and self._session.approved_strategy_id != strategy_id:
             raise ControlledLiveDenied("approved_strategy_id mismatch")
 
+        notional = float(intent.quantity or 0) * float(intent.limit_price or 0)
+        ok, budget_reason = check_order_budget(self._session, notional=notional)
+        if not ok:
+            cl_metrics.record_risk_breach(
+                self._ops, account_id=self._session.account_id, reason=budget_reason
+            )
+            raise ControlledLiveDenied(f"risk budget: {budget_reason}")
+
+        if self._safety is not None:
+            try:
+                sd = self._safety.decide(
+                    self._session.account_id,
+                    intent=intent,
+                    strategy_id=strategy_id or self._session.approved_strategy_id,
+                )
+                if str(sd.decision).upper() != "ALLOW":
+                    raise ControlledLiveDenied(sd.reason or "safety blocked")
+            except ControlledLiveDenied:
+                raise
+            except Exception:
+                raise ControlledLiveDenied("safety fail-closed")
+
         self._gate.assert_allow(
             environment=self._environment,
             session=self._session,
             intent=intent,
             quote=quote,
             approval=self._approval,
+            notional_override=notional,
         )
 
-        cid = derive_client_order_id(session_id=self._session.session_id, seq=1)
+        seq = max(1, int(self._session.order_count) + 1)
+        cid = derive_client_order_id(session_id=self._session.session_id, seq=seq)
         existing = self._orders.get(cid)
         if existing:
             return existing
@@ -224,14 +263,28 @@ class ControlledLiveService:
                 metadata={"submit_error": str(exc)[:200]},
             )
             self._persist_order(order)
+            self._session = record_order_submit(self._session, notional=notional, rejected=False)
             self._engage_safety_hold("submit_unknown")
+            cl_metrics.record_order_submitted(self._ops, account_id=self._session.account_id)
             return order
 
         self._persist_order(order)
-        if order.status == "FILLED":
-            self._engage_safety_hold("filled_single_order")
-        elif order.status in ("REJECTED", "PARTIALLY_FILLED", "EXPIRED", "UNKNOWN"):
-            self._engage_safety_hold(f"terminal_{order.status}")
+        rejected = str(order.status).upper() == "REJECTED"
+        self._session = record_order_submit(
+            self._session, notional=notional, rejected=rejected
+        )
+        self._writer.write_session(self._session)
+        cl_metrics.record_order_submitted(self._ops, account_id=self._session.account_id)
+        cl_metrics.record_order_terminal(
+            self._ops, account_id=self._session.account_id, status=order.status
+        )
+        # 7D：FILLED 不默认 kill session；UNKNOWN/REJECTED/预算用尽才 SAFETY_HOLD
+        if order.status == "UNKNOWN":
+            self._engage_safety_hold("submit_unknown")
+        elif order.status == "REJECTED":
+            self._engage_safety_hold("terminal_REJECTED")
+        elif self._session.order_count >= self._session.config.max_orders:
+            self._engage_safety_hold("session_budget_exhausted")
         return order
 
     def recover_unknown(self, client_order_id: str) -> ControlledOrder:
@@ -279,9 +332,19 @@ class ControlledLiveService:
         return report
 
     def reconcile(self, account_id: str, portfolio_id: str = "") -> dict[str, Any]:
-        """Hook 6F recon；7C 最小返回占位。"""
-        _ = portfolio_id
-        return {"account_id": account_id, "status": "SKIPPED", "reason": "phase7c_minimal"}
+        """Hook 6F：FAST 对账；CRITICAL → Safety + Session halt。"""
+        if self._session is None:
+            return {"status": "SKIPPED", "reason": "no_session"}
+        sess, result = reconcile_loop.after_submit_or_tick(
+            self._recon,
+            self._safety,
+            self._session,
+            portfolio_id=portfolio_id or account_id,
+            ops=self._ops,
+        )
+        self._session = sess
+        self._writer.write_session(sess)
+        return {"account_id": account_id, **result}
 
     def _persist_order(self, order: ControlledOrder, *, increment_count: bool = True) -> None:
         self._orders[order.client_order_id] = order
@@ -296,7 +359,7 @@ class ControlledLiveService:
 
     def _engage_safety_hold(self, reason: str) -> None:
         if self._session:
-            self._session = merge_session_update(self._session, {"status": "SAFETY_HOLD"})
+            self._session = halt_session(self._session, stop_reason=reason)
             self._writer.write_session(self._session)
         if self._safety is not None:
             try:
@@ -304,7 +367,7 @@ class ControlledLiveService:
                     scope="ACCOUNT",
                     scope_id=self._session.account_id if self._session else "global",
                     reason=reason,
-                    engaged_by="controlled_live",
+                    operator="controlled_live",
                 )
             except Exception:
                 pass

@@ -20,7 +20,7 @@ from app.services.research_data.production_bridge.protocol import GateResult
 
 ENGINE_VERSION = "qd_production_runtime@1"
 
-RuntimeEnvironment = Literal["PAPER", "SHADOW"]
+RuntimeEnvironment = Literal["PAPER", "SHADOW", "LIVE_CONTROLLED"]
 RuntimeMarket = Literal["CN_A", "HK", "US"]
 RuntimeStatus = Literal[
     "STARTING",

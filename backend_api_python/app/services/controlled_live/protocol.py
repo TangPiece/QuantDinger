@@ -1,4 +1,4 @@
-"""Phase 7C：Controlled Live 契约（单 session 最多一笔真实 LIMIT submit）。"""
+"""Phase 7C/7D：Controlled Live 契约（LIMIT real submit + 7D 生产 session 锁）。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,20 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ENGINE_VERSION = "qd_controlled_live@1"
+ENGINE_VERSION = "qd_controlled_live@2"
+
+RuntimePhase = Literal[
+    "INIT",
+    "PRE_TICK",
+    "INFER",
+    "SUBMIT",
+    "RECON",
+    "POST_TICK",
+    "HALTED",
+    "CLOSED",
+]
+
+SessionStatus = Literal["OPEN", "CLOSED", "SAFETY_HOLD", "HALTED"]
 
 ControlledOrderStatus = Literal[
     "PENDING_SUBMIT",
@@ -38,8 +51,23 @@ class ControlledLiveConfig(_ControlledModel):
     allowed_order_types: tuple[str, ...] = ("LIMIT",)
 
 
+class RiskBudget(_ControlledModel):
+    """Session / 日级风险预算（金额来自 env，非硬编码）。"""
+
+    max_orders: int = 1
+    max_notional_session: float = 5000.0
+    max_turnover_session: float = 10000.0
+    max_daily_loss: float = 500.0
+    max_consecutive_rejects: int = 3
+    max_consecutive_errors: int = 3
+    session_notional_used: float = 0.0
+    session_turnover_used: float = 0.0
+    consecutive_rejects: int = 0
+    consecutive_errors: int = 0
+
+
 class ControlledSession(_ControlledModel):
-    """Controlled Live 会话（锁定 hash/版本）。"""
+    """Controlled Live 会话（锁定 hash/版本）；7D 亦称 TradingSession。"""
 
     session_id: str
     account_id: str = ""
@@ -48,12 +76,23 @@ class ControlledSession(_ControlledModel):
     dataset_hash: str = ""
     model_version: str = ""
     strategy_version: str = ""
-    status: Literal["OPEN", "CLOSED", "SAFETY_HOLD"] = "OPEN"
+    feature_version: str = ""
+    processor_version: str = ""
+    snapshot_id: str = ""
+    status: SessionStatus = "OPEN"
+    stop_reason: str = ""
     order_count: int = 0
     opened_at: str = ""
+    heartbeat_at: str = ""
+    runtime_phase: RuntimePhase = "INIT"
     engine_version: str = ENGINE_VERSION
     config: ControlledLiveConfig = Field(default_factory=ControlledLiveConfig)
+    risk_budget: RiskBudget = Field(default_factory=RiskBudget)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# 7D 文档/编排层别名
+TradingSession = ControlledSession
 
 
 class OperatorApproval(_ControlledModel):

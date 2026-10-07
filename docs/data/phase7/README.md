@@ -1,6 +1,6 @@
 # Phase 7 — Controlled Live
 
-> **Status:** Phase 7A + 7B + 7C implemented (read-only Live + Shadow + single controlled order).
+> **Status:** Phase 7A–7D implemented (read-only Live + Shadow + controlled production runtime).
 
 ## Roadmap
 
@@ -8,7 +8,7 @@
 7A  Live Adapter / Read-only Production   ← done
 7B  Live Shadow                           ← done
 7C  Single Order                           ← done
-7D  Controlled Live
+7D  Controlled Live Production             ← done
 7E  Gradual Scale
 ```
 
@@ -17,6 +17,7 @@
 1. [01_live_readonly.md](01_live_readonly.md)
 2. [02_live_shadow.md](02_live_shadow.md)
 3. [03_controlled_live.md](03_controlled_live.md)
+4. [04_controlled_live_production.md](04_controlled_live_production.md)
 
 ## Commands
 
@@ -70,4 +71,15 @@ export PRODUCTION_READY=true
 export CONTROLLED_LIVE_ALLOW_REAL_SUBMIT=true
 export ALPACA_LIVE_API_KEY=...
 export ALPACA_LIVE_API_SECRET=...
+```
+
+Phase 7D Controlled Live Production（Fake MD + Fake broker 默认）：
+
+```bash
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase7d_controlled_production.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest tests/research_data/test_phase7d_controlled_production.py -q \
+  --confcutdir=tests/research_data
 ```

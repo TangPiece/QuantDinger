@@ -29,6 +29,7 @@ def make_env(tmp: Path, *, broker: FakeControlledLiveAdapter | None = None):
     store = LocalCanonicalStore(root=tmp / "canonical")
     registry = LocalJsonRegistry(root=cache / "registry")
     os.environ["PRODUCTION_READY"] = "true"
+    os.environ["CONTROLLED_LIVE_MAX_ORDERS"] = "1"
     os.environ.pop("CONTROLLED_LIVE_ALLOW_REAL_SUBMIT", None)
     registry.upsert_readiness_run(
         ReadinessRunSummary(

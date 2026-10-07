@@ -735,6 +735,37 @@ def production_controlled_live_prefix() -> str:
     return f"{_root()}/production/controlled_live"
 
 
+def production_controlled_live_runtime_tick_key(
+    *,
+    account_id: str,
+    yyyy: str,
+    mm: str,
+    dd: str,
+    tick_id: str,
+) -> str:
+    """``qd/production/controlled_live/{account_id}/runtime/{yyyy}/{mm}/{dd}/{tick_id}.json``。"""
+    safe_acct = str(account_id or "unknown").replace("/", "_")
+    return (
+        f"{production_controlled_live_prefix()}/{safe_acct}/runtime/"
+        f"{yyyy}/{mm}/{dd}/{tick_id}.json"
+    )
+
+
+def production_controlled_live_drift_daily_key(
+    *,
+    account_id: str,
+    trading_date: str,
+    run_id: str,
+) -> str:
+    """``qd/production/controlled_live/{account_id}/drift/{date}/{run_id}.json``。"""
+    safe_acct = str(account_id or "unknown").replace("/", "_")
+    safe_date = str(trading_date or "unknown").replace("/", "_")
+    return (
+        f"{production_controlled_live_prefix()}/{safe_acct}/drift/"
+        f"{safe_date}/{run_id}.json"
+    )
+
+
 def production_controlled_live_run_key(
     *,
     account_id: str,

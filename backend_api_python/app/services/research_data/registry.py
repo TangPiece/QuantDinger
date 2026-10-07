@@ -80,7 +80,9 @@ from .contracts import (
     ShadowSessionSummary,
     ControlledLiveApprovalSummary,
     ControlledLiveCompareRunSummary,
+    ControlledLiveDriftDailySummary,
     ControlledLiveOrderIndexRecord,
+    ControlledLiveRuntimeTickSummary,
     ControlledLiveSessionSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
@@ -677,6 +679,14 @@ class ResearchRegistry(Protocol):
 
     def upsert_controlled_live_compare_run(
         self, record: ControlledLiveCompareRunSummary
+    ) -> None: ...
+
+    def upsert_controlled_live_runtime_tick(
+        self, record: ControlledLiveRuntimeTickSummary
+    ) -> None: ...
+
+    def upsert_controlled_live_drift_daily(
+        self, record: ControlledLiveDriftDailySummary
     ) -> None: ...
 
 
@@ -2423,6 +2433,28 @@ class LocalJsonRegistry:
             data = self._read()
             data.setdefault("controlled_live_compare_runs", {})
             data["controlled_live_compare_runs"][record.run_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_controlled_live_runtime_tick(
+        self, record: ControlledLiveRuntimeTickSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("controlled_live_runtime_ticks", {})
+            data["controlled_live_runtime_ticks"][record.tick_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_controlled_live_drift_daily(
+        self, record: ControlledLiveDriftDailySummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("controlled_live_drift_daily", {})
+            data["controlled_live_drift_daily"][record.run_id] = record.model_dump(
                 mode="json"
             )
             self._write(data)
@@ -7437,12 +7469,15 @@ class D1ResearchRegistry:
                 """
                 INSERT INTO controlled_live_session (
                   session_id, account_id, environment, approved_strategy_id,
-                  dataset_hash, model_version, strategy_version, status,
-                  order_count, engine_version, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  dataset_hash, model_version, strategy_version,
+                  feature_version, processor_version, snapshot_id, stop_reason,
+                  status, order_count, heartbeat_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                   status=excluded.status,
                   order_count=excluded.order_count,
+                  stop_reason=excluded.stop_reason,
+                  heartbeat_at=excluded.heartbeat_at,
                   metadata_json=excluded.metadata_json
                 """,
                 [
@@ -7453,8 +7488,13 @@ class D1ResearchRegistry:
                     record.dataset_hash,
                     record.model_version,
                     record.strategy_version,
+                    record.feature_version,
+                    record.processor_version,
+                    record.snapshot_id,
+                    record.stop_reason,
                     record.status,
                     record.order_count,
+                    record.heartbeat_at,
                     record.engine_version,
                     json.dumps(record.metadata or {}, ensure_ascii=False),
                 ],
@@ -7535,6 +7575,58 @@ class D1ResearchRegistry:
                 [
                     record.run_id,
                     record.account_id,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_controlled_live_runtime_tick(
+        self, record: ControlledLiveRuntimeTickSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO controlled_live_runtime_tick (
+                  tick_id, session_id, account_id, storage_uri,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tick_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.tick_id,
+                    record.session_id,
+                    record.account_id,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_controlled_live_drift_daily(
+        self, record: ControlledLiveDriftDailySummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO controlled_live_drift_daily (
+                  run_id, account_id, trading_date, storage_uri,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    record.account_id,
+                    record.trading_date,
                     record.storage_uri,
                     record.engine_version,
                     json.dumps(record.metadata or {}, ensure_ascii=False),

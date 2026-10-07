@@ -41,12 +41,24 @@ class ControlledLiveWriter:
             dataset_hash=session.dataset_hash,
             model_version=session.model_version,
             strategy_version=session.strategy_version,
+            feature_version=session.feature_version,
+            processor_version=session.processor_version,
+            snapshot_id=session.snapshot_id,
+            stop_reason=session.stop_reason,
             status=session.status,
             order_count=session.order_count,
+            heartbeat_at=session.heartbeat_at,
             engine_version=ENGINE_VERSION,
             metadata={
                 **dict(session.metadata or {}),
                 "max_orders": session.config.max_orders,
+                "feature_version": session.feature_version,
+                "processor_version": session.processor_version,
+                "snapshot_id": session.snapshot_id,
+                "stop_reason": session.stop_reason,
+                "heartbeat_at": session.heartbeat_at,
+                "runtime_phase": session.runtime_phase,
+                "risk_budget": session.risk_budget.model_dump(mode="json"),
             },
         )
         self._registry.upsert_controlled_live_session(rec)
@@ -98,4 +110,60 @@ class ControlledLiveWriter:
             metadata={"checksum": cs, "order_id": report.order_id},
         )
         self._registry.upsert_controlled_live_compare_run(rec)
+        return rec
+
+    def write_runtime_tick(
+        self,
+        *,
+        account_id: str,
+        tick_id: str,
+        payload: dict,
+    ) -> Any:
+        """Runtime tick artifact + D1 索引（7D）。"""
+        from app.services.research_data.contracts import ControlledLiveRuntimeTickSummary
+
+        uri, cs = self._artifacts.write_runtime_tick_payload(
+            account_id=account_id,
+            tick_id=tick_id,
+            payload=payload,
+        )
+        rec = ControlledLiveRuntimeTickSummary(
+            tick_id=tick_id,
+            session_id=str(payload.get("session_id") or ""),
+            account_id=account_id,
+            storage_uri=uri,
+            engine_version=ENGINE_VERSION,
+            metadata={"checksum": cs},
+        )
+        if hasattr(self._registry, "upsert_controlled_live_runtime_tick"):
+            self._registry.upsert_controlled_live_runtime_tick(rec)
+        return rec
+
+    def write_drift_daily(
+        self,
+        *,
+        account_id: str,
+        trading_date: str,
+        payload: dict,
+    ) -> Any:
+        """Shadow vs Real 日级 drift artifact。"""
+        from app.services.research_data.contracts import ControlledLiveDriftDailySummary
+
+        run_id = f"drift_{account_id}_{trading_date}".replace("/", "_")
+        uri, cs = self._artifacts.write_drift_daily_payload(
+            account_id=account_id,
+            trading_date=trading_date,
+            run_id=run_id,
+            payload=payload,
+        )
+        rec = ControlledLiveDriftDailySummary(
+            run_id=run_id,
+            account_id=account_id,
+            trading_date=trading_date,
+            storage_uri=uri,
+            engine_version=ENGINE_VERSION,
+            metadata={"checksum": cs},
+        )
+        if hasattr(self._registry, "upsert_controlled_live_drift_daily"):
+            self._registry.upsert_controlled_live_drift_daily(rec)
         return rec

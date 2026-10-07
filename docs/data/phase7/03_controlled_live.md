@@ -16,7 +16,8 @@ Real MD → Strategy → Risk → OrderIntent
 **做**
 
 - 环境：`LIVE_READONLY → LIVE_CONTROLLED`（需 `PRODUCTION_READY` + operator approval）
-- `max_orders=1`；timeout/UNKNOWN 仅 `GET by_client_order_id`，禁止 resubmit
+- 默认 `max_orders=1`（7D 可调多笔预算，见 [04_controlled_live_production.md](04_controlled_live_production.md)）；timeout/UNKNOWN 仅 `GET by_client_order_id`，禁止 resubmit
+- **7D 演进**：FILLED 单笔不再默认 kill 全 session（UNKNOWN/REJECTED/预算用尽/recon 等仍 halt）
 - cancel/replace 硬拒；MARKET 拒
 - Lineage metadata + D1 `0028` + R2 `qd/production/controlled_live/...`
 - CI 默认 `FakeControlledLiveAdapter`；真实 POST 需 `CONTROLLED_LIVE_ALLOW_REAL_SUBMIT=true` + `ALPACA_LIVE_*`

@@ -592,7 +592,22 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
-仅 `LIVE_CONTROLLED` 可 submit；`max_orders=1`；cancel/replace/MARKET/resubmit 均拒。CI 默认 Fake broker（0 次真实 POST）。真实 Alpaca POST 需 `CONTROLLED_LIVE_ALLOW_REAL_SUBMIT=true` 与 `ALPACA_LIVE_*`（见 `env.example`）。环境阶梯：`LIVE_READONLY→LIVE_CONTROLLED`（需 `PRODUCTION_READY`）。
+仅 `LIVE_CONTROLLED` 可 submit；默认 `max_orders=1`（7D 可调多笔预算）；cancel/replace/MARKET/resubmit 均拒。CI 默认 Fake broker（0 次真实 POST）。真实 Alpaca POST 需 `CONTROLLED_LIVE_ALLOW_REAL_SUBMIT=true` 与 `ALPACA_LIVE_*`（见 `env.example`）。环境阶梯：`LIVE_READONLY→LIVE_CONTROLLED`（需 `PRODUCTION_READY`）。7D 起 FILLED 单笔不默认 kill session（见 [04_controlled_live_production.md](data/phase7/04_controlled_live_production.md)）。
+
+### Phase 7D Controlled Live Production（持续 tick）
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase7d_controlled_production.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase7d_controlled_production.py -q \
+  --confcutdir=tests/research_data
+```
+
+Fake MD + Fake broker 默认；`LIVE` 仍禁；breach 仅 halt 新单，不 auto flatten。
 
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。

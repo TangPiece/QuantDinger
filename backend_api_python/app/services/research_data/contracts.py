@@ -1421,7 +1421,7 @@ class ShadowCompareRunSummary(_ContractModel):
 
 
 class ControlledLiveSessionSummary(_ContractModel):
-    """Phase 7C：Controlled Live 会话索引。"""
+    """Phase 7C/7D：Controlled Live 会话索引。"""
 
     session_id: str
     account_id: str = ""
@@ -1430,9 +1430,14 @@ class ControlledLiveSessionSummary(_ContractModel):
     dataset_hash: str = ""
     model_version: str = ""
     strategy_version: str = ""
+    feature_version: str = ""
+    processor_version: str = ""
+    snapshot_id: str = ""
+    stop_reason: str = ""
     status: str = "OPEN"
     order_count: int = 0
-    engine_version: str = "qd_controlled_live@1"
+    heartbeat_at: str = ""
+    engine_version: str = "qd_controlled_live@2"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1470,5 +1475,27 @@ class ControlledLiveCompareRunSummary(_ContractModel):
     run_id: str
     account_id: str = ""
     storage_uri: str = ""
-    engine_version: str = "qd_controlled_live@1"
+    engine_version: str = "qd_controlled_live@2"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlledLiveRuntimeTickSummary(_ContractModel):
+    """Phase 7D：Controlled Live runtime tick 索引。"""
+
+    tick_id: str
+    session_id: str = ""
+    account_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_controlled_live@2"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlledLiveDriftDailySummary(_ContractModel):
+    """Phase 7D：Shadow vs Real 日级 drift 索引。"""
+
+    run_id: str
+    account_id: str = ""
+    trading_date: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_controlled_live@2"
     metadata: dict[str, Any] = Field(default_factory=dict)
