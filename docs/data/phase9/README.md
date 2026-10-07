@@ -7,11 +7,12 @@ Phase 9 在既有 `research_data` Domain（Definition / Snapshot / `dataset_hash
 | **9A** | Research Dataset Platform（manifest + builder + gate + immutability） | **Done** — [01_dataset_platform.md](01_dataset_platform.md) |
 | **9B** | Feature / Factor Platform（taxonomy + FeatureSet + build + lineage） | **Done** — [02_feature_factor_platform.md](02_feature_factor_platform.md) |
 | **9C** | Factor Evaluation Engine（Policy + Run + 4C–4F 编排） | **Done** — [03_factor_evaluation_engine.md](03_factor_evaluation_engine.md) |
-| 9D | Model Platform | Planned |
-| 9E | Experiment Orchestration | Planned |
-| 9F | Research UI / API 管理台 | Planned |
-| 9G | Cross-cutting governance | Planned |
-| 9H | E2E / hardening | Planned |
+| **9D** | Factor Mining（DSL 模板搜索 + Screen + 9C） | **Done** — [04_factor_mining.md](04_factor_mining.md) |
+| 9E | Model Platform | Planned |
+| 9F | Experiment Orchestration | Planned |
+| 9G | Research UI / API 管理台 | Planned |
+| 9H | Cross-cutting governance | Planned |
+| 9I | E2E / hardening | Planned |
 
 ## 9A 验收
 
@@ -38,6 +39,16 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research
 ```
 
 并保持 `verify_phase9b_feature_factor_platform.py` 绿。
+
+## 9D 验收
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9d_factor_mining.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research_data/test_phase9d_factor_mining.py -q --confcutdir=tests/research_data
+```
+
+并保持 `verify_phase9c_factor_evaluation.py` 绿。
 
 ## 边界（全 Phase 9 共享）
 

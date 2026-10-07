@@ -774,6 +774,22 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 9D Factor Mining
+
+DSL 模板搜索 + Fast Screen + 9B/9C 编排；说明：[04_factor_mining.md](data/phase9/04_factor_mining.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9d_factor_mining.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase9d_factor_mining.py -q \
+  --confcutdir=tests/research_data
+```
+
 ### Phase 8I Architecture Hardening & E2E Acceptance
 
 编排 8A–8H verify + 平面隔离扫描 + FSM/immutability/inject 矩阵 + 单链 E2E + 7E 回归；说明：[09_architecture_hardening_e2e.md](data/phase8/09_architecture_hardening_e2e.md)。
