@@ -48,6 +48,7 @@ def assert_training_run_immutable(existing: TrainingRun, incoming: TrainingRun) 
     if existing.training_run_hash != incoming.training_run_hash:
         raise ModelImmutabilityError("training_run_hash mismatch on immutable slot")
     for field in (
+        "dataset_ref",
         "dataset_hash",
         "feature_set_hash",
         "factor_portfolio_hash",
@@ -67,6 +68,7 @@ def assert_training_run_immutable(existing: TrainingRun, incoming: TrainingRun) 
             raise ModelImmutabilityError("immutable hyperparameters drift")
     if existing.lineage_frozen:
         for field in (
+            "dataset_ref",
             "dataset_hash",
             "snapshot_id",
             "feature_set_hash",

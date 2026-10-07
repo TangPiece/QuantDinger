@@ -190,6 +190,7 @@ class TrainingJobSpec(_PlatformModel):
     model_id: str = ""
     model_code: str = ""
     requested_version: str = ""
+    dataset_ref: str = ""
     dataset_hash: str = ""
     snapshot_id: str = ""
     feature_set_id: str = ""
@@ -223,6 +224,7 @@ class TrainingJob(_PlatformModel):
     model_id: str = ""
     model_code: str = ""
     requested_version: str = ""
+    dataset_ref: str = ""
     dataset_hash: str = ""
     snapshot_id: str = ""
     feature_set_id: str = ""
@@ -260,6 +262,7 @@ class TrainingRunSpec(_PlatformModel):
     model_code: str = ""
     model_version_id: str = ""
     requested_model_version: str = ""
+    dataset_ref: str = ""
     dataset_hash: str = ""
     snapshot_id: str = ""
     feature_set_id: str = ""
@@ -300,6 +303,7 @@ class TrainingRun(_PlatformModel):
     model_code: str = ""
     model_version_id: str = ""
     requested_model_version: str = ""
+    dataset_ref: str = ""
     dataset_hash: str = ""
     snapshot_id: str = ""
     feature_set_id: str = ""
@@ -407,6 +411,8 @@ class ModelPlatformInject(_PlatformModel):
     label_hash: str = ""
     processor_version: str = ""
     snapshot_id: str = ""
+    # 9F-4：注入 DataQuery 侧已解析的 dataset_hash（无 registry 时跳过 live 校验）
+    skip_dataset_ref_check: bool = False
 
 
 __all__ = [

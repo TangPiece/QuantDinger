@@ -43,7 +43,7 @@ def main() -> int:
     svc = make_model_platform_env(tmp / "main")
 
     checks["no_train"] = not hasattr(ModelPlatformService, "train")
-    checks["no_predict"] = not hasattr(ModelPlatformService, "predict")
+    checks["has_predict"] = hasattr(ModelPlatformService, "predict")  # 9F-4 薄 Predict
     checks["no_evaluate_model"] = not hasattr(ModelPlatformService, "evaluate_model")
     checks["no_auto_live"] = not hasattr(ModelPlatformService, "auto_live")
     checks["has_submit_job"] = hasattr(svc, "submit_training_job")

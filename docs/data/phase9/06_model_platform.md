@@ -1,117 +1,105 @@
-# Phase 9F — Model Platform（9F-1～9F-3）
+# Phase 9F — Model Platform（9F-1～9F-4）
 
 ## 目标
 
-把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact** 与 **可复现血缘** 纳入 Research Platform。
+把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact** 与 **可复现血缘** 纳入 Research Platform，并经 **Model Adapter** 接合 Qlib 执行层。
 
 - **9F-1**：契约与注册中心  
 - **9F-2**：正式 ModelVersion 仅由成功训练创建；lineage / repro / active 查询  
-- **9F-3**：TrainingJob + 完整 TrainingRun FSM + Stub Executor（**不**接 Qlib）
-
-**不**调用 `ModelTrainer` / Qlib、不评价模型、不接 Strategy LIVE。
+- **9F-3**：TrainingJob + 完整 TrainingRun FSM + Stub Executor  
+- **9F-4**：Model Adapter Contract + `QlibModelAdapter`（包装 Phase 2D `ModelTrainer`）
 
 ```text
 TrainingJob
   → TrainingRun (QUEUED→PREPARING→RUNNING→FINALIZING→SUCCEEDED)
-  → create_version_from_run
-  → ModelVersion (TRAINED)
-       ├── ModelArtifact
-       └── model_repro_manifest.json
-  ✕ 原地改 FAILED run 重跑（须 retry → 新 Run）
-  ✕ Qlib Adapter / ModelTrainer（→ 9F-4）
-  ✕ Model Evaluation / Strategy LIVE
+  → executor=stub|local → Stub
+  → executor=qlib → QlibModelAdapter → ModelTrainer → ArtifactCandidate
+  → create_version_from_run → ModelVersion (TRAINED)
+  ✕ Qlib 类型泄漏进 Domain
+  ✕ Model Evaluation / Strategy LIVE（→ 后续）
 ```
 
 ## 包位置
 
-`backend_api_python/app/services/research_data/model_platform/`
-
-| 模块 | 职责 |
+| 包 | 职责 |
 | --- | --- |
-| `protocol.py` | Model / ModelVersion / TrainingRun / ModelArtifact |
-| `lifecycle.py` | FSM：`DRAFT→…→ACTIVE→DEPRECATED→RETIRED` |
-| `lineage.py` | 正式创建血缘校验 + `get_lineage` 视图 |
-| `repro.py` | `model_repro_manifest.json` |
-| `prepare_gate.py` / `executor.py` | PREPARING 门控 + Stub 编排 |
-| `job.py` / `training_config.py` | TrainingJob / TrainingConfig hash |
-| `immutability.py` | TrainingRun FSM + Version lineage 硬化 |
-| `catalog.py` / `search.py` | 注册与检索 |
-| `hashing.py` | config / version / training_run hash |
-| `bridge_legacy.py` | → Phase 2D `ModelDefinition` / `ModelVersionRecord` |
-| `runner.py` | `ModelPlatformService` |
+| [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 治理：Registry / Job / Run FSM / Lineage |
+| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | 执行门面：`TrainingContext` / Registry / `QlibModelAdapter` |
 
-`ENGINE_VERSION=qd_model_platform@1`
+`model_platform/` **禁止**直接 `import qlib` / `model_training`；仅依赖 `model_adapters`。
+
+`ENGINE_VERSION=qd_model_platform@1` · Adapter `qd_model_adapter@1`
 
 ## 与 Phase 2D
 
-[`model_training/`](../../../../backend_api_python/app/services/research_data/model_training/) 仍是 LightGBM **执行层**。9F 是 **治理/注册层**。9F-4 再接 Qlib Adapter。
+[`model_training/`](../../../../backend_api_python/app/services/research_data/model_training/) 仍是 LightGBM **执行核**。9F-4 Adapter 将其包装为：
+
+```text
+TrainingContext → ResearchDatasetSpec + ModelTrainSpec → ModelTrainer.train
+  → ModelArtifactCandidate → create_version_from_run
+```
+
+数据入口：`dataset_ref` + DataQuery → Materializer → `QlibAdapter`（Qlib 不直连 R2）。
 
 ## Service API
 
 ```python
-ModelPlatformService(store, registry=None)
+ModelPlatformService(
+  store,
+  registry=None,
+  data_query=None,
+  qlib_adapter=None,
+  research_registry=None,
+  train_artifact_store=None,
+)
 
-.register_model / .get_model / .search
-.register_version  # 须 SUCCEEDED/FINALIZING run，或 inject.allow_draft_stub
-.create_version_from_run(...)
-.submit_training_job / .get_job / .list_runs_for_job
-.execute_training_run / .retry_training_run / .cancel_training_run
-.update_training_run_status / .create_training_run / .get_training_run
-.get_version / .list_versions / .get_active_version
-.get_lineage / .get_artifact_for_version / .get_repro_manifest
-.activate / .deprecate / .retire / .transition
-.delete_version  # 永远拒绝
+.submit_training_job / .execute_training_run / .retry_training_run / .cancel_training_run
+.create_version_from_run / .register_model / .get_lineage / …
+.predict(model_version_id, dataset_ref=..., segments=...)  # 薄；非 Signal
 ```
 
-**无** `train` / `predict` / `evaluate_model` / `auto_live` / `promote_strategy`。
+`resource_config.executor`: `stub`/`local`（默认）| `qlib`。
 
-## TrainingRun FSM（9F-3）
+Job/Run 增加 `dataset_ref`；qlib 路径 PREPARING 校验 hash 一致性。
+
+## TrainingRun FSM
 
 ```text
 QUEUED → PREPARING | CANCELLED
 PREPARING → RUNNING | FAILED
 RUNNING → FINALIZING | FAILED | CANCELLED
 FINALIZING → SUCCEEDED | FAILED
-SUCCEEDED / FAILED / CANCELLED → ∅
 ```
 
-PREPARING 校验 dataset/feature/label/snapshot；失败分类如 `DATA_MISSING`。  
-Retry：`retry_training_run` 新建 Run（`parent_training_run_id`），禁止改写父 Run。
+## Predict
 
-## ModelVersion Lifecycle
-
-```text
-DRAFT → TRAINING → TRAINED → EVALUATING → VALIDATED
-  → APPROVED → ACTIVE → DEPRECATED → RETIRED
-```
-
-正式路径从 `TRAINED` 起步。**Model ACTIVE ≠ Strategy LIVE。**
-
-## D1
-
-Migration [`0039_model_platform.sql`](../../../../workers/qd-research-d1/migrations/0039_model_platform.sql)。  
-**Verify 路径以 LocalJson 为 SSOT**，不依赖 D1。
+`PredictionRequest` → `PredictionResult`（instrument / prediction）。**Prediction ≠ Signal**。
 
 ## 验收
 
 ```bash
 cd backend_api_python
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research_data/test_phase9f_model_platform.py -q --confcutdir=tests/research_data
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase9f_model_platform.py \
+  tests/research_data/test_phase9f3_training_run.py \
+  tests/research_data/test_phase9f4_qlib_adapter.py -q \
+  --confcutdir=tests/research_data
 ```
 
-并保持 `verify_phase9e_factor_library.py` 绿。
+无 qlib/lightgbm 时 `verify_phase9f4` 仍验合同与 stub；真实训 skip。保持 `verify_phase9e` 绿。
 
 ## Non-goals
 
 ```text
-❌ Qlib Adapter / train execution（→ 9F-4）
-❌ Model Evaluation metrics（→ 9F-6）
-❌ Auto Strategy / LIVE
-❌ Replace Phase 2D ModelTrainer
-❌ Delete formal ModelVersion
+❌ 9F-5 完整 R2 Artifact Store 产品化
+❌ 9F-6 ModelEvaluation 实体
+❌ XGBoost/CatBoost/PyTorch 实装（Registry 可扩展）
+❌ Strategy / Signal / LIVE
+❌ Qlib Recorder 替代 TrainingRun
 ```
 
-## 后续子阶段（未实现）
+## 后续
 
-9F-4 Qlib Adapter · 9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro 闭环 · 9F-9 E2E
+9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro · 9F-9 E2E

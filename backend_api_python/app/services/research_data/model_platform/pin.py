@@ -162,6 +162,7 @@ def pin_training_run(
         model_code=spec.model_code,
         model_version_id=spec.model_version_id,
         requested_model_version=spec.requested_model_version,
+        dataset_ref=spec.dataset_ref,
         dataset_hash=spec.dataset_hash,
         snapshot_id=spec.snapshot_id,
         feature_set_id=spec.feature_set_id,

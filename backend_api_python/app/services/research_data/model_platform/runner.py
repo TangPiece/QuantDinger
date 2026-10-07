@@ -9,7 +9,14 @@ from typing import Any, Mapping
 from .artifact_store import ModelArtifactStore
 from .bridge_legacy import to_legacy_model_definition, to_legacy_model_version_record
 from .catalog import ModelCatalog
-from .executor import StubExecutorError, run_finalizing_stage, run_prepare_stage, run_running_stage
+from .executor import (
+    RunningStageResult,
+    StubExecutorError,
+    resolve_executor_kind,
+    run_finalizing_stage,
+    run_prepare_stage,
+    run_running_stage,
+)
 from .hashing import compute_model_config_hash
 from .immutability import (
     ModelImmutabilityError,
@@ -83,12 +90,17 @@ def _coerce_inject(
 
 
 class ModelPlatformService:
-    """Model Contract & Lineage（无 train / predict / evaluate_model / auto_live）。"""
+    """Model Contract & Lineage；训练经 Stub 或 model_adapters（无 auto_live）。"""
 
     def __init__(
         self,
         store: Path | ModelArtifactStore | None,
         registry: Any | None = None,
+        *,
+        data_query: Any | None = None,
+        qlib_adapter: Any | None = None,
+        research_registry: Any | None = None,
+        train_artifact_store: Any | None = None,
     ) -> None:
         if isinstance(store, ModelArtifactStore):
             self._store = store
@@ -97,6 +109,10 @@ class ModelPlatformService:
         else:
             self._store = ModelArtifactStore()
         self._registry = registry
+        self._data_query = data_query
+        self._qlib_adapter = qlib_adapter
+        self._research_registry = research_registry
+        self._train_artifact_store = train_artifact_store
         self._catalog = ModelCatalog()
         self._runs: dict[str, TrainingRun] = {}
         self._jobs: dict[str, TrainingJob] = {}
@@ -577,13 +593,74 @@ class ModelPlatformService:
             raise ModelPlatformError(f"training run not found: {training_run_id}")
         return run
 
+    def build_training_context(self, run: TrainingRun) -> Any:
+        """TrainingRun → model_adapters.TrainingContext（无 Qlib 类型）。"""
+        from app.services.research_data.model_adapters import (
+            TrainingContext,
+            TrainingRuntime,
+            TrainingSegments,
+        )
+
+        seg = TrainingSegments(
+            train_start=run.train_start,
+            train_end=run.train_end,
+            validation_start=run.validation_start,
+            validation_end=run.validation_end,
+            test_start=str((run.metadata or {}).get("test_start") or ""),
+            test_end=str((run.metadata or {}).get("test_end") or ""),
+        )
+        return TrainingContext(
+            training_run_id=run.training_run_id,
+            dataset_ref=run.dataset_ref,
+            dataset_hash=run.dataset_hash,
+            snapshot_id=run.snapshot_id,
+            feature_set_id=run.feature_set_id,
+            feature_set_hash=run.feature_set_hash,
+            label_hash=run.label_hash,
+            processor_version=run.processor_version,
+            config=dict(run.training_config or {}),
+            hyperparameters=dict(run.hyperparameters or {}),
+            random_seed=int(run.random_seed or 42),
+            framework=run.framework or "LIGHTGBM",
+            framework_version=run.framework_version,
+            segments=seg,
+            resource=dict(run.resource_config or {}),
+            runtime=TrainingRuntime(
+                artifact_root=str(
+                    getattr(self._train_artifact_store, "root", "") or ""
+                ),
+                sidecar_root=str(
+                    self._store.training_sidecar_dir(
+                        training_run_id=run.training_run_id
+                    )
+                ),
+            ),
+            metadata={
+                "model_code": run.model_code,
+                "model_version": run.requested_model_version or "1",
+                **dict(run.metadata or {}),
+            },
+        )
+
+    def _resolve_adapter(self, run: TrainingRun) -> Any:
+        from app.services.research_data.model_adapters import default_adapter_registry
+
+        algorithm = str((run.training_config or {}).get("algorithm") or "")
+        return default_adapter_registry().resolve(
+            framework=run.framework or "LIGHTGBM",
+            algorithm=algorithm,
+            qlib_adapter=self._qlib_adapter,
+            research_registry=self._research_registry,
+            artifact_store=self._train_artifact_store,
+        )
+
     def execute_training_run(
         self,
         training_run_id: str,
         *,
         inject: Mapping[str, Any] | ModelPlatformInject | None = None,
     ) -> TrainingRun:
-        """同步 Stub 编排：QUEUED→…→SUCCEEDED|FAILED|CANCELLED；成功则 create_version_from_run。"""
+        """同步编排：QUEUED→…→SUCCEEDED|FAILED|CANCELLED；成功则 create_version_from_run。"""
         inj = _coerce_inject(inject)
         run = self.get_training_run(training_run_id)
         if is_terminal_status(run.status):
@@ -593,10 +670,34 @@ class ModelPlatformService:
                 f"execute_training_run expects QUEUED, got {run.status}"
             )
 
+        kind = resolve_executor_kind(run)
+        adapter = None
+        ctx = None
+        if kind == "qlib":
+            try:
+                adapter = self._resolve_adapter(run)
+                ctx = self.build_training_context(run)
+            except Exception as exc:
+                failure_class = getattr(exc, "failure_class", "CONFIG_ERROR")
+                run = self.update_training_run_status(training_run_id, "PREPARING")
+                return self.update_training_run_status(
+                    training_run_id,
+                    "FAILED",
+                    failure_class=failure_class,
+                    failure_reason=str(exc),
+                    failure_detail="PREPARING",
+                )
+
         # PREPARING
         run = self.update_training_run_status(training_run_id, "PREPARING")
         try:
-            run_prepare_stage(run, inject=inj)
+            run_prepare_stage(
+                run,
+                inject=inj,
+                data_query=self._data_query,
+                adapter=adapter,
+                ctx=ctx,
+            )
         except StubExecutorError as exc:
             return self.update_training_run_status(
                 training_run_id,
@@ -609,8 +710,12 @@ class ModelPlatformService:
         # RUNNING
         run = self.update_training_run_status(training_run_id, "RUNNING")
         try:
-            logs_uri, metrics_uri, metrics = run_running_stage(
-                self._store, run, inject=inj
+            running: RunningStageResult = run_running_stage(
+                self._store,
+                run,
+                inject=inj,
+                adapter=adapter,
+                ctx=ctx,
             )
         except StubExecutorError as exc:
             if exc.failure_class == "CANCELLED":
@@ -628,6 +733,25 @@ class ModelPlatformService:
                 failure_detail=exc.stage,
             )
 
+        metrics = dict(running.metrics or {})
+        logs_uri = running.logs_uri
+        metrics_uri = running.metrics_uri
+        if running.candidate_metadata:
+            meta = dict(run.metadata or {})
+            meta["artifact_candidate"] = {
+                "artifact_uri": running.artifact_uri,
+                "checksum": running.checksum,
+                "file_size": running.file_size,
+                **dict(running.candidate_metadata),
+            }
+            if running.candidate_metadata.get("qlib_recorder_uri"):
+                meta["qlib_recorder_uri"] = running.candidate_metadata[
+                    "qlib_recorder_uri"
+                ]
+            run = run.model_copy(update={"metadata": meta})
+            write_training_run(self._store, run)
+            self._runs[training_run_id] = run
+
         # FINALIZING
         run = self.update_training_run_status(
             training_run_id,
@@ -637,7 +761,7 @@ class ModelPlatformService:
             metrics_uri=metrics_uri,
         )
         try:
-            checksum = run_finalizing_stage(run, inject=inj)
+            checksum = run_finalizing_stage(run, inject=inj, running=running)
         except StubExecutorError as exc:
             return self.update_training_run_status(
                 training_run_id,
@@ -661,14 +785,13 @@ class ModelPlatformService:
                 or (inj.processor_version if inj else ""),
                 config=dict(run.training_config or {}),
                 hyperparameters=dict(run.hyperparameters or {}),
-                framework=run.framework,
-                framework_version=run.framework_version,
+                framework=running.framework or run.framework,
+                framework_version=running.framework_version or run.framework_version,
                 code_version=run.code_version,
                 environment_hash=run.environment_hash,
                 random_seed=run.random_seed,
                 training_run_id=run.training_run_id,
             )
-            # fill from inject known if still empty
             if inj:
                 if not lineage.snapshot_id and inj.known_hashes.get("snapshot_id"):
                     lineage = lineage.model_copy(
@@ -682,6 +805,9 @@ class ModelPlatformService:
                     lineage = lineage.model_copy(
                         update={"processor_version": inj.processor_version}
                     )
+            artifact_uri = running.artifact_uri or (
+                f"qd/artifacts/model/{run.training_run_id}/"
+            )
             try:
                 ver = self.create_version_from_run(
                     run.training_run_id,
@@ -689,10 +815,12 @@ class ModelPlatformService:
                     lineage_spec=lineage,
                     artifact_spec=ModelArtifactSpec(
                         model_version_id="pending",
-                        artifact_uri=f"qd/artifacts/model/{run.training_run_id}/",
+                        artifact_uri=artifact_uri,
                         checksum=checksum,
-                        framework=run.framework or "CUSTOM",
-                        framework_version=run.framework_version,
+                        file_size=int(running.file_size or 0),
+                        framework=running.framework or run.framework or "CUSTOM",
+                        framework_version=running.framework_version
+                        or run.framework_version,
                     ),
                     inject=inject,
                 )
@@ -725,6 +853,60 @@ class ModelPlatformService:
             write_training_job(self._store, closed)
             self._jobs[job.job_id] = closed
         return run
+
+    def predict(
+        self,
+        model_version_id: str,
+        *,
+        dataset_ref: str,
+        dataset_hash: str = "",
+        prediction_time: str = "",
+        segments: Mapping[str, str] | None = None,
+    ) -> Any:
+        """薄 Predict：加载 TRAINED artifact → Adapter.predict（非 Signal）。"""
+        from app.services.research_data.model_adapters import (
+            PredictionRequest,
+            TrainingSegments,
+        )
+
+        version = self.get_version(model_version_id)
+        if version.lifecycle in ("DRAFT", "TRAINING", "RETIRED"):
+            raise ModelPlatformError(
+                f"predict not allowed for lifecycle {version.lifecycle}"
+            )
+        if not version.artifact_id:
+            raise ModelPlatformError("model version missing artifact_id")
+        art = self.get_artifact(version.artifact_id)
+        seg_map = dict(segments or {})
+        req = PredictionRequest(
+            model_version_id=version.model_version_id,
+            artifact_uri=art.artifact_uri,
+            dataset_ref=dataset_ref,
+            dataset_hash=dataset_hash or version.dataset_hash,
+            feature_schema_hash=version.feature_set_hash,
+            prediction_time=prediction_time,
+            segments=TrainingSegments(
+                train_start=seg_map.get("train_start", ""),
+                train_end=seg_map.get("train_end", ""),
+                validation_start=seg_map.get("validation_start", ""),
+                validation_end=seg_map.get("validation_end", ""),
+                test_start=seg_map.get("test_start", ""),
+                test_end=seg_map.get("test_end", ""),
+            ),
+        )
+        # 构造假 run 仅用于 resolve adapter
+        fake = TrainingRun.model_construct(
+            training_run_id="predict",
+            training_run_hash="",
+            framework=version.framework or "LIGHTGBM",
+            training_config={"algorithm": "lightgbm"},
+            created_at=datetime.now(timezone.utc),
+        )
+        adapter = self._resolve_adapter(fake)
+        try:
+            return adapter.predict(req)
+        except Exception as exc:
+            raise ModelPlatformError(str(exc)) from exc
 
     def retry_training_run(self, training_run_id: str) -> TrainingRun:
         parent = self.get_training_run(training_run_id)

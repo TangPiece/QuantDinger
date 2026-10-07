@@ -18,6 +18,9 @@ def evaluate_prepare_gate(
     run: TrainingRun,
     *,
     known_hashes: Mapping[str, str] | None = None,
+    require_dataset_ref: bool = False,
+    data_query: Any | None = None,
+    skip_dataset_ref_check: bool = False,
 ) -> list[str]:
     """返回 reasons；空 = PASS。"""
     reasons: list[str] = []
@@ -33,6 +36,23 @@ def evaluate_prepare_gate(
         reasons.append("label_hash_missing")
     if not (run.processor_version or "").strip():
         reasons.append("processor_version_missing")
+
+    if require_dataset_ref and not (run.dataset_ref or "").strip():
+        reasons.append("dataset_ref_missing")
+
+    if (
+        not skip_dataset_ref_check
+        and data_query is not None
+        and (run.dataset_ref or "").strip()
+        and (run.dataset_hash or "").strip()
+    ):
+        try:
+            handle = data_query.dataset(run.dataset_ref)
+            resolved = getattr(handle, "dataset_hash", "") or ""
+            if resolved and resolved != run.dataset_hash:
+                reasons.append("dataset_hash_not_found")
+        except Exception:
+            reasons.append("dataset_hash_not_found")
 
     if known:
         checks = (
@@ -61,6 +81,8 @@ def assert_prepare_pass(reasons: list[str]) -> None:
             raise PrepareGateError("FEATURE_ERROR", joined)
         if any("label" in r for r in reasons):
             raise PrepareGateError("LABEL_ERROR", joined)
+        if any("dataset_ref" in r for r in reasons):
+            raise PrepareGateError("CONFIG_ERROR", joined)
         raise PrepareGateError("DATA_MISSING", joined)
     raise PrepareGateError("DATA_ERROR", joined)
 

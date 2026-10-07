@@ -1,0 +1,952 @@
+diff --git a/backend_api_python/app/services/research_data/model_platform/executor.py b/backend_api_python/app/services/research_data/model_platform/executor.py
+index 2e1cec2..617ea32 100644
+--- a/backend_api_python/app/services/research_data/model_platform/executor.py
++++ b/backend_api_python/app/services/research_data/model_platform/executor.py
+@@ -1,9 +1,10 @@
+-"""Stub Training Executor（无 Qlib / ModelTrainer）。"""
++"""Training Executor：stub（默认）或 qlib（经 model_adapters 门面）。"""
+ 
+ from __future__ import annotations
+ 
+ import hashlib
+ import json
++from dataclasses import dataclass, field
+ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any
+@@ -26,6 +27,29 @@ class StubExecutorError(RuntimeError):
+         self.stage = stage
+ 
+ 
++@dataclass
++class RunningStageResult:
++    logs_uri: str
++    metrics_uri: str
++    metrics: dict[str, Any] = field(default_factory=dict)
++    artifact_uri: str = ""
++    checksum: str = ""
++    file_size: int = 0
++    framework: str = ""
++    framework_version: str = ""
++    candidate_metadata: dict[str, Any] = field(default_factory=dict)
++
++
++def resolve_executor_kind(run: TrainingRun) -> str:
++    rc = dict(run.resource_config or {})
++    kind = str(rc.get("executor") or "local").strip().lower()
++    if kind in ("", "local", "stub"):
++        return "stub"
++    if kind in ("qlib", "lightgbm"):
++        return "qlib"
++    return kind
++
++
+ def write_stub_sidecars(
+     store: ModelArtifactStore,
+     run: TrainingRun,
+@@ -56,10 +80,7 @@ def write_stub_sidecars(
+     m.setdefault("best_score", 0.15)
+     m.setdefault("samples", 1000)
+     m.setdefault("features", 8)
+-    m.setdefault(
+-        "training_duration_sec",
+-        0.01,
+-    )
++    m.setdefault("training_duration_sec", 0.01)
+     metrics_path = metrics_dir / "metrics.json"
+     metrics_path.write_text(
+         json.dumps(m, ensure_ascii=False, indent=2, sort_keys=True),
+@@ -78,6 +99,32 @@ def write_stub_sidecars(
+     return str(stdout.resolve()), str(metrics_path.resolve()), m
+ 
+ 
++def write_train_sidecars(
++    store: ModelArtifactStore,
++    run: TrainingRun,
++    *,
++    metrics: dict[str, Any] | None = None,
++    extra_log: str = "",
++) -> tuple[str, str, dict[str, Any]]:
++    base = store.training_sidecar_dir(training_run_id=run.training_run_id)
++    logs_dir = base / "logs"
++    metrics_dir = base / "metrics"
++    logs_dir.mkdir(parents=True, exist_ok=True)
++    metrics_dir.mkdir(parents=True, exist_ok=True)
++    stdout = logs_dir / "stdout.log"
++    stdout.write_text(
++        f"qlib train start {run.training_run_id}\n{extra_log}\n",
++        encoding="utf-8",
++    )
++    m = dict(metrics or {})
++    metrics_path = metrics_dir / "metrics.json"
++    metrics_path.write_text(
++        json.dumps(m, ensure_ascii=False, indent=2, sort_keys=True),
++        encoding="utf-8",
++    )
++    return str(stdout.resolve()), str(metrics_path.resolve()), m
++
++
+ def stub_artifact_checksum(run: TrainingRun) -> str:
+     payload = f"{run.training_run_id}|{run.training_run_hash}|{run.training_config_hash}"
+     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+@@ -87,6 +134,9 @@ def run_prepare_stage(
+     run: TrainingRun,
+     *,
+     inject: ModelPlatformInject | None,
++    data_query: Any | None = None,
++    adapter: Any | None = None,
++    ctx: Any | None = None,
+ ) -> None:
+     if inject and inject.simulate_fail_at == "PREPARING":
+         raise StubExecutorError(
+@@ -94,8 +144,16 @@ def run_prepare_stage(
+             failure_class="DATA_MISSING",
+             stage="PREPARING",
+         )
++    kind = resolve_executor_kind(run)
+     known = inject.known_hashes if inject else None
+-    reasons = evaluate_prepare_gate(run, known_hashes=known)
++    skip_ref = bool(inject.skip_dataset_ref_check) if inject else False
++    reasons = evaluate_prepare_gate(
++        run,
++        known_hashes=known,
++        require_dataset_ref=(kind == "qlib"),
++        data_query=data_query,
++        skip_dataset_ref_check=skip_ref,
++    )
+     try:
+         assert_prepare_pass(reasons)
+     except PrepareGateError as exc:
+@@ -103,13 +161,24 @@ def run_prepare_stage(
+             exc.reason, failure_class=exc.failure_class, stage="PREPARING"
+         ) from exc
+ 
++    if kind == "qlib" and adapter is not None and ctx is not None:
++        try:
++            adapter.prepare(ctx)
++        except Exception as exc:
++            failure_class = getattr(exc, "failure_class", "DATA_ERROR")
++            raise StubExecutorError(
++                str(exc), failure_class=failure_class, stage="PREPARING"
++            ) from exc
++
+ 
+ def run_running_stage(
+     store: ModelArtifactStore,
+     run: TrainingRun,
+     *,
+     inject: ModelPlatformInject | None,
+-) -> tuple[str, str, dict[str, Any]]:
++    adapter: Any | None = None,
++    ctx: Any | None = None,
++) -> RunningStageResult:
+     if inject and inject.simulate_cancel:
+         raise StubExecutorError(
+             "inject cancel", failure_class="CANCELLED", stage="RUNNING"
+@@ -120,13 +189,53 @@ def run_running_stage(
+             failure_class="MODEL_ERROR",
+             stage="RUNNING",
+         )
+-    return write_stub_sidecars(store, run)
++    kind = resolve_executor_kind(run)
++    if kind != "qlib":
++        logs_uri, metrics_uri, metrics = write_stub_sidecars(store, run)
++        return RunningStageResult(
++            logs_uri=logs_uri,
++            metrics_uri=metrics_uri,
++            metrics=metrics,
++        )
++
++    if adapter is None or ctx is None:
++        raise StubExecutorError(
++            "qlib executor requires adapter and TrainingContext",
++            failure_class="RESOURCE_ERROR",
++            stage="RUNNING",
++        )
++    try:
++        candidate = adapter.train(ctx)
++    except Exception as exc:
++        failure_class = getattr(exc, "failure_class", "MODEL_ERROR")
++        raise StubExecutorError(
++            str(exc), failure_class=failure_class, stage="RUNNING"
++        ) from exc
++
++    logs_uri, metrics_uri, metrics = write_train_sidecars(
++        store,
++        run,
++        metrics=dict(candidate.metrics or {}),
++        extra_log=f"checksum={candidate.checksum}\nuri={candidate.artifact_uri}",
++    )
++    return RunningStageResult(
++        logs_uri=logs_uri,
++        metrics_uri=metrics_uri,
++        metrics=metrics,
++        artifact_uri=candidate.artifact_uri,
++        checksum=candidate.checksum,
++        file_size=int(candidate.file_size or 0),
++        framework=candidate.framework or run.framework or "LIGHTGBM",
++        framework_version=candidate.framework_version or run.framework_version,
++        candidate_metadata=dict(candidate.model_metadata or {}),
++    )
+ 
+ 
+ def run_finalizing_stage(
+     run: TrainingRun,
+     *,
+     inject: ModelPlatformInject | None,
++    running: RunningStageResult | None = None,
+ ) -> str:
+     if inject and inject.simulate_fail_at == "FINALIZING":
+         raise StubExecutorError(
+@@ -134,14 +243,19 @@ def run_finalizing_stage(
+             failure_class="ARTIFACT_ERROR",
+             stage="FINALIZING",
+         )
++    if running and running.checksum:
++        return running.checksum
+     return stub_artifact_checksum(run)
+ 
+ 
+ __all__ = [
++    "RunningStageResult",
+     "StubExecutorError",
++    "resolve_executor_kind",
+     "run_finalizing_stage",
+     "run_prepare_stage",
+     "run_running_stage",
+     "stub_artifact_checksum",
+     "write_stub_sidecars",
++    "write_train_sidecars",
+ ]
+diff --git a/backend_api_python/app/services/research_data/model_platform/immutability.py b/backend_api_python/app/services/research_data/model_platform/immutability.py
+index 643341b..83e644a 100644
+--- a/backend_api_python/app/services/research_data/model_platform/immutability.py
++++ b/backend_api_python/app/services/research_data/model_platform/immutability.py
+@@ -48,6 +48,7 @@ def assert_training_run_immutable(existing: TrainingRun, incoming: TrainingRun)
+     if existing.training_run_hash != incoming.training_run_hash:
+         raise ModelImmutabilityError("training_run_hash mismatch on immutable slot")
+     for field in (
++        "dataset_ref",
+         "dataset_hash",
+         "feature_set_hash",
+         "factor_portfolio_hash",
+@@ -67,6 +68,7 @@ def assert_training_run_immutable(existing: TrainingRun, incoming: TrainingRun)
+             raise ModelImmutabilityError("immutable hyperparameters drift")
+     if existing.lineage_frozen:
+         for field in (
++            "dataset_ref",
+             "dataset_hash",
+             "snapshot_id",
+             "feature_set_hash",
+diff --git a/backend_api_python/app/services/research_data/model_platform/job.py b/backend_api_python/app/services/research_data/model_platform/job.py
+index 9c9257d..fa6e669 100644
+--- a/backend_api_python/app/services/research_data/model_platform/job.py
++++ b/backend_api_python/app/services/research_data/model_platform/job.py
+@@ -24,6 +24,7 @@ def pin_training_job(
+         model_id=spec.model_id,
+         model_code=spec.model_code,
+         requested_version=spec.requested_version,
++        dataset_ref=spec.dataset_ref,
+         dataset_hash=spec.dataset_hash,
+         snapshot_id=spec.snapshot_id,
+         feature_set_id=spec.feature_set_id,
+@@ -59,6 +60,7 @@ def run_spec_from_job(job: TrainingJob, **overrides: Any):
+         "model_id": job.model_id,
+         "model_code": job.model_code,
+         "requested_model_version": job.requested_version,
++        "dataset_ref": job.dataset_ref,
+         "dataset_hash": job.dataset_hash,
+         "snapshot_id": job.snapshot_id,
+         "feature_set_id": job.feature_set_id,
+diff --git a/backend_api_python/app/services/research_data/model_platform/pin.py b/backend_api_python/app/services/research_data/model_platform/pin.py
+index ad5ac3e..1a5a76f 100644
+--- a/backend_api_python/app/services/research_data/model_platform/pin.py
++++ b/backend_api_python/app/services/research_data/model_platform/pin.py
+@@ -162,6 +162,7 @@ def pin_training_run(
+         model_code=spec.model_code,
+         model_version_id=spec.model_version_id,
+         requested_model_version=spec.requested_model_version,
++        dataset_ref=spec.dataset_ref,
+         dataset_hash=spec.dataset_hash,
+         snapshot_id=spec.snapshot_id,
+         feature_set_id=spec.feature_set_id,
+diff --git a/backend_api_python/app/services/research_data/model_platform/prepare_gate.py b/backend_api_python/app/services/research_data/model_platform/prepare_gate.py
+index 56f5034..63052e0 100644
+--- a/backend_api_python/app/services/research_data/model_platform/prepare_gate.py
++++ b/backend_api_python/app/services/research_data/model_platform/prepare_gate.py
+@@ -18,6 +18,9 @@ def evaluate_prepare_gate(
+     run: TrainingRun,
+     *,
+     known_hashes: Mapping[str, str] | None = None,
++    require_dataset_ref: bool = False,
++    data_query: Any | None = None,
++    skip_dataset_ref_check: bool = False,
+ ) -> list[str]:
+     """返回 reasons；空 = PASS。"""
+     reasons: list[str] = []
+@@ -34,6 +37,23 @@ def evaluate_prepare_gate(
+     if not (run.processor_version or "").strip():
+         reasons.append("processor_version_missing")
+ 
++    if require_dataset_ref and not (run.dataset_ref or "").strip():
++        reasons.append("dataset_ref_missing")
++
++    if (
++        not skip_dataset_ref_check
++        and data_query is not None
++        and (run.dataset_ref or "").strip()
++        and (run.dataset_hash or "").strip()
++    ):
++        try:
++            handle = data_query.dataset(run.dataset_ref)
++            resolved = getattr(handle, "dataset_hash", "") or ""
++            if resolved and resolved != run.dataset_hash:
++                reasons.append("dataset_hash_not_found")
++        except Exception:
++            reasons.append("dataset_hash_not_found")
++
+     if known:
+         checks = (
+             ("dataset_hash", "DATA_MISSING"),
+@@ -61,6 +81,8 @@ def assert_prepare_pass(reasons: list[str]) -> None:
+             raise PrepareGateError("FEATURE_ERROR", joined)
+         if any("label" in r for r in reasons):
+             raise PrepareGateError("LABEL_ERROR", joined)
++        if any("dataset_ref" in r for r in reasons):
++            raise PrepareGateError("CONFIG_ERROR", joined)
+         raise PrepareGateError("DATA_MISSING", joined)
+     raise PrepareGateError("DATA_ERROR", joined)
+ 
+diff --git a/backend_api_python/app/services/research_data/model_platform/protocol.py b/backend_api_python/app/services/research_data/model_platform/protocol.py
+index c969328..fa639ab 100644
+--- a/backend_api_python/app/services/research_data/model_platform/protocol.py
++++ b/backend_api_python/app/services/research_data/model_platform/protocol.py
+@@ -190,6 +190,7 @@ class TrainingJobSpec(_PlatformModel):
+     model_id: str = ""
+     model_code: str = ""
+     requested_version: str = ""
++    dataset_ref: str = ""
+     dataset_hash: str = ""
+     snapshot_id: str = ""
+     feature_set_id: str = ""
+@@ -223,6 +224,7 @@ class TrainingJob(_PlatformModel):
+     model_id: str = ""
+     model_code: str = ""
+     requested_version: str = ""
++    dataset_ref: str = ""
+     dataset_hash: str = ""
+     snapshot_id: str = ""
+     feature_set_id: str = ""
+@@ -260,6 +262,7 @@ class TrainingRunSpec(_PlatformModel):
+     model_code: str = ""
+     model_version_id: str = ""
+     requested_model_version: str = ""
++    dataset_ref: str = ""
+     dataset_hash: str = ""
+     snapshot_id: str = ""
+     feature_set_id: str = ""
+@@ -300,6 +303,7 @@ class TrainingRun(_PlatformModel):
+     model_code: str = ""
+     model_version_id: str = ""
+     requested_model_version: str = ""
++    dataset_ref: str = ""
+     dataset_hash: str = ""
+     snapshot_id: str = ""
+     feature_set_id: str = ""
+@@ -407,6 +411,8 @@ class ModelPlatformInject(_PlatformModel):
+     label_hash: str = ""
+     processor_version: str = ""
+     snapshot_id: str = ""
++    # 9F-4：注入 DataQuery 侧已解析的 dataset_hash（无 registry 时跳过 live 校验）
++    skip_dataset_ref_check: bool = False
+ 
+ 
+ __all__ = [
+diff --git a/backend_api_python/app/services/research_data/model_platform/runner.py b/backend_api_python/app/services/research_data/model_platform/runner.py
+index e06d33f..67cba6f 100644
+--- a/backend_api_python/app/services/research_data/model_platform/runner.py
++++ b/backend_api_python/app/services/research_data/model_platform/runner.py
+@@ -9,7 +9,14 @@ from typing import Any, Mapping
+ from .artifact_store import ModelArtifactStore
+ from .bridge_legacy import to_legacy_model_definition, to_legacy_model_version_record
+ from .catalog import ModelCatalog
+-from .executor import StubExecutorError, run_finalizing_stage, run_prepare_stage, run_running_stage
++from .executor import (
++    RunningStageResult,
++    StubExecutorError,
++    resolve_executor_kind,
++    run_finalizing_stage,
++    run_prepare_stage,
++    run_running_stage,
++)
+ from .hashing import compute_model_config_hash
+ from .immutability import (
+     ModelImmutabilityError,
+@@ -83,12 +90,17 @@ def _coerce_inject(
+ 
+ 
+ class ModelPlatformService:
+-    """Model Contract & Lineage（无 train / predict / evaluate_model / auto_live）。"""
++    """Model Contract & Lineage；训练经 Stub 或 model_adapters（无 auto_live）。"""
+ 
+     def __init__(
+         self,
+         store: Path | ModelArtifactStore | None,
+         registry: Any | None = None,
++        *,
++        data_query: Any | None = None,
++        qlib_adapter: Any | None = None,
++        research_registry: Any | None = None,
++        train_artifact_store: Any | None = None,
+     ) -> None:
+         if isinstance(store, ModelArtifactStore):
+             self._store = store
+@@ -97,6 +109,10 @@ class ModelPlatformService:
+         else:
+             self._store = ModelArtifactStore()
+         self._registry = registry
++        self._data_query = data_query
++        self._qlib_adapter = qlib_adapter
++        self._research_registry = research_registry
++        self._train_artifact_store = train_artifact_store
+         self._catalog = ModelCatalog()
+         self._runs: dict[str, TrainingRun] = {}
+         self._jobs: dict[str, TrainingJob] = {}
+@@ -577,13 +593,74 @@ class ModelPlatformService:
+             raise ModelPlatformError(f"training run not found: {training_run_id}")
+         return run
+ 
++    def build_training_context(self, run: TrainingRun) -> Any:
++        """TrainingRun → model_adapters.TrainingContext（无 Qlib 类型）。"""
++        from app.services.research_data.model_adapters import (
++            TrainingContext,
++            TrainingRuntime,
++            TrainingSegments,
++        )
++
++        seg = TrainingSegments(
++            train_start=run.train_start,
++            train_end=run.train_end,
++            validation_start=run.validation_start,
++            validation_end=run.validation_end,
++            test_start=str((run.metadata or {}).get("test_start") or ""),
++            test_end=str((run.metadata or {}).get("test_end") or ""),
++        )
++        return TrainingContext(
++            training_run_id=run.training_run_id,
++            dataset_ref=run.dataset_ref,
++            dataset_hash=run.dataset_hash,
++            snapshot_id=run.snapshot_id,
++            feature_set_id=run.feature_set_id,
++            feature_set_hash=run.feature_set_hash,
++            label_hash=run.label_hash,
++            processor_version=run.processor_version,
++            config=dict(run.training_config or {}),
++            hyperparameters=dict(run.hyperparameters or {}),
++            random_seed=int(run.random_seed or 42),
++            framework=run.framework or "LIGHTGBM",
++            framework_version=run.framework_version,
++            segments=seg,
++            resource=dict(run.resource_config or {}),
++            runtime=TrainingRuntime(
++                artifact_root=str(
++                    getattr(self._train_artifact_store, "root", "") or ""
++                ),
++                sidecar_root=str(
++                    self._store.training_sidecar_dir(
++                        training_run_id=run.training_run_id
++                    )
++                ),
++            ),
++            metadata={
++                "model_code": run.model_code,
++                "model_version": run.requested_model_version or "1",
++                **dict(run.metadata or {}),
++            },
++        )
++
++    def _resolve_adapter(self, run: TrainingRun) -> Any:
++        from app.services.research_data.model_adapters import default_adapter_registry
++
++        algorithm = str((run.training_config or {}).get("algorithm") or "")
++        return default_adapter_registry().resolve(
++            framework=run.framework or "LIGHTGBM",
++            algorithm=algorithm,
++            qlib_adapter=self._qlib_adapter,
++            research_registry=self._research_registry,
++            artifact_store=self._train_artifact_store,
++        )
++
+     def execute_training_run(
+         self,
+         training_run_id: str,
+         *,
+         inject: Mapping[str, Any] | ModelPlatformInject | None = None,
+     ) -> TrainingRun:
+-        """同步 Stub 编排：QUEUED→…→SUCCEEDED|FAILED|CANCELLED；成功则 create_version_from_run。"""
++        """同步编排：QUEUED→…→SUCCEEDED|FAILED|CANCELLED；成功则 create_version_from_run。"""
+         inj = _coerce_inject(inject)
+         run = self.get_training_run(training_run_id)
+         if is_terminal_status(run.status):
+@@ -593,10 +670,34 @@ class ModelPlatformService:
+                 f"execute_training_run expects QUEUED, got {run.status}"
+             )
+ 
++        kind = resolve_executor_kind(run)
++        adapter = None
++        ctx = None
++        if kind == "qlib":
++            try:
++                adapter = self._resolve_adapter(run)
++                ctx = self.build_training_context(run)
++            except Exception as exc:
++                failure_class = getattr(exc, "failure_class", "CONFIG_ERROR")
++                run = self.update_training_run_status(training_run_id, "PREPARING")
++                return self.update_training_run_status(
++                    training_run_id,
++                    "FAILED",
++                    failure_class=failure_class,
++                    failure_reason=str(exc),
++                    failure_detail="PREPARING",
++                )
++
+         # PREPARING
+         run = self.update_training_run_status(training_run_id, "PREPARING")
+         try:
+-            run_prepare_stage(run, inject=inj)
++            run_prepare_stage(
++                run,
++                inject=inj,
++                data_query=self._data_query,
++                adapter=adapter,
++                ctx=ctx,
++            )
+         except StubExecutorError as exc:
+             return self.update_training_run_status(
+                 training_run_id,
+@@ -609,8 +710,12 @@ class ModelPlatformService:
+         # RUNNING
+         run = self.update_training_run_status(training_run_id, "RUNNING")
+         try:
+-            logs_uri, metrics_uri, metrics = run_running_stage(
+-                self._store, run, inject=inj
++            running: RunningStageResult = run_running_stage(
++                self._store,
++                run,
++                inject=inj,
++                adapter=adapter,
++                ctx=ctx,
+             )
+         except StubExecutorError as exc:
+             if exc.failure_class == "CANCELLED":
+@@ -628,6 +733,25 @@ class ModelPlatformService:
+                 failure_detail=exc.stage,
+             )
+ 
++        metrics = dict(running.metrics or {})
++        logs_uri = running.logs_uri
++        metrics_uri = running.metrics_uri
++        if running.candidate_metadata:
++            meta = dict(run.metadata or {})
++            meta["artifact_candidate"] = {
++                "artifact_uri": running.artifact_uri,
++                "checksum": running.checksum,
++                "file_size": running.file_size,
++                **dict(running.candidate_metadata),
++            }
++            if running.candidate_metadata.get("qlib_recorder_uri"):
++                meta["qlib_recorder_uri"] = running.candidate_metadata[
++                    "qlib_recorder_uri"
++                ]
++            run = run.model_copy(update={"metadata": meta})
++            write_training_run(self._store, run)
++            self._runs[training_run_id] = run
++
+         # FINALIZING
+         run = self.update_training_run_status(
+             training_run_id,
+@@ -637,7 +761,7 @@ class ModelPlatformService:
+             metrics_uri=metrics_uri,
+         )
+         try:
+-            checksum = run_finalizing_stage(run, inject=inj)
++            checksum = run_finalizing_stage(run, inject=inj, running=running)
+         except StubExecutorError as exc:
+             return self.update_training_run_status(
+                 training_run_id,
+@@ -661,14 +785,13 @@ class ModelPlatformService:
+                 or (inj.processor_version if inj else ""),
+                 config=dict(run.training_config or {}),
+                 hyperparameters=dict(run.hyperparameters or {}),
+-                framework=run.framework,
+-                framework_version=run.framework_version,
++                framework=running.framework or run.framework,
++                framework_version=running.framework_version or run.framework_version,
+                 code_version=run.code_version,
+                 environment_hash=run.environment_hash,
+                 random_seed=run.random_seed,
+                 training_run_id=run.training_run_id,
+             )
+-            # fill from inject known if still empty
+             if inj:
+                 if not lineage.snapshot_id and inj.known_hashes.get("snapshot_id"):
+                     lineage = lineage.model_copy(
+@@ -682,6 +805,9 @@ class ModelPlatformService:
+                     lineage = lineage.model_copy(
+                         update={"processor_version": inj.processor_version}
+                     )
++            artifact_uri = running.artifact_uri or (
++                f"qd/artifacts/model/{run.training_run_id}/"
++            )
+             try:
+                 ver = self.create_version_from_run(
+                     run.training_run_id,
+@@ -689,10 +815,12 @@ class ModelPlatformService:
+                     lineage_spec=lineage,
+                     artifact_spec=ModelArtifactSpec(
+                         model_version_id="pending",
+-                        artifact_uri=f"qd/artifacts/model/{run.training_run_id}/",
++                        artifact_uri=artifact_uri,
+                         checksum=checksum,
+-                        framework=run.framework or "CUSTOM",
+-                        framework_version=run.framework_version,
++                        file_size=int(running.file_size or 0),
++                        framework=running.framework or run.framework or "CUSTOM",
++                        framework_version=running.framework_version
++                        or run.framework_version,
+                     ),
+                     inject=inject,
+                 )
+@@ -726,6 +854,60 @@ class ModelPlatformService:
+             self._jobs[job.job_id] = closed
+         return run
+ 
++    def predict(
++        self,
++        model_version_id: str,
++        *,
++        dataset_ref: str,
++        dataset_hash: str = "",
++        prediction_time: str = "",
++        segments: Mapping[str, str] | None = None,
++    ) -> Any:
++        """薄 Predict：加载 TRAINED artifact → Adapter.predict（非 Signal）。"""
++        from app.services.research_data.model_adapters import (
++            PredictionRequest,
++            TrainingSegments,
++        )
++
++        version = self.get_version(model_version_id)
++        if version.lifecycle in ("DRAFT", "TRAINING", "RETIRED"):
++            raise ModelPlatformError(
++                f"predict not allowed for lifecycle {version.lifecycle}"
++            )
++        if not version.artifact_id:
++            raise ModelPlatformError("model version missing artifact_id")
++        art = self.get_artifact(version.artifact_id)
++        seg_map = dict(segments or {})
++        req = PredictionRequest(
++            model_version_id=version.model_version_id,
++            artifact_uri=art.artifact_uri,
++            dataset_ref=dataset_ref,
++            dataset_hash=dataset_hash or version.dataset_hash,
++            feature_schema_hash=version.feature_set_hash,
++            prediction_time=prediction_time,
++            segments=TrainingSegments(
++                train_start=seg_map.get("train_start", ""),
++                train_end=seg_map.get("train_end", ""),
++                validation_start=seg_map.get("validation_start", ""),
++                validation_end=seg_map.get("validation_end", ""),
++                test_start=seg_map.get("test_start", ""),
++                test_end=seg_map.get("test_end", ""),
++            ),
++        )
++        # 构造假 run 仅用于 resolve adapter
++        fake = TrainingRun.model_construct(
++            training_run_id="predict",
++            training_run_hash="",
++            framework=version.framework or "LIGHTGBM",
++            training_config={"algorithm": "lightgbm"},
++            created_at=datetime.now(timezone.utc),
++        )
++        adapter = self._resolve_adapter(fake)
++        try:
++            return adapter.predict(req)
++        except Exception as exc:
++            raise ModelPlatformError(str(exc)) from exc
++
+     def retry_training_run(self, training_run_id: str) -> TrainingRun:
+         parent = self.get_training_run(training_run_id)
+         if parent.status not in ("FAILED", "CANCELLED"):
+diff --git a/backend_api_python/scripts/verify_phase9f_model_platform.py b/backend_api_python/scripts/verify_phase9f_model_platform.py
+index 25fb09a..de57587 100644
+--- a/backend_api_python/scripts/verify_phase9f_model_platform.py
++++ b/backend_api_python/scripts/verify_phase9f_model_platform.py
+@@ -43,7 +43,7 @@ def main() -> int:
+     svc = make_model_platform_env(tmp / "main")
+ 
+     checks["no_train"] = not hasattr(ModelPlatformService, "train")
+-    checks["no_predict"] = not hasattr(ModelPlatformService, "predict")
++    checks["has_predict"] = hasattr(ModelPlatformService, "predict")  # 9F-4 薄 Predict
+     checks["no_evaluate_model"] = not hasattr(ModelPlatformService, "evaluate_model")
+     checks["no_auto_live"] = not hasattr(ModelPlatformService, "auto_live")
+     checks["has_submit_job"] = hasattr(svc, "submit_training_job")
+diff --git a/backend_api_python/tests/research_data/test_phase9f_model_platform.py b/backend_api_python/tests/research_data/test_phase9f_model_platform.py
+index 19bbbbb..a59b98c 100644
+--- a/backend_api_python/tests/research_data/test_phase9f_model_platform.py
++++ b/backend_api_python/tests/research_data/test_phase9f_model_platform.py
+@@ -35,7 +35,7 @@ def test_engine_version():
+ 
+ def test_no_forbidden_apis():
+     assert not hasattr(ModelPlatformService, "train")
+-    assert not hasattr(ModelPlatformService, "predict")
++    assert hasattr(ModelPlatformService, "predict")  # 9F-4 薄 Predict（非 Signal）
+     assert not hasattr(ModelPlatformService, "evaluate_model")
+     assert not hasattr(ModelPlatformService, "auto_live")
+     assert not hasattr(ModelPlatformService, "promote_strategy")
+diff --git a/docs/COMMANDS_CN.md b/docs/COMMANDS_CN.md
+index 80b864e..9df7962 100644
+--- a/docs/COMMANDS_CN.md
++++ b/docs/COMMANDS_CN.md
+@@ -808,9 +808,9 @@ QUANTDINGER_SKIP_APP_INIT=1 \
+ 
+ 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
+ 
+-### Phase 9F Model Platform（9F-1～9F-3）
++### Phase 9F Model Platform（9F-1～9F-4）
+ 
+-Registry / Lineage / TrainingJob+TrainingRun Stub 编排；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
++Registry / Lineage / TrainingJob+TrainingRun + Qlib Model Adapter；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
+ 
+ ```bash
+ cd backend_api_python
+@@ -818,10 +818,14 @@ cd backend_api_python
+ QUANTDINGER_SKIP_APP_INIT=1 \
+   .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
+ 
++QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
++  .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
++
+ QUANTDINGER_SKIP_APP_INIT=1 \
+   .test_deps/py312/bin/python -m pytest \
+   tests/research_data/test_phase9f_model_platform.py \
+-  tests/research_data/test_phase9f3_training_run.py -q \
++  tests/research_data/test_phase9f3_training_run.py \
++  tests/research_data/test_phase9f4_qlib_adapter.py -q \
+   --confcutdir=tests/research_data
+ ```
+ 
+diff --git a/docs/data/phase9/06_model_platform.md b/docs/data/phase9/06_model_platform.md
+index 4b1a63c..a1a4228 100644
+--- a/docs/data/phase9/06_model_platform.md
++++ b/docs/data/phase9/06_model_platform.md
+@@ -1,117 +1,105 @@
+-# Phase 9F — Model Platform（9F-1～9F-3）
++# Phase 9F — Model Platform（9F-1～9F-4）
+ 
+ ## 目标
+ 
+-把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact** 与 **可复现血缘** 纳入 Research Platform。
++把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact** 与 **可复现血缘** 纳入 Research Platform，并经 **Model Adapter** 接合 Qlib 执行层。
+ 
+ - **9F-1**：契约与注册中心  
+ - **9F-2**：正式 ModelVersion 仅由成功训练创建；lineage / repro / active 查询  
+-- **9F-3**：TrainingJob + 完整 TrainingRun FSM + Stub Executor（**不**接 Qlib）
+-
+-**不**调用 `ModelTrainer` / Qlib、不评价模型、不接 Strategy LIVE。
++- **9F-3**：TrainingJob + 完整 TrainingRun FSM + Stub Executor  
++- **9F-4**：Model Adapter Contract + `QlibModelAdapter`（包装 Phase 2D `ModelTrainer`）
+ 
+ ```text
+ TrainingJob
+   → TrainingRun (QUEUED→PREPARING→RUNNING→FINALIZING→SUCCEEDED)
+-  → create_version_from_run
+-  → ModelVersion (TRAINED)
+-       ├── ModelArtifact
+-       └── model_repro_manifest.json
+-  ✕ 原地改 FAILED run 重跑（须 retry → 新 Run）
+-  ✕ Qlib Adapter / ModelTrainer（→ 9F-4）
+-  ✕ Model Evaluation / Strategy LIVE
++  → executor=stub|local → Stub
++  → executor=qlib → QlibModelAdapter → ModelTrainer → ArtifactCandidate
++  → create_version_from_run → ModelVersion (TRAINED)
++  ✕ Qlib 类型泄漏进 Domain
++  ✕ Model Evaluation / Strategy LIVE（→ 后续）
+ ```
+ 
+ ## 包位置
+ 
+-`backend_api_python/app/services/research_data/model_platform/`
+-
+-| 模块 | 职责 |
++| 包 | 职责 |
+ | --- | --- |
+-| `protocol.py` | Model / ModelVersion / TrainingRun / ModelArtifact |
+-| `lifecycle.py` | FSM：`DRAFT→…→ACTIVE→DEPRECATED→RETIRED` |
+-| `lineage.py` | 正式创建血缘校验 + `get_lineage` 视图 |
+-| `repro.py` | `model_repro_manifest.json` |
+-| `prepare_gate.py` / `executor.py` | PREPARING 门控 + Stub 编排 |
+-| `job.py` / `training_config.py` | TrainingJob / TrainingConfig hash |
+-| `immutability.py` | TrainingRun FSM + Version lineage 硬化 |
+-| `catalog.py` / `search.py` | 注册与检索 |
+-| `hashing.py` | config / version / training_run hash |
+-| `bridge_legacy.py` | → Phase 2D `ModelDefinition` / `ModelVersionRecord` |
+-| `runner.py` | `ModelPlatformService` |
+-
+-`ENGINE_VERSION=qd_model_platform@1`
++| [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 治理：Registry / Job / Run FSM / Lineage |
++| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | 执行门面：`TrainingContext` / Registry / `QlibModelAdapter` |
++
++`model_platform/` **禁止**直接 `import qlib` / `model_training`；仅依赖 `model_adapters`。
++
++`ENGINE_VERSION=qd_model_platform@1` · Adapter `qd_model_adapter@1`
+ 
+ ## 与 Phase 2D
+ 
+-[`model_training/`](../../../../backend_api_python/app/services/research_data/model_training/) 仍是 LightGBM **执行层**。9F 是 **治理/注册层**。9F-4 再接 Qlib Adapter。
++[`model_training/`](../../../../backend_api_python/app/services/research_data/model_training/) 仍是 LightGBM **执行核**。9F-4 Adapter 将其包装为：
++
++```text
++TrainingContext → ResearchDatasetSpec + ModelTrainSpec → ModelTrainer.train
++  → ModelArtifactCandidate → create_version_from_run
++```
++
++数据入口：`dataset_ref` + DataQuery → Materializer → `QlibAdapter`（Qlib 不直连 R2）。
+ 
+ ## Service API
+ 
+ ```python
+-ModelPlatformService(store, registry=None)
+-
+-.register_model / .get_model / .search
+-.register_version  # 须 SUCCEEDED/FINALIZING run，或 inject.allow_draft_stub
+-.create_version_from_run(...)
+-.submit_training_job / .get_job / .list_runs_for_job
+-.execute_training_run / .retry_training_run / .cancel_training_run
+-.update_training_run_status / .create_training_run / .get_training_run
+-.get_version / .list_versions / .get_active_version
+-.get_lineage / .get_artifact_for_version / .get_repro_manifest
+-.activate / .deprecate / .retire / .transition
+-.delete_version  # 永远拒绝
++ModelPlatformService(
++  store,
++  registry=None,
++  data_query=None,
++  qlib_adapter=None,
++  research_registry=None,
++  train_artifact_store=None,
++)
++
++.submit_training_job / .execute_training_run / .retry_training_run / .cancel_training_run
++.create_version_from_run / .register_model / .get_lineage / …
++.predict(model_version_id, dataset_ref=..., segments=...)  # 薄；非 Signal
+ ```
+ 
+-**无** `train` / `predict` / `evaluate_model` / `auto_live` / `promote_strategy`。
++`resource_config.executor`: `stub`/`local`（默认）| `qlib`。
+ 
+-## TrainingRun FSM（9F-3）
++Job/Run 增加 `dataset_ref`；qlib 路径 PREPARING 校验 hash 一致性。
++
++## TrainingRun FSM
+ 
+ ```text
+ QUEUED → PREPARING | CANCELLED
+ PREPARING → RUNNING | FAILED
+ RUNNING → FINALIZING | FAILED | CANCELLED
+ FINALIZING → SUCCEEDED | FAILED
+-SUCCEEDED / FAILED / CANCELLED → ∅
+ ```
+ 
+-PREPARING 校验 dataset/feature/label/snapshot；失败分类如 `DATA_MISSING`。  
+-Retry：`retry_training_run` 新建 Run（`parent_training_run_id`），禁止改写父 Run。
+-
+-## ModelVersion Lifecycle
+-
+-```text
+-DRAFT → TRAINING → TRAINED → EVALUATING → VALIDATED
+-  → APPROVED → ACTIVE → DEPRECATED → RETIRED
+-```
+-
+-正式路径从 `TRAINED` 起步。**Model ACTIVE ≠ Strategy LIVE。**
+-
+-## D1
++## Predict
+ 
+-Migration [`0039_model_platform.sql`](../../../../workers/qd-research-d1/migrations/0039_model_platform.sql)。  
+-**Verify 路径以 LocalJson 为 SSOT**，不依赖 D1。
++`PredictionRequest` → `PredictionResult`（instrument / prediction）。**Prediction ≠ Signal**。
+ 
+ ## 验收
+ 
+ ```bash
+ cd backend_api_python
+ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research_data/test_phase9f_model_platform.py -q --confcutdir=tests/research_data
++QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
++QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
++  tests/research_data/test_phase9f_model_platform.py \
++  tests/research_data/test_phase9f3_training_run.py \
++  tests/research_data/test_phase9f4_qlib_adapter.py -q \
++  --confcutdir=tests/research_data
+ ```
+ 
+-并保持 `verify_phase9e_factor_library.py` 绿。
++无 qlib/lightgbm 时 `verify_phase9f4` 仍验合同与 stub；真实训 skip。保持 `verify_phase9e` 绿。
+ 
+ ## Non-goals
+ 
+ ```text
+-❌ Qlib Adapter / train execution（→ 9F-4）
+-❌ Model Evaluation metrics（→ 9F-6）
+-❌ Auto Strategy / LIVE
+-❌ Replace Phase 2D ModelTrainer
+-❌ Delete formal ModelVersion
++❌ 9F-5 完整 R2 Artifact Store 产品化
++❌ 9F-6 ModelEvaluation 实体
++❌ XGBoost/CatBoost/PyTorch 实装（Registry 可扩展）
++❌ Strategy / Signal / LIVE
++❌ Qlib Recorder 替代 TrainingRun
+ ```
+ 
+-## 后续子阶段（未实现）
++## 后续
+ 
+-9F-4 Qlib Adapter · 9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro 闭环 · 9F-9 E2E
++9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro · 9F-9 E2E
+diff --git a/docs/data/phase9/README.md b/docs/data/phase9/README.md
+index 6afcfa5..37b4d65 100644
+--- a/docs/data/phase9/README.md
++++ b/docs/data/phase9/README.md
+@@ -9,7 +9,7 @@ Phase 9 在既有 `research_data` Domain（Definition / Snapshot / `dataset_hash
+ | **9C** | Factor Evaluation Engine（Policy + Run + 4C–4F 编排） | **Done** — [03_factor_evaluation_engine.md](03_factor_evaluation_engine.md) |
+ | **9D** | Factor Mining（DSL 模板搜索 + Screen + 9C） | **Done** — [04_factor_mining.md](04_factor_mining.md) |
+ | **9E** | Factor Library / Portfolio（Promotion Gate + Catalog + Collection） | **Done** — [05_factor_library.md](05_factor_library.md) |
+-| **9F** | Model Platform（9F-1～9F-3 Registry / Lineage / TrainingRun） | **Done (9F-1/2/3)** — [06_model_platform.md](06_model_platform.md) |
++| **9F** | Model Platform（9F-1～9F-4 Registry / Lineage / TrainingRun / Adapter） | **Done (9F-1/2/3/4)** — [06_model_platform.md](06_model_platform.md) |
+ | 9G | Experiment Orchestration | Planned |
+ | 9H | Research UI / API 管理台 | Planned |
+ | 9I | Cross-cutting governance | Planned |
+@@ -61,17 +61,19 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research
+ 
+ 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
+ 
+-## 9F 验收（9F-1～9F-3）
++## 9F 验收（9F-1～9F-4）
+ 
+ ```bash
+ cd backend_api_python
+ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
++QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
+ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
+   tests/research_data/test_phase9f_model_platform.py \
+-  tests/research_data/test_phase9f3_training_run.py -q --confcutdir=tests/research_data
++  tests/research_data/test_phase9f3_training_run.py \
++  tests/research_data/test_phase9f4_qlib_adapter.py -q --confcutdir=tests/research_data
+ ```
+ 
+-并保持 `verify_phase9e_factor_library.py` 绿。后续 9F-4 Adapter / 9F-6 Evaluation 未实现。
++并保持 `verify_phase9e_factor_library.py` 绿。后续 9F-5 Artifact Bundle / 9F-6 Evaluation 未实现。
+ 
+ ## 边界（全 Phase 9 共享）
+ 

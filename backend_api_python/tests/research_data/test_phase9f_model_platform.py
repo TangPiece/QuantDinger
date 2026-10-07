@@ -35,7 +35,7 @@ def test_engine_version():
 
 def test_no_forbidden_apis():
     assert not hasattr(ModelPlatformService, "train")
-    assert not hasattr(ModelPlatformService, "predict")
+    assert hasattr(ModelPlatformService, "predict")  # 9F-4 薄 Predict（非 Signal）
     assert not hasattr(ModelPlatformService, "evaluate_model")
     assert not hasattr(ModelPlatformService, "auto_live")
     assert not hasattr(ModelPlatformService, "promote_strategy")
