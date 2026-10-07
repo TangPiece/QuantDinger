@@ -1,6 +1,6 @@
 # Phase 8 — Research → Production Strategy Lifecycle
 
-> **Status:** Phase 8A–8E implemented (Registry + Candidate + Validation Gate + Promotion + Performance Feedback).
+> **Status:** Phase 8A–8F implemented (Registry + Candidate + Validation Gate + Promotion + Performance Feedback + Monitoring).
 
 ## Roadmap
 
@@ -10,7 +10,7 @@
 8C  Validation Gate            ← done
 8D  Promotion Pipeline         ← done
 8E  Live Performance Feedback / Drift ← done
-8F  Strategy Health Monitoring
+8F  Strategy Health Monitoring  ← done
 8G  Automatic demote (upgrade still human-approved)
 8H  Retirement (history never deleted)
 ```
@@ -22,6 +22,7 @@
 3. [03_validation_gate.md](03_validation_gate.md)
 4. [04_promotion_pipeline.md](04_promotion_pipeline.md)
 5. [05_live_performance_feedback.md](05_live_performance_feedback.md)
+6. [06_strategy_monitoring.md](06_strategy_monitoring.md)
 
 ## Commands
 
@@ -66,6 +67,14 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase8e_performance_feedback.py -q \
+  --confcutdir=tests/research_data
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8f_strategy_monitoring.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8f_strategy_monitoring.py -q \
   --confcutdir=tests/research_data
 ```
 

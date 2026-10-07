@@ -710,6 +710,28 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 8F Strategy Monitoring & Alerting（持续监控）
+
+Fake inject + LocalJson 默认；说明：[06_strategy_monitoring.md](data/phase8/06_strategy_monitoring.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8f_strategy_monitoring.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8f_strategy_monitoring.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 8E verify 仍应绿：
+
+```bash
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase8e_performance_feedback.py
+```
+
 Phase 8A–8D verify 仍应绿：
 
 ```bash

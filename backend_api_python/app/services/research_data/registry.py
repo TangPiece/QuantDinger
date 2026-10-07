@@ -108,6 +108,12 @@ from .contracts import (
     DriftPolicySummary,
     PerformanceComparisonRunSummary,
     PerformanceExpectedBaselineSummary,
+    StrategyAlertSummary,
+    StrategyGovernanceEventSummary,
+    StrategyHealthSnapshotSummary,
+    StrategyMonitorMetricSummary,
+    StrategyMonitorPolicySummary,
+    StrategyNotificationDispatchSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -882,6 +888,58 @@ class ResearchRegistry(Protocol):
     def list_performance_comparison_runs(
         self, strategy_code: str | None = None
     ) -> list[PerformanceComparisonRunSummary]: ...
+
+    def upsert_strategy_monitor_policy(
+        self, record: StrategyMonitorPolicySummary
+    ) -> None: ...
+
+    def get_strategy_monitor_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyMonitorPolicySummary: ...
+
+    def upsert_strategy_monitor_metric(
+        self, record: StrategyMonitorMetricSummary
+    ) -> None: ...
+
+    def list_strategy_monitor_metrics(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyMonitorMetricSummary]: ...
+
+    def upsert_strategy_health_snapshot(
+        self, record: StrategyHealthSnapshotSummary
+    ) -> None: ...
+
+    def list_strategy_health_snapshots(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyHealthSnapshotSummary]: ...
+
+    def upsert_strategy_alert(self, record: StrategyAlertSummary) -> None: ...
+
+    def get_strategy_alert(self, alert_id: str) -> StrategyAlertSummary: ...
+
+    def get_strategy_alert_by_dedup(
+        self, *, strategy_code: str, rule_id: str, fingerprint: str
+    ) -> StrategyAlertSummary: ...
+
+    def list_strategy_alerts(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyAlertSummary]: ...
+
+    def upsert_strategy_notification_dispatch(
+        self, record: StrategyNotificationDispatchSummary
+    ) -> None: ...
+
+    def list_strategy_notification_dispatches(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyNotificationDispatchSummary]: ...
+
+    def upsert_strategy_governance_event(
+        self, record: StrategyGovernanceEventSummary
+    ) -> None: ...
+
+    def list_strategy_governance_events(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyGovernanceEventSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -3164,6 +3222,169 @@ class LocalJsonRegistry:
             code = str(strategy_code).strip()
             out = [r for r in out if r.strategy_code == code]
         out.sort(key=lambda r: r.completed_at or r.started_at or "")
+        return out
+
+    def upsert_strategy_monitor_policy(
+        self, record: StrategyMonitorPolicySummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_monitor_policy", {})
+            key = f"{record.policy_id}@{record.policy_version}"
+            data["strategy_monitor_policy"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_strategy_monitor_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyMonitorPolicySummary:
+        key = f"{policy_id}@{policy_version}"
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_monitor_policy") or {}).get(key)
+        if not raw:
+            raise KeyError(f"strategy_monitor_policy missing: {key}")
+        return StrategyMonitorPolicySummary.model_validate(raw)
+
+    def upsert_strategy_monitor_metric(
+        self, record: StrategyMonitorMetricSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_monitor_metric", {})
+            data["strategy_monitor_metric"][record.metric_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_strategy_monitor_metrics(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyMonitorMetricSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_monitor_metric") or {}).values()
+        out = [StrategyMonitorMetricSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.collected_at or "")
+        return out
+
+    def upsert_strategy_health_snapshot(
+        self, record: StrategyHealthSnapshotSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_health_snapshot", {})
+            data["strategy_health_snapshot"][record.snapshot_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_strategy_health_snapshots(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyHealthSnapshotSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_health_snapshot") or {}).values()
+        out = [StrategyHealthSnapshotSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.evaluated_at or "")
+        return out
+
+    def upsert_strategy_alert(self, record: StrategyAlertSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_alert", {})
+            data["strategy_alert"][record.alert_id] = record.model_dump(mode="json")
+            data.setdefault("strategy_alert_dedup", {})
+            dedup_key = f"{record.strategy_code}|{record.rule_id}|{record.fingerprint}"
+            data["strategy_alert_dedup"][dedup_key] = record.alert_id
+            self._write(data)
+
+    def get_strategy_alert(self, alert_id: str) -> StrategyAlertSummary:
+        aid = str(alert_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_alert") or {}).get(aid)
+        if not raw:
+            raise KeyError(f"strategy_alert missing: {aid}")
+        return StrategyAlertSummary.model_validate(raw)
+
+    def get_strategy_alert_by_dedup(
+        self, *, strategy_code: str, rule_id: str, fingerprint: str
+    ) -> StrategyAlertSummary:
+        dedup_key = f"{strategy_code}|{rule_id}|{fingerprint}"
+        with self._lock:
+            data = self._read()
+            aid = (data.get("strategy_alert_dedup") or {}).get(dedup_key)
+            if not aid:
+                raise KeyError(f"strategy_alert dedup missing: {dedup_key}")
+            raw = (data.get("strategy_alert") or {}).get(aid)
+        if not raw:
+            raise KeyError(f"strategy_alert missing for dedup: {dedup_key}")
+        return StrategyAlertSummary.model_validate(raw)
+
+    def list_strategy_alerts(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyAlertSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_alert") or {}).values()
+        out = [StrategyAlertSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.last_seen_at or r.first_seen_at or "")
+        return out
+
+    def upsert_strategy_notification_dispatch(
+        self, record: StrategyNotificationDispatchSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_notification_dispatch", {})
+            data["strategy_notification_dispatch"][record.dispatch_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_strategy_notification_dispatches(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyNotificationDispatchSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_notification_dispatch") or {}).values()
+        out = [StrategyNotificationDispatchSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.dispatched_at or "")
+        return out
+
+    def upsert_strategy_governance_event(
+        self, record: StrategyGovernanceEventSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_governance_event", {})
+            data["strategy_governance_event"][record.event_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_strategy_governance_events(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyGovernanceEventSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_governance_event") or {}).values()
+        out = [StrategyGovernanceEventSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
         return out
 
 
@@ -9507,6 +9728,348 @@ class D1ResearchRegistry:
             return []
         return [_performance_comparison_run_from_row(r) for r in rows or []]
 
+    def upsert_strategy_monitor_policy(
+        self, record: StrategyMonitorPolicySummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_alert_rule (
+              policy_id, policy_version, policy_content_hash,
+              rules_json, market_data_json, engine_version,
+              description, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(policy_id, policy_version) DO UPDATE SET
+              policy_content_hash=excluded.policy_content_hash,
+              rules_json=excluded.rules_json,
+              market_data_json=excluded.market_data_json,
+              engine_version=excluded.engine_version,
+              description=excluded.description,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                json.dumps(record.rules_json or [], ensure_ascii=False),
+                json.dumps(record.market_data_json or {}, ensure_ascii=False),
+                record.engine_version,
+                record.description,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_strategy_monitor_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyMonitorPolicySummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM strategy_alert_rule
+            WHERE policy_id = ? AND policy_version = ?
+            """,
+            [policy_id, policy_version],
+        )
+        if not rows:
+            raise KeyError(f"strategy_monitor_policy missing: {policy_id}@{policy_version}")
+        return _strategy_monitor_policy_from_row(rows[0])
+
+    def upsert_strategy_monitor_metric(
+        self, record: StrategyMonitorMetricSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_monitor_metric (
+              metric_id, strategy_code, category, name, value, unit, health,
+              window, collected_at, session_id, labels_json, storage_uri,
+              engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(metric_id) DO UPDATE SET
+              value=excluded.value,
+              health=excluded.health,
+              collected_at=excluded.collected_at,
+              labels_json=excluded.labels_json,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.metric_id,
+                record.strategy_code,
+                record.category,
+                record.name,
+                record.value,
+                record.unit,
+                record.health,
+                record.window,
+                record.collected_at or "",
+                record.session_id,
+                json.dumps(record.labels_json or {}, ensure_ascii=False),
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_strategy_monitor_metrics(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyMonitorMetricSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_monitor_metric
+                    WHERE strategy_code = ? ORDER BY collected_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_monitor_metric ORDER BY collected_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_monitor_metric_from_row(r) for r in rows or []]
+
+    def upsert_strategy_health_snapshot(
+        self, record: StrategyHealthSnapshotSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_health_snapshot (
+              snapshot_id, strategy_code, overall, dimensions_json,
+              policy_id, policy_version, policy_content_hash,
+              evaluated_at, session_id, storage_uri, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(snapshot_id) DO UPDATE SET
+              overall=excluded.overall,
+              dimensions_json=excluded.dimensions_json,
+              evaluated_at=excluded.evaluated_at,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.snapshot_id,
+                record.strategy_code,
+                record.overall,
+                json.dumps(record.dimensions_json or [], ensure_ascii=False),
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                record.evaluated_at or "",
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_strategy_health_snapshots(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyHealthSnapshotSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_health_snapshot
+                    WHERE strategy_code = ? ORDER BY evaluated_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_health_snapshot ORDER BY evaluated_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_health_snapshot_from_row(r) for r in rows or []]
+
+    def upsert_strategy_alert(self, record: StrategyAlertSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_alert (
+              alert_id, strategy_code, rule_id, fingerprint, category, severity,
+              status, title, message, occurrence_count, consecutive_critical_count,
+              first_seen_at, last_seen_at, cooldown_until, suppressed_until,
+              acknowledged_at, investigating_at, resolved_at, session_id,
+              storage_uri, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(alert_id) DO UPDATE SET
+              severity=excluded.severity,
+              status=excluded.status,
+              message=excluded.message,
+              occurrence_count=excluded.occurrence_count,
+              consecutive_critical_count=excluded.consecutive_critical_count,
+              last_seen_at=excluded.last_seen_at,
+              cooldown_until=excluded.cooldown_until,
+              suppressed_until=excluded.suppressed_until,
+              acknowledged_at=excluded.acknowledged_at,
+              investigating_at=excluded.investigating_at,
+              resolved_at=excluded.resolved_at,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.alert_id,
+                record.strategy_code,
+                record.rule_id,
+                record.fingerprint,
+                record.category,
+                record.severity,
+                record.status,
+                record.title,
+                record.message,
+                record.occurrence_count,
+                record.consecutive_critical_count,
+                record.first_seen_at or "",
+                record.last_seen_at or "",
+                record.cooldown_until or "",
+                record.suppressed_until or "",
+                record.acknowledged_at or "",
+                record.investigating_at or "",
+                record.resolved_at or "",
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_strategy_alert(self, alert_id: str) -> StrategyAlertSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_alert WHERE alert_id = ?",
+            [alert_id],
+        )
+        if not rows:
+            raise KeyError(f"strategy_alert missing: {alert_id}")
+        return _strategy_alert_from_row(rows[0])
+
+    def get_strategy_alert_by_dedup(
+        self, *, strategy_code: str, rule_id: str, fingerprint: str
+    ) -> StrategyAlertSummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM strategy_alert
+            WHERE strategy_code = ? AND rule_id = ? AND fingerprint = ?
+            LIMIT 1
+            """,
+            [strategy_code, rule_id, fingerprint],
+        )
+        if not rows:
+            raise KeyError(
+                f"strategy_alert dedup missing: {strategy_code}/{rule_id}/{fingerprint}"
+            )
+        return _strategy_alert_from_row(rows[0])
+
+    def list_strategy_alerts(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyAlertSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_alert
+                    WHERE strategy_code = ? ORDER BY last_seen_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_alert ORDER BY last_seen_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_alert_from_row(r) for r in rows or []]
+
+    def upsert_strategy_notification_dispatch(
+        self, record: StrategyNotificationDispatchSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_notification_dispatch (
+              dispatch_id, strategy_code, alert_id, channel, severity,
+              payload_json, dispatched_at, session_id, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dispatch_id) DO NOTHING
+            """,
+            [
+                record.dispatch_id,
+                record.strategy_code,
+                record.alert_id,
+                record.channel,
+                record.severity,
+                json.dumps(record.payload_json or {}, ensure_ascii=False),
+                record.dispatched_at or "",
+                record.session_id,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_strategy_notification_dispatches(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyNotificationDispatchSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_notification_dispatch
+                    WHERE strategy_code = ? ORDER BY dispatched_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_notification_dispatch ORDER BY dispatched_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_notification_dispatch_from_row(r) for r in rows or []]
+
+    def upsert_strategy_governance_event(
+        self, record: StrategyGovernanceEventSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_governance_event (
+              event_id, strategy_code, event_type, severity, category,
+              alert_id, message, created_at, session_id, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO NOTHING
+            """,
+            [
+                record.event_id,
+                record.strategy_code,
+                record.event_type,
+                record.severity,
+                record.category,
+                record.alert_id,
+                record.message,
+                record.created_at or "",
+                record.session_id,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_strategy_governance_events(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyGovernanceEventSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_governance_event
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_governance_event ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_governance_event_from_row(r) for r in rows or []]
+
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
     return StrategyVersionBindingSummary(
@@ -9796,6 +10359,116 @@ def _performance_comparison_run_from_row(
         completed_at=row.get("completed_at"),
         storage_uri=row.get("storage_uri") or "",
         engine_version=row.get("engine_version") or "qd_live_performance_feedback@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_monitor_policy_from_row(row: dict[str, Any]) -> StrategyMonitorPolicySummary:
+    return StrategyMonitorPolicySummary(
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        policy_content_hash=row.get("policy_content_hash") or "",
+        rules_json=_json_field(row.get("rules_json"), []),
+        market_data_json=_json_field(row.get("market_data_json"), {}),
+        engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
+        description=row.get("description") or "",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_monitor_metric_from_row(row: dict[str, Any]) -> StrategyMonitorMetricSummary:
+    return StrategyMonitorMetricSummary(
+        metric_id=row["metric_id"],
+        strategy_code=row["strategy_code"],
+        category=row.get("category") or "SYSTEM",
+        name=row.get("name") or "",
+        value=float(row.get("value") or 0),
+        unit=row.get("unit") or "",
+        health=row.get("health") or "UNKNOWN",
+        window=row.get("window") or "5m",
+        collected_at=row.get("collected_at"),
+        session_id=row.get("session_id") or "",
+        labels_json=_json_field(row.get("labels_json"), {}),
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_health_snapshot_from_row(row: dict[str, Any]) -> StrategyHealthSnapshotSummary:
+    return StrategyHealthSnapshotSummary(
+        snapshot_id=row["snapshot_id"],
+        strategy_code=row["strategy_code"],
+        overall=row.get("overall") or "UNKNOWN",
+        dimensions_json=_json_field(row.get("dimensions_json"), []),
+        policy_id=row.get("policy_id") or "",
+        policy_version=row.get("policy_version") or "",
+        policy_content_hash=row.get("policy_content_hash") or "",
+        evaluated_at=row.get("evaluated_at"),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_alert_from_row(row: dict[str, Any]) -> StrategyAlertSummary:
+    return StrategyAlertSummary(
+        alert_id=row["alert_id"],
+        strategy_code=row["strategy_code"],
+        rule_id=row.get("rule_id") or "",
+        fingerprint=row.get("fingerprint") or "",
+        category=row.get("category") or "SYSTEM",
+        severity=row.get("severity") or "INFO",
+        status=row.get("status") or "OPEN",
+        title=row.get("title") or "",
+        message=row.get("message") or "",
+        occurrence_count=int(row.get("occurrence_count") or 1),
+        consecutive_critical_count=int(row.get("consecutive_critical_count") or 0),
+        first_seen_at=row.get("first_seen_at"),
+        last_seen_at=row.get("last_seen_at"),
+        cooldown_until=row.get("cooldown_until"),
+        suppressed_until=row.get("suppressed_until"),
+        acknowledged_at=row.get("acknowledged_at"),
+        investigating_at=row.get("investigating_at"),
+        resolved_at=row.get("resolved_at"),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_notification_dispatch_from_row(
+    row: dict[str, Any],
+) -> StrategyNotificationDispatchSummary:
+    return StrategyNotificationDispatchSummary(
+        dispatch_id=row["dispatch_id"],
+        strategy_code=row["strategy_code"],
+        alert_id=row.get("alert_id") or "",
+        channel=row.get("channel") or "RECORDING",
+        severity=row.get("severity") or "INFO",
+        payload_json=_json_field(row.get("payload_json"), {}),
+        dispatched_at=row.get("dispatched_at"),
+        session_id=row.get("session_id") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_governance_event_from_row(row: dict[str, Any]) -> StrategyGovernanceEventSummary:
+    return StrategyGovernanceEventSummary(
+        event_id=row["event_id"],
+        strategy_code=row["strategy_code"],
+        event_type=row.get("event_type") or "REVIEW_REQUIRED",
+        severity=row.get("severity") or "CRITICAL",
+        category=row.get("category") or "SYSTEM",
+        alert_id=row.get("alert_id") or "",
+        message=row.get("message") or "",
+        created_at=row.get("created_at"),
+        session_id=row.get("session_id") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
         metadata=_json_field(row.get("metadata_json"), {}),
     )
 

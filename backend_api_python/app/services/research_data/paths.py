@@ -847,6 +847,32 @@ def performance_feedback_run_key(*, strategy_code: str, run_id: str) -> str:
     return f"{performance_feedback_prefix()}/{safe_code}/runs/{safe_id}.json"
 
 
+def strategy_monitoring_prefix() -> str:
+    """Phase 8F：``qd/registry/strategy_monitoring``。"""
+    return f"{_root()}/registry/strategy_monitoring"
+
+
+def strategy_monitoring_health_key(*, strategy_code: str, snapshot_id: str) -> str:
+    """``qd/registry/strategy_monitoring/{strategy_code}/health/{id}.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(snapshot_id or "unknown").replace("/", "_")
+    return f"{strategy_monitoring_prefix()}/{safe_code}/health/{safe_id}.json"
+
+
+def strategy_monitoring_metric_key(*, strategy_code: str, metric_id: str) -> str:
+    """``qd/registry/strategy_monitoring/{strategy_code}/metrics/{id}.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(metric_id or "unknown").replace("/", "_")
+    return f"{strategy_monitoring_prefix()}/{safe_code}/metrics/{safe_id}.json"
+
+
+def strategy_monitoring_alert_key(*, strategy_code: str, alert_id: str) -> str:
+    """``qd/registry/strategy_monitoring/{strategy_code}/alerts/{id}.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(alert_id or "unknown").replace("/", "_")
+    return f"{strategy_monitoring_prefix()}/{safe_code}/alerts/{safe_id}.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

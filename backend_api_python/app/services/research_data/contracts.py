@@ -1880,3 +1880,111 @@ class PerformanceComparisonRunSummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_live_performance_feedback@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyMonitorPolicySummary(_ContractModel):
+    """Phase 8F：MonitorPolicy 索引。"""
+
+    policy_id: str
+    policy_version: str
+    policy_content_hash: str = ""
+    rules_json: list[dict[str, Any]] = Field(default_factory=list)
+    market_data_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qd_strategy_monitoring@1"
+    description: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyMonitorMetricSummary(_ContractModel):
+    """Phase 8F：MonitoringMetric 索引。"""
+
+    metric_id: str
+    strategy_code: str
+    category: str = "SYSTEM"
+    name: str = ""
+    value: float = 0.0
+    unit: str = ""
+    health: str = "UNKNOWN"
+    window: str = "5m"
+    collected_at: Optional[str] = None
+    session_id: str = ""
+    labels_json: dict[str, Any] = Field(default_factory=dict)
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_monitoring@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyHealthSnapshotSummary(_ContractModel):
+    """Phase 8F：StrategyHealth 快照索引。"""
+
+    snapshot_id: str
+    strategy_code: str
+    overall: str = "UNKNOWN"
+    dimensions_json: list[dict[str, Any]] = Field(default_factory=list)
+    policy_id: str = ""
+    policy_version: str = ""
+    policy_content_hash: str = ""
+    evaluated_at: Optional[str] = None
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_monitoring@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyAlertSummary(_ContractModel):
+    """Phase 8F：StrategyAlert 索引。"""
+
+    alert_id: str
+    strategy_code: str
+    rule_id: str = ""
+    fingerprint: str = ""
+    category: str = "SYSTEM"
+    severity: str = "INFO"
+    status: str = "OPEN"
+    title: str = ""
+    message: str = ""
+    occurrence_count: int = 1
+    consecutive_critical_count: int = 0
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    cooldown_until: Optional[str] = None
+    suppressed_until: Optional[str] = None
+    acknowledged_at: Optional[str] = None
+    investigating_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_monitoring@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyNotificationDispatchSummary(_ContractModel):
+    """Phase 8F：通知派发记录。"""
+
+    dispatch_id: str
+    strategy_code: str
+    alert_id: str = ""
+    channel: str = "RECORDING"
+    severity: str = "INFO"
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    dispatched_at: Optional[str] = None
+    session_id: str = ""
+    engine_version: str = "qd_strategy_monitoring@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyGovernanceEventSummary(_ContractModel):
+    """Phase 8F：Governance REVIEW_REQUIRED 事件。"""
+
+    event_id: str
+    strategy_code: str
+    event_type: str = "REVIEW_REQUIRED"
+    severity: str = "CRITICAL"
+    category: str = "SYSTEM"
+    alert_id: str = ""
+    message: str = ""
+    created_at: Optional[str] = None
+    session_id: str = ""
+    engine_version: str = "qd_strategy_monitoring@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
