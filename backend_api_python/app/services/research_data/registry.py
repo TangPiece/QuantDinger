@@ -97,6 +97,8 @@ from .contracts import (
     GovStrategyVersionSummary,
     StrategyRegistrySummary,
     StrategyVersionBindingSummary,
+    StrategyCandidateSummary,
+    StrategyCandidatePromotionSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -753,6 +755,22 @@ class ResearchRegistry(Protocol):
     def list_strategy_version_bindings(
         self, strategy_code: str | None = None
     ) -> list[StrategyVersionBindingSummary]: ...
+
+    def upsert_strategy_candidate(self, record: StrategyCandidateSummary) -> None: ...
+
+    def get_strategy_candidate(self, candidate_id: str) -> StrategyCandidateSummary: ...
+
+    def list_strategy_candidates(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyCandidateSummary]: ...
+
+    def upsert_strategy_candidate_promotion(
+        self, record: StrategyCandidatePromotionSummary
+    ) -> None: ...
+
+    def list_strategy_candidate_promotions(
+        self, candidate_id: str | None = None
+    ) -> list[StrategyCandidatePromotionSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -2679,6 +2697,60 @@ class LocalJsonRegistry:
             code = str(strategy_code).strip()
             out = [r for r in out if r.strategy_code == code]
         out.sort(key=lambda r: r.registered_at or "")
+        return out
+
+    def upsert_strategy_candidate(self, record: StrategyCandidateSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_candidate", {})
+            data["strategy_candidate"][record.candidate_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_candidate(self, candidate_id: str) -> StrategyCandidateSummary:
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_candidate") or {}).get(candidate_id)
+        if not raw:
+            raise KeyError(f"strategy_candidate missing: {candidate_id}")
+        return StrategyCandidateSummary.model_validate(raw)
+
+    def list_strategy_candidates(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyCandidateSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_candidate") or {}).values()
+        out = [StrategyCandidateSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_strategy_candidate_promotion(
+        self, record: StrategyCandidatePromotionSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_candidate_promotion", {})
+            data["strategy_candidate_promotion"][record.promotion_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_strategy_candidate_promotions(
+        self, candidate_id: str | None = None
+    ) -> list[StrategyCandidatePromotionSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_candidate_promotion") or {}).values()
+        out = [StrategyCandidatePromotionSummary.model_validate(r) for r in rows]
+        if candidate_id:
+            cid = str(candidate_id).strip()
+            out = [r for r in out if r.candidate_id == cid]
+        out.sort(key=lambda r: r.created_at or "")
         return out
 
 
@@ -8304,6 +8376,144 @@ class D1ResearchRegistry:
             return []
         return [_strategy_version_binding_from_row(r) for r in rows or []]
 
+    def upsert_strategy_candidate(self, record: StrategyCandidateSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO strategy_candidate (
+                  candidate_id, strategy_code, candidate_version,
+                  experiment_id, backtest_hash, model_version, model_artifact_id,
+                  dataset_hash, snapshot_id, feature_version, processor_version,
+                  processor_hash, strategy_hash, strategy_definition_json,
+                  risk_policy_ref, execution_policy_ref, evaluation_hash, cv_hash,
+                  content_hash, source, status, lineage_frozen_at, created_at,
+                  storage_uri, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_id) DO UPDATE SET
+                  status=excluded.status,
+                  lineage_frozen_at=excluded.lineage_frozen_at,
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.candidate_id,
+                    record.strategy_code,
+                    record.candidate_version,
+                    record.experiment_id,
+                    record.backtest_hash,
+                    record.model_version,
+                    record.model_artifact_id,
+                    record.dataset_hash,
+                    record.snapshot_id,
+                    record.feature_version,
+                    record.processor_version,
+                    record.processor_hash,
+                    record.strategy_hash,
+                    json.dumps(record.strategy_definition_json or {}, ensure_ascii=False),
+                    record.risk_policy_ref,
+                    record.execution_policy_ref,
+                    record.evaluation_hash,
+                    record.cv_hash,
+                    record.content_hash,
+                    record.source,
+                    record.status,
+                    record.lineage_frozen_at,
+                    record.created_at or _utc_now(),
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_strategy_candidate(self, candidate_id: str) -> StrategyCandidateSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_candidate WHERE candidate_id = ?",
+            [candidate_id],
+        )
+        if not rows:
+            raise KeyError(f"strategy_candidate missing: {candidate_id}")
+        return _strategy_candidate_from_row(rows[0])
+
+    def list_strategy_candidates(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyCandidateSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_candidate
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_candidate ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_candidate_from_row(r) for r in rows or []]
+
+    def upsert_strategy_candidate_promotion(
+        self, record: StrategyCandidatePromotionSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO strategy_candidate_promotion (
+                  promotion_id, candidate_id, source_type, source_id,
+                  target_strategy_code, target_strategy_version, version_id,
+                  from_state, to_state, dataset_hash, model_version,
+                  operator, reason, status, created_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(promotion_id) DO UPDATE SET
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.promotion_id,
+                    record.candidate_id,
+                    record.source_type,
+                    record.source_id,
+                    record.target_strategy_code,
+                    record.target_strategy_version,
+                    record.version_id,
+                    record.from_state,
+                    record.to_state,
+                    record.dataset_hash,
+                    record.model_version,
+                    record.operator,
+                    record.reason,
+                    record.status,
+                    record.created_at or _utc_now(),
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_strategy_candidate_promotions(
+        self, candidate_id: str | None = None
+    ) -> list[StrategyCandidatePromotionSummary]:
+        try:
+            if candidate_id:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_candidate_promotion
+                    WHERE candidate_id = ? ORDER BY created_at
+                    """,
+                    [candidate_id],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_candidate_promotion ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_candidate_promotion_from_row(r) for r in rows or []]
+
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
     return StrategyVersionBindingSummary(
@@ -8326,6 +8536,61 @@ def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBi
         registered_at=row.get("registered_at") or "",
         storage_uri=row.get("storage_uri") or "",
         engine_version=row.get("engine_version") or "qd_strategy_registry@1",
+        metadata=json.loads(row.get("metadata_json") or "{}"),
+    )
+
+
+def _strategy_candidate_from_row(row: dict[str, Any]) -> StrategyCandidateSummary:
+    return StrategyCandidateSummary(
+        candidate_id=row["candidate_id"],
+        strategy_code=row["strategy_code"],
+        candidate_version=row["candidate_version"],
+        experiment_id=row.get("experiment_id") or "",
+        backtest_hash=row.get("backtest_hash") or "",
+        model_version=row.get("model_version") or "",
+        model_artifact_id=row.get("model_artifact_id") or "",
+        dataset_hash=row.get("dataset_hash") or "",
+        snapshot_id=row.get("snapshot_id") or "",
+        feature_version=row.get("feature_version") or "",
+        processor_version=row.get("processor_version") or "",
+        processor_hash=row.get("processor_hash") or "",
+        strategy_hash=row.get("strategy_hash") or "",
+        strategy_definition_json=json.loads(row.get("strategy_definition_json") or "{}"),
+        risk_policy_ref=row.get("risk_policy_ref") or "",
+        execution_policy_ref=row.get("execution_policy_ref") or "NEXT_OPEN",
+        evaluation_hash=row.get("evaluation_hash") or "",
+        cv_hash=row.get("cv_hash") or "",
+        content_hash=row.get("content_hash") or "",
+        source=row.get("source") or "RESEARCH",
+        status=row.get("status") or "DRAFT",
+        lineage_frozen_at=row.get("lineage_frozen_at") or "",
+        created_at=row.get("created_at"),
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_candidate@1",
+        metadata=json.loads(row.get("metadata_json") or "{}"),
+    )
+
+
+def _strategy_candidate_promotion_from_row(
+    row: dict[str, Any],
+) -> StrategyCandidatePromotionSummary:
+    return StrategyCandidatePromotionSummary(
+        promotion_id=row["promotion_id"],
+        candidate_id=row["candidate_id"],
+        source_type=row.get("source_type") or "EXPERIMENT",
+        source_id=row.get("source_id") or "",
+        target_strategy_code=row.get("target_strategy_code") or "",
+        target_strategy_version=row.get("target_strategy_version") or "",
+        version_id=row.get("version_id") or "",
+        from_state=row.get("from_state") or "",
+        to_state=row.get("to_state") or "",
+        dataset_hash=row.get("dataset_hash") or "",
+        model_version=row.get("model_version") or "",
+        operator=row.get("operator") or "",
+        reason=row.get("reason") or "",
+        status=row.get("status") or "COMPLETED",
+        created_at=row.get("created_at"),
+        engine_version=row.get("engine_version") or "qd_strategy_candidate@1",
         metadata=json.loads(row.get("metadata_json") or "{}"),
     )
 

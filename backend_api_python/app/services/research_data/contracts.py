@@ -1650,3 +1650,56 @@ class StrategyVersionBindingSummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_strategy_registry@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyCandidateSummary(_ContractModel):
+    """Phase 8B：Strategy Candidate 索引（非 production_bundle CANDIDATE）。"""
+
+    candidate_id: str
+    strategy_code: str
+    candidate_version: str
+    experiment_id: str = ""
+    backtest_hash: str = ""
+    model_version: str = ""
+    model_artifact_id: str = ""
+    dataset_hash: str = ""
+    snapshot_id: str = ""
+    feature_version: str = ""
+    processor_version: str = ""
+    processor_hash: str = ""
+    strategy_hash: str = ""
+    strategy_definition_json: dict[str, Any] = Field(default_factory=dict)
+    risk_policy_ref: str = ""
+    execution_policy_ref: str = "NEXT_OPEN"
+    evaluation_hash: str = ""
+    cv_hash: str = ""
+    content_hash: str = ""
+    source: str = "RESEARCH"
+    status: str = "DRAFT"
+    lineage_frozen_at: str = ""
+    created_at: Optional[str] = None
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_candidate@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyCandidatePromotionSummary(_ContractModel):
+    """Phase 8B：Candidate / Registry 晋升审计。"""
+
+    promotion_id: str
+    candidate_id: str
+    source_type: str = "EXPERIMENT"
+    source_id: str = ""
+    target_strategy_code: str = ""
+    target_strategy_version: str = ""
+    version_id: str = ""
+    from_state: str = ""
+    to_state: str = ""
+    dataset_hash: str = ""
+    model_version: str = ""
+    operator: str = ""
+    reason: str = ""
+    status: str = "COMPLETED"
+    created_at: Optional[str] = None
+    engine_version: str = "qd_strategy_candidate@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

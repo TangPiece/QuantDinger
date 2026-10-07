@@ -795,6 +795,17 @@ def strategy_registry_version_manifest_key(
     return f"{strategy_registry_prefix()}/{safe_code}/versions/{safe_vid}/manifest.json"
 
 
+def strategy_candidate_prefix() -> str:
+    """Phase 8B：``qd/registry/candidates``。"""
+    return f"{_root()}/registry/candidates"
+
+
+def strategy_candidate_manifest_key(*, candidate_id: str) -> str:
+    """``qd/registry/candidates/{candidate_id}/manifest.json``。"""
+    safe_id = str(candidate_id or "unknown").replace("/", "_")
+    return f"{strategy_candidate_prefix()}/{safe_id}/manifest.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

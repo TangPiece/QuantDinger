@@ -52,7 +52,7 @@ backend_api_python/app/services/strategy_registry/
 ## Phase 8 后续（占位，本阶段不实现）
 
 ```text
-8B  Research → StrategyCandidate
+8B  Research → StrategyCandidate  ← see 02_strategy_candidate.md
 8C  Validation Gate
 8D  Promotion Pipeline + PromotionRecord
 8E  Live Performance Feedback / Drift
