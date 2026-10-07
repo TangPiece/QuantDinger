@@ -71,6 +71,9 @@ from .contracts import (
     E2EVirtualOrderSummary,
     ReadinessCheckResultSummary,
     ReadinessRunSummary,
+    LiveReadonlySessionSummary,
+    LiveReadonlySnapshotIndexRecord,
+    TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
     SafetyStateRecord,
@@ -616,6 +619,26 @@ class ResearchRegistry(Protocol):
     def list_readiness_check_results(
         self, *, run_id: str = "", limit: int = 200
     ) -> list[ReadinessCheckResultSummary]: ...
+
+    def has_production_ready_run(self) -> bool: ...
+
+    def upsert_live_readonly_session(
+        self, record: LiveReadonlySessionSummary
+    ) -> None: ...
+
+    def get_live_readonly_session(self, session_id: str) -> LiveReadonlySessionSummary: ...
+
+    def upsert_live_readonly_snapshot_index(
+        self, record: LiveReadonlySnapshotIndexRecord
+    ) -> None: ...
+
+    def upsert_trading_environment_state(
+        self, record: TradingEnvironmentStateRecord
+    ) -> None: ...
+
+    def get_trading_environment_state(
+        self, account_id: str
+    ) -> TradingEnvironmentStateRecord: ...
 
 
 class LocalJsonRegistry:
@@ -2218,6 +2241,62 @@ class LocalJsonRegistry:
         return [
             ReadinessCheckResultSummary.model_validate(r) for r in rows[:limit]
         ]
+
+    def has_production_ready_run(self) -> bool:
+        data = self._read()
+        for raw in (data.get("readiness_runs") or {}).values():
+            if raw.get("production_ready"):
+                return True
+        return False
+
+    def upsert_live_readonly_session(
+        self, record: LiveReadonlySessionSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("live_readonly_sessions", {})
+            data["live_readonly_sessions"][record.session_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_live_readonly_session(self, session_id: str) -> LiveReadonlySessionSummary:
+        data = self._read()
+        raw = (data.get("live_readonly_sessions") or {}).get(session_id)
+        if not raw:
+            raise KeyError(session_id)
+        return LiveReadonlySessionSummary.model_validate(raw)
+
+    def upsert_live_readonly_snapshot_index(
+        self, record: LiveReadonlySnapshotIndexRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("live_readonly_snapshots", {})
+            data["live_readonly_snapshots"][record.snapshot_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_trading_environment_state(
+        self, record: TradingEnvironmentStateRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("trading_environment_state", {})
+            data["trading_environment_state"][record.account_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_trading_environment_state(
+        self, account_id: str
+    ) -> TradingEnvironmentStateRecord:
+        data = self._read()
+        raw = (data.get("trading_environment_state") or {}).get(account_id)
+        if not raw:
+            raise KeyError(account_id)
+        return TradingEnvironmentStateRecord.model_validate(raw)
 
 
 class D1ResearchRegistry:
@@ -6938,6 +7017,139 @@ class D1ResearchRegistry:
             ]
         except Exception:
             return []
+
+    def has_production_ready_run(self) -> bool:
+        try:
+            rows = d1_client.query(
+                "SELECT 1 FROM readiness_run WHERE production_ready=1 LIMIT 1", []
+            )
+            return bool(rows)
+        except Exception:
+            return False
+
+    def upsert_live_readonly_session(
+        self, record: LiveReadonlySessionSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO live_readonly_session (
+                  session_id, environment, account_id, portfolio_id, trading_date,
+                  dataset_hash, model_version, strategy_version, status,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.session_id,
+                    record.environment,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.trading_date,
+                    record.dataset_hash,
+                    record.model_version,
+                    record.strategy_version,
+                    record.status,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_live_readonly_session(self, session_id: str) -> LiveReadonlySessionSummary:
+        rows = d1_client.query(
+            "SELECT * FROM live_readonly_session WHERE session_id=? LIMIT 1",
+            [session_id],
+        )
+        if not rows:
+            raise KeyError(session_id)
+        r = rows[0]
+        return LiveReadonlySessionSummary(
+            session_id=r["session_id"],
+            environment=r.get("environment") or "LIVE_READONLY",
+            account_id=r.get("account_id") or "",
+            portfolio_id=r.get("portfolio_id") or "",
+            trading_date=r.get("trading_date") or "",
+            dataset_hash=r.get("dataset_hash") or "",
+            model_version=r.get("model_version") or "",
+            strategy_version=r.get("strategy_version") or "",
+            status=r.get("status") or "OPEN",
+            engine_version=r.get("engine_version") or "qd_live_readonly@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_live_readonly_snapshot_index(
+        self, record: LiveReadonlySnapshotIndexRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO live_readonly_snapshot_index (
+                  snapshot_id, session_id, account_id, captured_at, storage_uri,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.snapshot_id,
+                    record.session_id,
+                    record.account_id,
+                    record.captured_at,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_trading_environment_state(
+        self, record: TradingEnvironmentStateRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO trading_environment_state (
+                  account_id, environment, updated_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                  environment=excluded.environment,
+                  updated_at=excluded.updated_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.account_id,
+                    record.environment,
+                    record.updated_at or "",
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_trading_environment_state(
+        self, account_id: str
+    ) -> TradingEnvironmentStateRecord:
+        rows = d1_client.query(
+            "SELECT * FROM trading_environment_state WHERE account_id=? LIMIT 1",
+            [account_id],
+        )
+        if not rows:
+            raise KeyError(account_id)
+        r = rows[0]
+        return TradingEnvironmentStateRecord(
+            account_id=r["account_id"],
+            environment=r.get("environment") or "PAPER",
+            updated_at=r.get("updated_at"),
+            engine_version=r.get("engine_version") or "qd_live_readonly@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
 
 
 def get_default_registry(root: Path | None = None) -> ResearchRegistry:

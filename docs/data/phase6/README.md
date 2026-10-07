@@ -15,6 +15,8 @@ Phase 6G  Trading Safety / Kill Switch               ← done
 Phase 6H  Monitoring / Audit / Alert                 ← done
 Phase 6I  Paper / Shadow E2E                         ← done
 Phase 6J  Production Readiness                       ← done
+        ↓
+Phase 7A  Live Read-only                             ← see docs/data/phase7/
 ```
 
 ## Reading

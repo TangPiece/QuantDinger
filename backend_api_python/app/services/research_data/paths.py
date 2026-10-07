@@ -684,6 +684,27 @@ def production_readiness_run_key(*, run_id: str) -> str:
     return f"{production_readiness_prefix()}/{run_id}.json"
 
 
+def production_live_readonly_prefix() -> str:
+    """Phase 7A：``qd/production/live_readonly``。"""
+    return f"{_root()}/production/live_readonly"
+
+
+def production_live_readonly_snapshot_key(
+    *,
+    account_id: str,
+    yyyy: str,
+    mm: str,
+    dd: str,
+    snapshot_id: str,
+) -> str:
+    """``qd/production/live_readonly/{account_id}/{yyyy}/{mm}/{dd}/{snapshot_id}.json``。"""
+    safe_acct = str(account_id or "unknown").replace("/", "_")
+    return (
+        f"{production_live_readonly_prefix()}/{safe_acct}/{yyyy}/{mm}/{dd}/"
+        f"{snapshot_id}.json"
+    )
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config

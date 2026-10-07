@@ -1316,3 +1316,41 @@ class ReadinessCheckResultSummary(_ContractModel):
     title: str = ""
     engine_version: str = "qd_readiness@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveReadonlySessionSummary(_ContractModel):
+    """Phase 7A：Live Readonly 会话索引（明细 snapshot 在 R2）。"""
+
+    session_id: str
+    environment: str = "LIVE_READONLY"
+    account_id: str = ""
+    portfolio_id: str = ""
+    trading_date: str = ""
+    dataset_hash: str = ""
+    model_version: str = ""
+    strategy_version: str = ""
+    status: str = "OPEN"
+    engine_version: str = "qd_live_readonly@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveReadonlySnapshotIndexRecord(_ContractModel):
+    """Phase 7A：BrokerSnapshot 索引。"""
+
+    snapshot_id: str
+    session_id: str = ""
+    account_id: str = ""
+    captured_at: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_live_readonly@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TradingEnvironmentStateRecord(_ContractModel):
+    """Phase 7A：账户当前 TradingEnvironment。"""
+
+    account_id: str
+    environment: str = "PAPER"
+    updated_at: Optional[str] = None
+    engine_version: str = "qd_live_readonly@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
