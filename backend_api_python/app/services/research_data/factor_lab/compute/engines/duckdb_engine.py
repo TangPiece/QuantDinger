@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 
-import duckdb
 import pandas as pd
 
 from app.services.research_data.factor_lab.compute.protocol import ComputePlan, FactorFrame
@@ -47,6 +46,8 @@ class DuckDBFactorEngine:
             return FactorFrame.from_records([])
 
         expr = (plan.expression or "").strip().lower()
+        import duckdb
+
         con = duckdb.connect(database=":memory:")
         con.register("mkt", market)
         if expr.startswith("momentum_") or expr.startswith("pct_change_"):

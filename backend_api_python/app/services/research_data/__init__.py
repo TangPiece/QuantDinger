@@ -22,9 +22,21 @@ from .contracts import (
     SnapshotRef,
     TargetPosition,
 )
-from .canonical_repository import CanonicalRepository
-from .data_query import DataQuery
 from .hashing import compute_dataset_hash
+
+# CanonicalRepository / DataQuery pull duckdb — lazy so product Flask boot
+# does not require duckdb until a research read path actually uses them.
+def __getattr__(name: str):
+    if name == "CanonicalRepository":
+        from .canonical_repository import CanonicalRepository
+
+        return CanonicalRepository
+    if name == "DataQuery":
+        from .data_query import DataQuery
+
+        return DataQuery
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "CanonicalRepository",

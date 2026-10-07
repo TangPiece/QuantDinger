@@ -8,7 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-import duckdb
 import pandas as pd
 
 from . import config
@@ -113,6 +112,8 @@ class CanonicalRepository:
             return pd.DataFrame()
 
         paths = [str(self.materialize_path(k)) for k in uniq]
+        import duckdb
+
         con = duckdb.connect(database=":memory:")
         try:
             # 单文件传 str，多文件传 list；DuckDB 参数绑定避免路径注入
