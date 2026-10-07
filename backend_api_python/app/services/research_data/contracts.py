@@ -1354,3 +1354,67 @@ class TradingEnvironmentStateRecord(_ContractModel):
     updated_at: Optional[str] = None
     engine_version: str = "qd_live_readonly@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveMdSessionSummary(_ContractModel):
+    """Phase 7B：Live MD 会话索引。"""
+
+    session_id: str
+    feed_id: str = "default"
+    account_id: str = ""
+    dataset_hash: str = ""
+    model_version: str = ""
+    strategy_version: str = ""
+    status: str = "OPEN"
+    engine_version: str = "qd_live_md@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShadowSessionSummary(_ContractModel):
+    """Phase 7B：Shadow 会话索引。"""
+
+    session_id: str
+    account_id: str = ""
+    environment: str = "SHADOW"
+    dataset_hash: str = ""
+    model_version: str = ""
+    strategy_version: str = ""
+    status: str = "OPEN"
+    engine_version: str = "qd_shadow@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShadowOrderIndexRecord(_ContractModel):
+    """Phase 7B：Shadow 订单索引。"""
+
+    order_id: str
+    session_id: str = ""
+    client_order_id: str = ""
+    symbol: str = ""
+    side: str = ""
+    status: str = ""
+    engine_version: str = "qd_shadow@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShadowExecutionIndexRecord(_ContractModel):
+    """Phase 7B：Shadow 成交索引。"""
+
+    execution_id: str
+    order_id: str = ""
+    session_id: str = ""
+    symbol: str = ""
+    quantity: float = 0.0
+    price: float = 0.0
+    engine_version: str = "qd_shadow@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShadowCompareRunSummary(_ContractModel):
+    """Phase 7B：Shadow vs Live 对账运行索引。"""
+
+    run_id: str
+    account_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_shadow@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

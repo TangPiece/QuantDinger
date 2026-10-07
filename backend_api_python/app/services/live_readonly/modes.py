@@ -9,9 +9,9 @@ from .protocol import TradingEnvironment
 # 7A 允许的目标环境（不含 LIVE_CONTROLLED / LIVE）
 _ALLOWED_7A: frozenset[str] = frozenset({"PAPER", "SHADOW", "LIVE_READONLY"})
 
-# 合法单步前进边（7A 锁死；LIVE_CONTROLLED/LIVE 在 7C+ 才开放）
+# 合法单步前进边（7B 收紧：PAPER 仅 → SHADOW；LIVE_READONLY 需经 SHADOW + PRODUCTION_READY）
 _TRANSITIONS: dict[str, frozenset[str]] = {
-    "PAPER": frozenset({"SHADOW", "LIVE_READONLY"}),
+    "PAPER": frozenset({"SHADOW"}),
     "SHADOW": frozenset({"LIVE_READONLY"}),
     "LIVE_READONLY": frozenset(),  # 7A 禁止离开只读进入发单环境
     "LIVE_CONTROLLED": frozenset(),
@@ -70,9 +70,10 @@ def assert_transition(
             f"transition {src}→{dst} not allowed (allowed: {sorted(allowed)})"
         )
 
-    if dst == "LIVE_READONLY" and src == "PAPER" and not production_ready:
+    # 7B：任意进入 LIVE_READONLY 均需 PRODUCTION_READY（含 SHADOW→LIVE_READONLY）
+    if dst == "LIVE_READONLY" and not production_ready:
         raise EnvironmentTransitionError(
-            "PAPER→LIVE_READONLY requires PRODUCTION_READY=true"
+            "→LIVE_READONLY requires PRODUCTION_READY=true"
         )
 
     return dst

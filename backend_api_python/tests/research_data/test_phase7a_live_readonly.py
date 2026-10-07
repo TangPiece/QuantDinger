@@ -100,6 +100,18 @@ def test_paper_to_live_rejected():
         assert_transition("PAPER", "LIVE_CONTROLLED")
 
 
+def test_paper_to_live_readonly_rejected_even_when_ready():
+    """7B：禁止 PAPER 直跳 LIVE_READONLY。"""
+    with pytest.raises(EnvironmentTransitionError):
+        assert_transition("PAPER", "LIVE_READONLY", production_ready=True)
+
+
+def test_paper_shadow_live_readonly_ladder():
+    """7B：PAPER → SHADOW → LIVE_READONLY（PRODUCTION_READY）。"""
+    assert_transition("PAPER", "SHADOW", production_ready=True)
+    assert_transition("SHADOW", "LIVE_READONLY", production_ready=True)
+
+
 def test_connect_without_production_ready(tmp_path):
     registry = make_env(tmp_path / "nordy")[1]
     os.environ.pop("PRODUCTION_READY", None)

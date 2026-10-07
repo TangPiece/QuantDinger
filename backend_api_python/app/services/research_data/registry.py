@@ -73,6 +73,11 @@ from .contracts import (
     ReadinessRunSummary,
     LiveReadonlySessionSummary,
     LiveReadonlySnapshotIndexRecord,
+    LiveMdSessionSummary,
+    ShadowCompareRunSummary,
+    ShadowExecutionIndexRecord,
+    ShadowOrderIndexRecord,
+    ShadowSessionSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -639,6 +644,20 @@ class ResearchRegistry(Protocol):
     def get_trading_environment_state(
         self, account_id: str
     ) -> TradingEnvironmentStateRecord: ...
+
+    def upsert_live_md_session(self, record: LiveMdSessionSummary) -> None: ...
+
+    def get_live_md_session(self, session_id: str) -> LiveMdSessionSummary: ...
+
+    def upsert_shadow_session(self, record: ShadowSessionSummary) -> None: ...
+
+    def upsert_shadow_order_index(self, record: ShadowOrderIndexRecord) -> None: ...
+
+    def upsert_shadow_execution_index(
+        self, record: ShadowExecutionIndexRecord
+    ) -> None: ...
+
+    def upsert_shadow_compare_run(self, record: ShadowCompareRunSummary) -> None: ...
 
 
 class LocalJsonRegistry:
@@ -2297,6 +2316,52 @@ class LocalJsonRegistry:
         if not raw:
             raise KeyError(account_id)
         return TradingEnvironmentStateRecord.model_validate(raw)
+
+    def upsert_live_md_session(self, record: LiveMdSessionSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("live_md_sessions", {})
+            data["live_md_sessions"][record.session_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_live_md_session(self, session_id: str) -> LiveMdSessionSummary:
+        data = self._read()
+        raw = (data.get("live_md_sessions") or {}).get(session_id)
+        if not raw:
+            raise KeyError(session_id)
+        return LiveMdSessionSummary.model_validate(raw)
+
+    def upsert_shadow_session(self, record: ShadowSessionSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("shadow_sessions", {})
+            data["shadow_sessions"][record.session_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_shadow_order_index(self, record: ShadowOrderIndexRecord) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("shadow_order_index", {})
+            data["shadow_order_index"][record.order_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_shadow_execution_index(
+        self, record: ShadowExecutionIndexRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("shadow_execution_index", {})
+            data["shadow_execution_index"][record.execution_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_shadow_compare_run(self, record: ShadowCompareRunSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("shadow_compare_runs", {})
+            data["shadow_compare_runs"][record.run_id] = record.model_dump(mode="json")
+            self._write(data)
 
 
 class D1ResearchRegistry:
@@ -7150,6 +7215,155 @@ class D1ResearchRegistry:
             engine_version=r.get("engine_version") or "qd_live_readonly@1",
             metadata=json.loads(r.get("metadata_json") or "{}"),
         )
+
+    def upsert_live_md_session(self, record: LiveMdSessionSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO live_md_session (
+                  session_id, feed_id, account_id, dataset_hash, model_version,
+                  strategy_version, status, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.session_id,
+                    record.feed_id,
+                    record.account_id,
+                    record.dataset_hash,
+                    record.model_version,
+                    record.strategy_version,
+                    record.status,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_live_md_session(self, session_id: str) -> LiveMdSessionSummary:
+        rows = d1_client.query(
+            "SELECT * FROM live_md_session WHERE session_id=? LIMIT 1",
+            [session_id],
+        )
+        if not rows:
+            raise KeyError(session_id)
+        r = rows[0]
+        return LiveMdSessionSummary(
+            session_id=r["session_id"],
+            feed_id=r.get("feed_id") or "default",
+            account_id=r.get("account_id") or "",
+            dataset_hash=r.get("dataset_hash") or "",
+            model_version=r.get("model_version") or "",
+            strategy_version=r.get("strategy_version") or "",
+            status=r.get("status") or "OPEN",
+            engine_version=r.get("engine_version") or "qd_live_md@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_shadow_session(self, record: ShadowSessionSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO shadow_session (
+                  session_id, account_id, environment, dataset_hash, model_version,
+                  strategy_version, status, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.session_id,
+                    record.account_id,
+                    record.environment,
+                    record.dataset_hash,
+                    record.model_version,
+                    record.strategy_version,
+                    record.status,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_shadow_order_index(self, record: ShadowOrderIndexRecord) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO shadow_order_index (
+                  order_id, session_id, client_order_id, symbol, side, status,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.order_id,
+                    record.session_id,
+                    record.client_order_id,
+                    record.symbol,
+                    record.side,
+                    record.status,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_shadow_execution_index(
+        self, record: ShadowExecutionIndexRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO shadow_execution_index (
+                  execution_id, order_id, session_id, symbol, quantity, price,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(execution_id) DO UPDATE SET
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.execution_id,
+                    record.order_id,
+                    record.session_id,
+                    record.symbol,
+                    record.quantity,
+                    record.price,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_shadow_compare_run(self, record: ShadowCompareRunSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO shadow_compare_run (
+                  run_id, account_id, storage_uri, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    record.account_id,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
 
 
 def get_default_registry(root: Path | None = None) -> ResearchRegistry:

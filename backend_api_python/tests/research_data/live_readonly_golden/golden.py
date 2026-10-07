@@ -88,5 +88,7 @@ def make_env(tmp: Path):
         ops_service=ops,
         artifact_store=LiveReadonlyArtifactStore(root=tmp / "lro_raw"),
     )
+    # 7B 阶梯：PAPER → SHADOW → LIVE_READONLY
+    lro.set_environment("SHADOW", account_id=ACCOUNT_ID, actor="golden")
     lro.set_environment("LIVE_READONLY", account_id=ACCOUNT_ID, actor="golden")
     return store, registry, portfolio, oms, recon, ops, live_ad, lro

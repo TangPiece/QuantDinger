@@ -564,6 +564,21 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 需真实 Alpaca Live **只读 GET** 时设置 `PRODUCTION_READY=true` 与 `ALPACA_LIVE_*`（见 `env.example`）。Phase 7 说明：[docs/data/phase7/README.md](data/phase7/README.md)。
 
+### Phase 7B Live MD + Shadow Trading
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase7b_shadow_trading.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase7b_shadow_trading.py -q \
+  --confcutdir=tests/research_data
+```
+
+环境阶梯（7B）：`PAPER→SHADOW→LIVE_READONLY`；禁止 `PAPER→LIVE_READONLY`。真实 Alpaca **Data** GET（可选）需 `ALPACA_LIVE_DATA_URL=https://data.alpaca.markets` 与同组 `ALPACA_LIVE_*`。
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 Phase 6 说明：[docs/data/phase6/README.md](data/phase6/README.md)。

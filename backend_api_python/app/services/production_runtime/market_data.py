@@ -165,3 +165,18 @@ def _as_date(v: date | datetime | None) -> date:
     if isinstance(v, datetime):
         return v.date()
     return v
+
+
+def live_md_provider_or_injected(
+    *,
+    injected: Sequence[dict[str, Any]] | None = None,
+    use_fake_live_md: bool = True,
+) -> MarketDataProvider:
+    """Phase 7B：E2E/PAPER_REAL_MD 可注入 LiveMarketDataProvider（默认 Fake）。"""
+    if injected is not None:
+        return InjectedMarketDataProvider(injected)
+    from app.services.live_market_data.provider import LiveMarketDataProvider
+    from app.services.live_market_data.transport import FakeLiveMdTransport
+
+    transport = FakeLiveMdTransport() if use_fake_live_md else None
+    return LiveMarketDataProvider(transport=transport)

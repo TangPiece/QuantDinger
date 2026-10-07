@@ -71,6 +71,22 @@ def main() -> int:
         jump_blocked = True
     checks["paper_to_live_blocked"] = jump_blocked
 
+    paper_lro_block = False
+    try:
+        assert_transition("PAPER", "LIVE_READONLY", production_ready=True)
+    except EnvironmentTransitionError:
+        paper_lro_block = True
+    checks["paper_to_live_readonly_blocked"] = paper_lro_block
+
+    ladder_ok = False
+    try:
+        assert_transition("PAPER", "SHADOW", production_ready=True)
+        assert_transition("SHADOW", "LIVE_READONLY", production_ready=True)
+        ladder_ok = True
+    except EnvironmentTransitionError:
+        ladder_ok = False
+    checks["shadow_ladder_ok"] = ladder_ok
+
     *_, lro = make_env(tmp)
     ad = lro.adapter
     order = Order(order_id="v", client_order_id="v", quantity=1.0)

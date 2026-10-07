@@ -689,6 +689,47 @@ def production_live_readonly_prefix() -> str:
     return f"{_root()}/production/live_readonly"
 
 
+def production_live_md_prefix() -> str:
+    """Phase 7B：``qd/production/live_md``。"""
+    return f"{_root()}/production/live_md"
+
+
+def production_live_md_event_batch_key(
+    *,
+    feed_id: str,
+    yyyy: str,
+    mm: str,
+    dd: str,
+    event_batch_id: str,
+) -> str:
+    """``qd/production/live_md/{feed}/{yyyy}/{mm}/{dd}/{event_batch_id}.json``。"""
+    safe_feed = str(feed_id or "default").replace("/", "_")
+    return (
+        f"{production_live_md_prefix()}/{safe_feed}/{yyyy}/{mm}/{dd}/"
+        f"{event_batch_id}.json"
+    )
+
+
+def production_shadow_prefix() -> str:
+    """Phase 7B：``qd/production/shadow``。"""
+    return f"{_root()}/production/shadow"
+
+
+def production_shadow_run_key(
+    *,
+    account_id: str,
+    yyyy: str,
+    mm: str,
+    dd: str,
+    run_id: str,
+) -> str:
+    """``qd/production/shadow/{account_id}/{yyyy}/{mm}/{dd}/{run_id}.json``。"""
+    safe_acct = str(account_id or "unknown").replace("/", "_")
+    return (
+        f"{production_shadow_prefix()}/{safe_acct}/{yyyy}/{mm}/{dd}/{run_id}.json"
+    )
+
+
 def production_live_readonly_snapshot_key(
     *,
     account_id: str,
