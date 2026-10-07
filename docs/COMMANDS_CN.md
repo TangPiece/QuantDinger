@@ -678,6 +678,30 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 8D Promotion Pipeline（环境晋升）
+
+Fake inject + LocalJson 默认；说明：[04_promotion_pipeline.md](data/phase8/04_promotion_pipeline.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8d_promotion_pipeline.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8d_promotion_pipeline.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 8A–8C verify 仍应绿：
+
+```bash
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase8a_strategy_registry.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase8b_strategy_candidate.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase8c_validation_gate.py
+```
+
 Phase 7A–7D verify 仍应绿（裸 `LIVE` submit 默认拒）：
 
 ```bash

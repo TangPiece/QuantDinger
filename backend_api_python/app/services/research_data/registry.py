@@ -101,6 +101,10 @@ from .contracts import (
     StrategyCandidatePromotionSummary,
     StrategyValidationPolicySummary,
     StrategyValidationRunSummary,
+    StrategyPromotionPolicySummary,
+    StrategyPromotionRequestSummary,
+    StrategyPromotionRollbackSummary,
+    StrategyPromotionRunSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -797,6 +801,50 @@ class ResearchRegistry(Protocol):
     def list_strategy_validation_runs(
         self, candidate_id: str | None = None
     ) -> list[StrategyValidationRunSummary]: ...
+
+    def upsert_strategy_promotion_policy(
+        self, record: StrategyPromotionPolicySummary
+    ) -> None: ...
+
+    def get_strategy_promotion_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyPromotionPolicySummary: ...
+
+    def list_strategy_promotion_policies(
+        self,
+    ) -> list[StrategyPromotionPolicySummary]: ...
+
+    def upsert_strategy_promotion_request(
+        self, record: StrategyPromotionRequestSummary
+    ) -> None: ...
+
+    def get_strategy_promotion_request(
+        self, request_id: str
+    ) -> StrategyPromotionRequestSummary: ...
+
+    def list_strategy_promotion_requests(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRequestSummary]: ...
+
+    def upsert_strategy_promotion_run(
+        self, record: StrategyPromotionRunSummary
+    ) -> None: ...
+
+    def get_strategy_promotion_run(
+        self, pipeline_run_id: str
+    ) -> StrategyPromotionRunSummary: ...
+
+    def list_strategy_promotion_runs(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRunSummary]: ...
+
+    def upsert_strategy_promotion_rollback(
+        self, record: StrategyPromotionRollbackSummary
+    ) -> None: ...
+
+    def list_strategy_promotion_rollbacks(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRollbackSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -2848,6 +2896,129 @@ class LocalJsonRegistry:
             cid = str(candidate_id).strip()
             out = [r for r in out if r.candidate_id == cid]
         out.sort(key=lambda r: r.completed_at or r.started_at or "")
+        return out
+
+    def upsert_strategy_promotion_policy(
+        self, record: StrategyPromotionPolicySummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_promotion_policy", {})
+            key = f"{record.policy_id}@{record.policy_version}"
+            data["strategy_promotion_policy"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_strategy_promotion_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyPromotionPolicySummary:
+        key = f"{policy_id}@{policy_version}"
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_promotion_policy") or {}).get(key)
+        if not raw:
+            raise KeyError(f"strategy_promotion_policy missing: {key}")
+        return StrategyPromotionPolicySummary.model_validate(raw)
+
+    def list_strategy_promotion_policies(
+        self,
+    ) -> list[StrategyPromotionPolicySummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_promotion_policy") or {}).values()
+        return [StrategyPromotionPolicySummary.model_validate(r) for r in rows]
+
+    def upsert_strategy_promotion_request(
+        self, record: StrategyPromotionRequestSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_promotion_request", {})
+            data["strategy_promotion_request"][record.request_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_promotion_request(
+        self, request_id: str
+    ) -> StrategyPromotionRequestSummary:
+        rid = str(request_id).strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_promotion_request") or {}).get(rid)
+        if not raw:
+            raise KeyError(f"strategy_promotion_request missing: {rid}")
+        return StrategyPromotionRequestSummary.model_validate(raw)
+
+    def list_strategy_promotion_requests(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRequestSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_promotion_request") or {}).values()
+        out = [StrategyPromotionRequestSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_strategy_promotion_run(
+        self, record: StrategyPromotionRunSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_promotion_run", {})
+            data["strategy_promotion_run"][record.pipeline_run_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_promotion_run(
+        self, pipeline_run_id: str
+    ) -> StrategyPromotionRunSummary:
+        pid = str(pipeline_run_id).strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_promotion_run") or {}).get(pid)
+        if not raw:
+            raise KeyError(f"strategy_promotion_run missing: {pid}")
+        return StrategyPromotionRunSummary.model_validate(raw)
+
+    def list_strategy_promotion_runs(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRunSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_promotion_run") or {}).values()
+        out = [StrategyPromotionRunSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.completed_at or r.started_at or "")
+        return out
+
+    def upsert_strategy_promotion_rollback(
+        self, record: StrategyPromotionRollbackSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_promotion_rollback", {})
+            data["strategy_promotion_rollback"][record.rollback_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_strategy_promotion_rollbacks(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRollbackSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_promotion_rollback") or {}).values()
+        out = [StrategyPromotionRollbackSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
         return out
 
 
@@ -8736,6 +8907,257 @@ class D1ResearchRegistry:
             return []
         return [_strategy_validation_run_from_row(r) for r in rows or []]
 
+    def upsert_strategy_promotion_policy(
+        self, record: StrategyPromotionPolicySummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_promotion_policy (
+              policy_id, policy_version, transition_key, policy_content_hash,
+              rules_json, engine_version, description, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(policy_id, policy_version) DO UPDATE SET
+              transition_key=excluded.transition_key,
+              policy_content_hash=excluded.policy_content_hash,
+              rules_json=excluded.rules_json,
+              engine_version=excluded.engine_version,
+              description=excluded.description,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.policy_id,
+                record.policy_version,
+                record.transition_key,
+                record.policy_content_hash,
+                json.dumps(record.rules_json or {}, ensure_ascii=False),
+                record.engine_version,
+                record.description,
+                record.created_at or "",
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_strategy_promotion_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyPromotionPolicySummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM strategy_promotion_policy
+            WHERE policy_id = ? AND policy_version = ?
+            """,
+            [policy_id, policy_version],
+        )
+        if not rows:
+            raise KeyError(
+                f"strategy_promotion_policy missing: {policy_id}@{policy_version}"
+            )
+        return _strategy_promotion_policy_from_row(rows[0])
+
+    def list_strategy_promotion_policies(
+        self,
+    ) -> list[StrategyPromotionPolicySummary]:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM strategy_promotion_policy ORDER BY policy_id, policy_version"
+            )
+        except Exception:
+            return []
+        return [_strategy_promotion_policy_from_row(r) for r in rows or []]
+
+    def upsert_strategy_promotion_request(
+        self, record: StrategyPromotionRequestSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_promotion_request (
+              request_id, pipeline_run_id, idempotency_key, strategy_code,
+              candidate_id, validation_id, strategy_version, version_id,
+              content_hash, from_environment, to_environment,
+              policy_id, policy_version, policy_content_hash, status, operator,
+              approvals_json, created_at, updated_at, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(request_id) DO UPDATE SET
+              status=excluded.status,
+              operator=excluded.operator,
+              approvals_json=excluded.approvals_json,
+              updated_at=excluded.updated_at,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.request_id,
+                record.pipeline_run_id,
+                record.idempotency_key,
+                record.strategy_code,
+                record.candidate_id,
+                record.validation_id,
+                record.strategy_version,
+                record.version_id,
+                record.content_hash,
+                record.from_environment,
+                record.to_environment,
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                record.status,
+                record.operator,
+                json.dumps(record.approvals_json or [], ensure_ascii=False),
+                record.created_at or "",
+                record.updated_at or "",
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_strategy_promotion_request(
+        self, request_id: str
+    ) -> StrategyPromotionRequestSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_promotion_request WHERE request_id = ?",
+            [request_id],
+        )
+        if not rows:
+            raise KeyError(f"strategy_promotion_request missing: {request_id}")
+        return _strategy_promotion_request_from_row(rows[0])
+
+    def list_strategy_promotion_requests(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRequestSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_promotion_request
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_promotion_request ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_promotion_request_from_row(r) for r in rows or []]
+
+    def upsert_strategy_promotion_run(
+        self, record: StrategyPromotionRunSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_promotion_run (
+              pipeline_run_id, request_id, strategy_code, from_environment,
+              to_environment, policy_id, policy_version, policy_content_hash,
+              status, stages_json, session_id, governance_state,
+              started_at, completed_at, operator, storage_uri,
+              engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(pipeline_run_id) DO UPDATE SET
+              status=excluded.status,
+              stages_json=excluded.stages_json,
+              session_id=excluded.session_id,
+              governance_state=excluded.governance_state,
+              completed_at=excluded.completed_at,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.pipeline_run_id,
+                record.request_id,
+                record.strategy_code,
+                record.from_environment,
+                record.to_environment,
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                record.status,
+                json.dumps(record.stages_json or [], ensure_ascii=False),
+                record.session_id,
+                record.governance_state,
+                record.started_at or "",
+                record.completed_at or "",
+                record.operator,
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_strategy_promotion_run(
+        self, pipeline_run_id: str
+    ) -> StrategyPromotionRunSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_promotion_run WHERE pipeline_run_id = ?",
+            [pipeline_run_id],
+        )
+        if not rows:
+            raise KeyError(f"strategy_promotion_run missing: {pipeline_run_id}")
+        return _strategy_promotion_run_from_row(rows[0])
+
+    def list_strategy_promotion_runs(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRunSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_promotion_run
+                    WHERE strategy_code = ? ORDER BY completed_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_promotion_run ORDER BY completed_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_promotion_run_from_row(r) for r in rows or []]
+
+    def upsert_strategy_promotion_rollback(
+        self, record: StrategyPromotionRollbackSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_promotion_rollback (
+              rollback_id, strategy_code, from_version, to_version,
+              reason, operator, session_id, created_at, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rollback_id) DO NOTHING
+            """,
+            [
+                record.rollback_id,
+                record.strategy_code,
+                record.from_version,
+                record.to_version,
+                record.reason,
+                record.operator,
+                record.session_id,
+                record.created_at or "",
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_strategy_promotion_rollbacks(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyPromotionRollbackSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_promotion_rollback
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_promotion_rollback ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_promotion_rollback_from_row(r) for r in rows or []]
+
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
     return StrategyVersionBindingSummary(
@@ -8865,6 +9287,98 @@ def _strategy_validation_run_from_row(row: dict[str, Any]) -> StrategyValidation
         storage_uri=row.get("storage_uri") or "",
         engine_version=row.get("engine_version") or "qd_strategy_validation@1",
         metadata=meta,
+    )
+
+
+def _json_field(raw: Any, default: Any) -> Any:
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        return json.loads(raw) if raw else default
+    return raw
+
+
+def _strategy_promotion_policy_from_row(
+    row: dict[str, Any],
+) -> StrategyPromotionPolicySummary:
+    return StrategyPromotionPolicySummary(
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        transition_key=row.get("transition_key") or "",
+        policy_content_hash=row.get("policy_content_hash") or "",
+        rules_json=_json_field(row.get("rules_json"), {}),
+        engine_version=row.get("engine_version") or "qd_strategy_promotion@1",
+        description=row.get("description") or "",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_promotion_request_from_row(
+    row: dict[str, Any],
+) -> StrategyPromotionRequestSummary:
+    return StrategyPromotionRequestSummary(
+        request_id=row["request_id"],
+        pipeline_run_id=row.get("pipeline_run_id") or "",
+        idempotency_key=row.get("idempotency_key") or "",
+        strategy_code=row["strategy_code"],
+        candidate_id=row.get("candidate_id") or "",
+        validation_id=row.get("validation_id") or "",
+        strategy_version=row.get("strategy_version") or "",
+        version_id=row.get("version_id") or "",
+        content_hash=row.get("content_hash") or "",
+        from_environment=row.get("from_environment") or "REGISTERED",
+        to_environment=row.get("to_environment") or "",
+        policy_id=row.get("policy_id") or "",
+        policy_version=row.get("policy_version") or "",
+        policy_content_hash=row.get("policy_content_hash") or "",
+        status=row.get("status") or "PENDING",
+        operator=row.get("operator") or "",
+        approvals_json=_json_field(row.get("approvals_json"), []),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+        engine_version=row.get("engine_version") or "qd_strategy_promotion@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_promotion_run_from_row(row: dict[str, Any]) -> StrategyPromotionRunSummary:
+    return StrategyPromotionRunSummary(
+        pipeline_run_id=row["pipeline_run_id"],
+        request_id=row["request_id"],
+        strategy_code=row["strategy_code"],
+        from_environment=row.get("from_environment") or "",
+        to_environment=row.get("to_environment") or "",
+        policy_id=row.get("policy_id") or "",
+        policy_version=row.get("policy_version") or "",
+        policy_content_hash=row.get("policy_content_hash") or "",
+        status=row.get("status") or "IN_PROGRESS",
+        stages_json=_json_field(row.get("stages_json"), []),
+        session_id=row.get("session_id") or "",
+        governance_state=row.get("governance_state") or "",
+        started_at=row.get("started_at"),
+        completed_at=row.get("completed_at"),
+        operator=row.get("operator") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_promotion@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_promotion_rollback_from_row(
+    row: dict[str, Any],
+) -> StrategyPromotionRollbackSummary:
+    return StrategyPromotionRollbackSummary(
+        rollback_id=row["rollback_id"],
+        strategy_code=row["strategy_code"],
+        from_version=row.get("from_version") or "",
+        to_version=row.get("to_version") or "",
+        reason=row.get("reason") or "",
+        operator=row.get("operator") or "",
+        session_id=row.get("session_id") or "",
+        created_at=row.get("created_at"),
+        engine_version=row.get("engine_version") or "qd_strategy_promotion@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
     )
 
 

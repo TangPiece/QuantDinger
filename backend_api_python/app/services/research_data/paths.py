@@ -817,6 +817,17 @@ def strategy_validation_result_key(*, validation_id: str) -> str:
     return f"{strategy_validation_prefix()}/{safe_id}/result.json"
 
 
+def strategy_promotion_prefix() -> str:
+    """Phase 8D：``qd/registry/promotions``。"""
+    return f"{_root()}/registry/promotions"
+
+
+def strategy_promotion_manifest_key(*, pipeline_run_id: str) -> str:
+    """``qd/registry/promotions/{pipeline_run_id}/manifest.json``。"""
+    safe_id = str(pipeline_run_id or "unknown").replace("/", "_")
+    return f"{strategy_promotion_prefix()}/{safe_id}/manifest.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

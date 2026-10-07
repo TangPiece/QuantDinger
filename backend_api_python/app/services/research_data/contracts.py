@@ -1737,3 +1737,81 @@ class StrategyValidationRunSummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_strategy_validation@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyPromotionPolicySummary(_ContractModel):
+    """Phase 8D：PromotionPolicy 索引。"""
+
+    policy_id: str
+    policy_version: str
+    transition_key: str = ""
+    policy_content_hash: str = ""
+    rules_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qd_strategy_promotion@1"
+    description: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyPromotionRequestSummary(_ContractModel):
+    """Phase 8D：PromotionRequest 索引。"""
+
+    request_id: str
+    pipeline_run_id: str = ""
+    idempotency_key: str = ""
+    strategy_code: str
+    candidate_id: str = ""
+    validation_id: str = ""
+    strategy_version: str = ""
+    version_id: str = ""
+    content_hash: str = ""
+    from_environment: str = "REGISTERED"
+    to_environment: str = ""
+    policy_id: str = ""
+    policy_version: str = ""
+    policy_content_hash: str = ""
+    status: str = "PENDING"
+    operator: str = ""
+    approvals_json: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    engine_version: str = "qd_strategy_promotion@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyPromotionRunSummary(_ContractModel):
+    """Phase 8D：PromotionRunRecord 索引（manifest 在 R2）。"""
+
+    pipeline_run_id: str
+    request_id: str
+    strategy_code: str
+    from_environment: str = ""
+    to_environment: str = ""
+    policy_id: str = ""
+    policy_version: str = ""
+    policy_content_hash: str = ""
+    status: str = "IN_PROGRESS"
+    stages_json: list[dict[str, Any]] = Field(default_factory=list)
+    session_id: str = ""
+    governance_state: str = ""
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    operator: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_promotion@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyPromotionRollbackSummary(_ContractModel):
+    """Phase 8D：Rollback 审计。"""
+
+    rollback_id: str
+    strategy_code: str
+    from_version: str = ""
+    to_version: str = ""
+    reason: str = ""
+    operator: str = ""
+    session_id: str = ""
+    created_at: Optional[str] = None
+    engine_version: str = "qd_strategy_promotion@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
