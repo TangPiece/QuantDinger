@@ -790,6 +790,24 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 9E Factor Library
+
+Promotion Gate + Catalog/Tags + Collection/PortfolioSpec；说明：[05_factor_library.md](data/phase9/05_factor_library.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9e_factor_library.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase9e_factor_library.py -q \
+  --confcutdir=tests/research_data
+```
+
+并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
+
 ### Phase 8I Architecture Hardening & E2E Acceptance
 
 编排 8A–8H verify + 平面隔离扫描 + FSM/immutability/inject 矩阵 + 单链 E2E + 7E 回归；说明：[09_architecture_hardening_e2e.md](data/phase8/09_architecture_hardening_e2e.md)。
