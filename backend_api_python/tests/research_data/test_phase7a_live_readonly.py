@@ -68,9 +68,35 @@ def test_ast_no_post_orders_or_live_submit():
     assert "LIVE_READONLY_FORBIDDEN" in inspect.getsource(_forbid_write)
 
 
-def test_oms_allowed_env_no_live():
-    assert "LIVE" not in oms_cycle._ALLOWED_ENV
+def test_oms_live_governance_gated_by_default():
+    assert oms_cycle.live_env_requires_governance()
     assert "LIVE_READONLY" not in oms_cycle._ALLOWED_ENV
+    from app.services.oms.state_machine import StateMachineError
+    from app.services.research_data.contracts import OrderIntent
+
+    class _W:
+        def get_by_idempotency_for_intent(self, *a, **k):
+            return None
+
+        def persist_order(self, *a, **k):
+            pass
+
+    intent = OrderIntent(
+        instrument_key="USStock:AAPL",
+        side="BUY",
+        quantity=1.0,
+        execution_algorithm="LIMIT",
+        limit_price=1.0,
+    )
+    with pytest.raises(StateMachineError):
+        oms_cycle.run_submit_intents(
+            [intent],
+            account_id="a1",
+            portfolio_id="p1",
+            environment="LIVE",
+            writer=_W(),
+            broker_port=object(),
+        )
 
 
 def test_write_methods_raise():

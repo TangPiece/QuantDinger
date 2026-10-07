@@ -84,6 +84,17 @@ from .contracts import (
     ControlledLiveOrderIndexRecord,
     ControlledLiveRuntimeTickSummary,
     ControlledLiveSessionSummary,
+    GovAccountRegistrySummary,
+    GovAggregationRunSummary,
+    GovAttributionSnapshotSummary,
+    GovCapacitySummary,
+    GovCapitalAllocationSummary,
+    GovRiskBudgetSummary,
+    GovScaleApprovalSummary,
+    GovScaleStateSummary,
+    GovStrategyAccountBindSummary,
+    GovStrategyLifecycleSummary,
+    GovStrategyVersionSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -687,6 +698,40 @@ class ResearchRegistry(Protocol):
 
     def upsert_controlled_live_drift_daily(
         self, record: ControlledLiveDriftDailySummary
+    ) -> None: ...
+
+    def upsert_gov_strategy_version(self, record: GovStrategyVersionSummary) -> None: ...
+
+    def upsert_gov_strategy_lifecycle(
+        self, record: GovStrategyLifecycleSummary
+    ) -> None: ...
+
+    def upsert_gov_capital_allocation(
+        self, record: GovCapitalAllocationSummary
+    ) -> None: ...
+
+    def upsert_gov_risk_budget(self, record: GovRiskBudgetSummary) -> None: ...
+
+    def upsert_gov_capacity(self, record: GovCapacitySummary) -> None: ...
+
+    def upsert_gov_scale_state(self, record: GovScaleStateSummary) -> None: ...
+
+    def upsert_gov_scale_approval(self, record: GovScaleApprovalSummary) -> None: ...
+
+    def upsert_gov_account_registry(
+        self, record: GovAccountRegistrySummary
+    ) -> None: ...
+
+    def upsert_gov_strategy_account_bind(
+        self, record: GovStrategyAccountBindSummary
+    ) -> None: ...
+
+    def upsert_gov_attribution_snapshot(
+        self, record: GovAttributionSnapshotSummary
+    ) -> None: ...
+
+    def upsert_gov_aggregation_run(
+        self, record: GovAggregationRunSummary
     ) -> None: ...
 
 
@@ -2457,6 +2502,106 @@ class LocalJsonRegistry:
             data["controlled_live_drift_daily"][record.run_id] = record.model_dump(
                 mode="json"
             )
+            self._write(data)
+
+    def upsert_gov_strategy_version(self, record: GovStrategyVersionSummary) -> None:
+        key = f"{record.strategy_id}@{record.strategy_version}"
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_strategy_version", {})
+            data["gov_strategy_version"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_gov_strategy_lifecycle(
+        self, record: GovStrategyLifecycleSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_strategy_lifecycle", {})
+            data["gov_strategy_lifecycle"][record.strategy_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_gov_capital_allocation(
+        self, record: GovCapitalAllocationSummary
+    ) -> None:
+        key = f"{record.account_id}|{record.strategy_id}"
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_capital_allocation", {})
+            data["gov_capital_allocation"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_gov_risk_budget(self, record: GovRiskBudgetSummary) -> None:
+        key = record.strategy_id or record.account_id
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_risk_budget", {})
+            data["gov_risk_budget"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_gov_capacity(self, record: GovCapacitySummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_capacity", {})
+            data["gov_capacity"][record.strategy_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_gov_scale_state(self, record: GovScaleStateSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_scale_state", {})
+            data["gov_scale_state"][record.strategy_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_gov_scale_approval(self, record: GovScaleApprovalSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_scale_approval", {})
+            data["gov_scale_approval"][record.approval_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_gov_account_registry(
+        self, record: GovAccountRegistrySummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_account_registry", {})
+            data["gov_account_registry"][record.account_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_gov_strategy_account_bind(
+        self, record: GovStrategyAccountBindSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_strategy_account_bind", {})
+            data["gov_strategy_account_bind"][record.strategy_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_gov_attribution_snapshot(
+        self, record: GovAttributionSnapshotSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_attribution_snapshot", {})
+            data["gov_attribution_snapshot"][record.snapshot_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_gov_aggregation_run(self, record: GovAggregationRunSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("gov_aggregation_run", {})
+            data["gov_aggregation_run"][record.run_id] = record.model_dump(mode="json")
             self._write(data)
 
 
@@ -7627,6 +7772,300 @@ class D1ResearchRegistry:
                     record.run_id,
                     record.account_id,
                     record.trading_date,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_strategy_version(self, record: GovStrategyVersionSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_strategy_version (
+                  strategy_id, strategy_version, model_version, dataset_hash,
+                  feature_version, content_hash, is_live, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id, strategy_version) DO UPDATE SET
+                  metadata_json=excluded.metadata_json,
+                  is_live=excluded.is_live
+                """,
+                [
+                    record.strategy_id,
+                    record.strategy_version,
+                    record.model_version,
+                    record.dataset_hash,
+                    record.feature_version,
+                    record.content_hash,
+                    1 if record.is_live else 0,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_strategy_lifecycle(
+        self, record: GovStrategyLifecycleSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_strategy_lifecycle (
+                  strategy_id, state, active_version, previous_stable_version,
+                  scale_level, updated_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id) DO UPDATE SET
+                  state=excluded.state,
+                  active_version=excluded.active_version,
+                  scale_level=excluded.scale_level,
+                  updated_at=excluded.updated_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_id,
+                    record.state,
+                    record.active_version,
+                    record.previous_stable_version,
+                    record.scale_level,
+                    record.updated_at,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_capital_allocation(
+        self, record: GovCapitalAllocationSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_capital_allocation (
+                  account_id, strategy_id, allocated_notional, reserve_notional,
+                  used_notional, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, strategy_id) DO UPDATE SET
+                  allocated_notional=excluded.allocated_notional,
+                  used_notional=excluded.used_notional,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.account_id,
+                    record.strategy_id,
+                    record.allocated_notional,
+                    record.reserve_notional,
+                    record.used_notional,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_risk_budget(self, record: GovRiskBudgetSummary) -> None:
+        try:
+            scope_key = record.strategy_id or record.account_id
+            d1_client.query(
+                """
+                INSERT INTO gov_risk_budget (
+                  scope_key, account_id, portfolio_id, strategy_id,
+                  layers_json, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope_key) DO UPDATE SET
+                  layers_json=excluded.layers_json,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    scope_key,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.strategy_id,
+                    json.dumps(record.layers_json or [], ensure_ascii=False),
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_capacity(self, record: GovCapacitySummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_capacity (
+                  strategy_id, max_notional, max_order_size,
+                  max_participation_rate, max_daily_turnover,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id) DO UPDATE SET
+                  max_notional=excluded.max_notional,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_id,
+                    record.max_notional,
+                    record.max_order_size,
+                    record.max_participation_rate,
+                    record.max_daily_turnover,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_scale_state(self, record: GovScaleStateSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_scale_state (
+                  strategy_id, account_id, current_level, pending_level,
+                  live_env_approved, updated_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id) DO UPDATE SET
+                  current_level=excluded.current_level,
+                  pending_level=excluded.pending_level,
+                  live_env_approved=excluded.live_env_approved,
+                  updated_at=excluded.updated_at,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_id,
+                    record.account_id,
+                    record.current_level,
+                    record.pending_level or "",
+                    1 if record.live_env_approved else 0,
+                    record.updated_at,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_scale_approval(self, record: GovScaleApprovalSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_scale_approval (
+                  approval_id, kind, strategy_id, account_id, operator_actor,
+                  approval_token_hash, status, from_scale, to_scale, approved_at,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(approval_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.approval_id,
+                    record.kind,
+                    record.strategy_id,
+                    record.account_id,
+                    record.operator_actor,
+                    record.approval_token_hash,
+                    record.status,
+                    record.from_scale,
+                    record.to_scale,
+                    record.approved_at,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_account_registry(
+        self, record: GovAccountRegistrySummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_account_registry (
+                  account_id, label, environment, status,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.account_id,
+                    record.label,
+                    record.environment,
+                    record.status,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_strategy_account_bind(
+        self, record: GovStrategyAccountBindSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_strategy_account_bind (
+                  strategy_id, account_id, portfolio_id,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_id) DO UPDATE SET
+                  account_id=excluded.account_id,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_id,
+                    record.account_id,
+                    record.portfolio_id,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_attribution_snapshot(
+        self, record: GovAttributionSnapshotSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_attribution_snapshot (
+                  snapshot_id, account_id, rows_json,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                  rows_json=excluded.rows_json
+                """,
+                [
+                    record.snapshot_id,
+                    record.account_id,
+                    json.dumps(record.rows_json or [], ensure_ascii=False),
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_gov_aggregation_run(self, record: GovAggregationRunSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO gov_aggregation_run (
+                  run_id, account_id, storage_uri, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    record.account_id,
                     record.storage_uri,
                     record.engine_version,
                     json.dumps(record.metadata or {}, ensure_ascii=False),

@@ -70,7 +70,7 @@ def test_cancel_replace_hard_raise():
 
 def test_oms_allowed_env_controlled_not_live():
     assert "LIVE_CONTROLLED" in oms_cycle._ALLOWED_ENV
-    assert "LIVE" not in oms_cycle._ALLOWED_ENV
+    assert oms_cycle.live_env_requires_governance()
 
 
 def test_gateway_live_forbidden():

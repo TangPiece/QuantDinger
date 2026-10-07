@@ -12,7 +12,6 @@ class EnvironmentViolation(RuntimeError):
 
 
 _REAL_ENV_BLOCK = frozenset({"SHADOW", "LIVE_READONLY", "PAPER"})
-_LIVE_FORBIDDEN = frozenset({"LIVE"})
 
 
 def is_real_broker(broker_port: Any) -> bool:
@@ -53,10 +52,11 @@ class OrderExecutionGateway:
         broker_port: Any,
         *,
         submit_fn: Optional[Callable[[Order], Any]] = None,
+        governance_live_authorized: bool = False,
     ) -> Any:
         env = str(environment or "PAPER").strip().upper()
-        if env in _LIVE_FORBIDDEN:
-            raise EnvironmentViolation("LIVE forbidden")
+        if env == "LIVE" and not governance_live_authorized:
+            raise EnvironmentViolation("LIVE requires governance authorization")
         if env == "LIVE_CONTROLLED":
             if submit_fn is None:
                 raise EnvironmentViolation("submit_fn required for LIVE_CONTROLLED")
@@ -67,20 +67,34 @@ class OrderExecutionGateway:
             raise EnvironmentViolation("submit_fn required for allowed paths")
         return submit_fn(order)
 
-    def cancel_real(self, environment: str, broker_port: Any, **kwargs: Any) -> Any:
+    def cancel_real(
+        self,
+        environment: str,
+        broker_port: Any,
+        *,
+        governance_live_authorized: bool = False,
+        **kwargs: Any,
+    ) -> Any:
         env = str(environment or "PAPER").strip().upper()
-        if env in _LIVE_FORBIDDEN:
-            raise EnvironmentViolation("LIVE forbidden")
+        if env == "LIVE" and not governance_live_authorized:
+            raise EnvironmentViolation("LIVE requires governance authorization")
         if env == "LIVE_CONTROLLED":
             raise EnvironmentViolation("REAL_BROKER_CANCEL denied for LIVE_CONTROLLED")
         if env in _REAL_ENV_BLOCK and is_real_broker(broker_port):
             raise EnvironmentViolation("REAL_BROKER_CANCEL denied")
         raise EnvironmentViolation("cancel_real not implemented in Phase 7B")
 
-    def replace_real(self, environment: str, broker_port: Any, **kwargs: Any) -> Any:
+    def replace_real(
+        self,
+        environment: str,
+        broker_port: Any,
+        *,
+        governance_live_authorized: bool = False,
+        **kwargs: Any,
+    ) -> Any:
         env = str(environment or "PAPER").strip().upper()
-        if env in _LIVE_FORBIDDEN:
-            raise EnvironmentViolation("LIVE forbidden")
+        if env == "LIVE" and not governance_live_authorized:
+            raise EnvironmentViolation("LIVE requires governance authorization")
         if env == "LIVE_CONTROLLED":
             raise EnvironmentViolation("REAL_BROKER_REPLACE denied for LIVE_CONTROLLED")
         if env in _REAL_ENV_BLOCK and is_real_broker(broker_port):

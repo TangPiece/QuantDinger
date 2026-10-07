@@ -111,6 +111,7 @@ class ControlledLiveService:
         processor_version: str = "",
         snapshot_id: str = "",
         config: Any | None = None,
+        effective_caps: Mapping[str, Any] | None = None,
     ) -> ControlledSession:
         cfg = config or load_controlled_live_config()
         session = open_controlled_session(
@@ -123,6 +124,7 @@ class ControlledLiveService:
             processor_version=processor_version,
             snapshot_id=snapshot_id,
             config=cfg,
+            effective_caps=effective_caps,
         )
         self._writer.write_session(session)
         self._session = session

@@ -11,12 +11,12 @@ _ALLOWED_PHASE7: frozenset[str] = frozenset(
     {"PAPER", "SHADOW", "LIVE_READONLY", "LIVE_CONTROLLED"}
 )
 
-# 合法单步前进边
+# 合法单步前进边（LIVE_CONTROLLED→LIVE 仅 governance 授权时开放，见 assert_transition）
 _TRANSITIONS: dict[str, frozenset[str]] = {
     "PAPER": frozenset({"SHADOW"}),
     "SHADOW": frozenset({"LIVE_READONLY"}),
     "LIVE_READONLY": frozenset({"LIVE_CONTROLLED"}),
-    "LIVE_CONTROLLED": frozenset(),
+    "LIVE_CONTROLLED": frozenset({"LIVE"}),
     "LIVE": frozenset(),
 }
 
@@ -25,11 +25,15 @@ class EnvironmentTransitionError(RuntimeError):
     """非法环境转换。"""
 
 
-def normalize_environment(env: str) -> TradingEnvironment:
-    """规范化环境名；LIVE 永久禁止。"""
+def normalize_environment(
+    env: str,
+    *,
+    governance_live_authorized: bool = False,
+) -> TradingEnvironment:
+    """规范化环境名；LIVE 默认禁止， governance 授权后可解析。"""
     e = str(env or "PAPER").strip().upper()
-    if e == "LIVE":
-        raise EnvironmentTransitionError("LIVE forbidden")
+    if e == "LIVE" and not governance_live_authorized:
+        raise EnvironmentTransitionError("LIVE forbidden without governance authorization")
     if e not in (
         "PAPER",
         "SHADOW",
@@ -46,17 +50,21 @@ def assert_transition(
     to_env: str,
     *,
     production_ready: bool = False,
+    governance_live_authorized: bool = False,
 ) -> TradingEnvironment:
     """校验环境阶梯；PAPER→LIVE 等跳跃一律拒绝。"""
     src = normalize_environment(from_env)
-    dst = normalize_environment(to_env)
+    dst_raw = str(to_env or "PAPER").strip().upper()
+    dst = normalize_environment(
+        to_env, governance_live_authorized=governance_live_authorized
+    )
 
     if src == dst:
         return dst
 
-    # 硬禁：任意目标为 LIVE
-    if dst == "LIVE":
-        raise EnvironmentTransitionError("LIVE forbidden")
+    # LIVE 仅 LIVE_CONTROLLED + governance 双重门禁
+    if dst_raw == "LIVE" and not governance_live_authorized:
+        raise EnvironmentTransitionError("LIVE forbidden without governance authorization")
 
     # 硬禁：PAPER 不能直接到 LIVE_READONLY / LIVE_CONTROLLED
     if src == "PAPER" and dst in ("LIVE_READONLY", "LIVE_CONTROLLED", "LIVE"):

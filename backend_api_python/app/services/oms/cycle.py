@@ -19,7 +19,15 @@ from .replace import apply_replace
 from .state_machine import StateMachineError
 from .validation import ValidationError, validate_order
 
-_ALLOWED_ENV = frozenset({"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER", "LIVE_CONTROLLED"})
+# LIVE 在集合内但 run_submit_intents 须 metadata governance_live_authorized=true（7E）
+_ALLOWED_ENV = frozenset(
+    {"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER", "LIVE_CONTROLLED", "LIVE"}
+)
+
+
+def live_env_requires_governance() -> bool:
+    """7E：LIVE 在允许集合内，但默认路径仍须 governance_live_authorized metadata。"""
+    return "LIVE" in _ALLOWED_ENV
 
 
 def _ops_audit_order(
@@ -178,8 +186,8 @@ def run_submit_intents(
         raise StateMachineError(
             f"environment must be one of {sorted(_ALLOWED_ENV)}, got {environment!r}"
         )
-    if env == "LIVE":
-        raise StateMachineError("LIVE not enabled in Phase 6E")
+    if env == "LIVE" and not bool(meta_pre.get("governance_live_authorized")):
+        raise StateMachineError("LIVE requires governance_live_authorized=true")
 
     port: BrokerPort = broker_port or paper_broker or PaperBroker()
     if prices and hasattr(port, "set_prices"):

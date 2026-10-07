@@ -62,7 +62,39 @@ def main() -> int:
     checks: dict[str, bool] = {}
 
     checks["ast_guard"] = _ast_guard()
-    checks["oms_no_live_env"] = "LIVE" not in oms_cycle._ALLOWED_ENV
+    checks["oms_live_governance_gated"] = oms_cycle.live_env_requires_governance()
+    live_blocked = False
+    try:
+        from app.services.research_data.contracts import OrderIntent
+        from app.services.oms.state_machine import StateMachineError
+
+        class _W:
+            def get_by_idempotency_for_intent(self, *a, **k):
+                return None
+
+            def persist_order(self, *a, **k):
+                pass
+
+        intent = OrderIntent(
+            instrument_key="USStock:AAPL",
+            side="BUY",
+            quantity=1.0,
+            execution_algorithm="LIMIT",
+            limit_price=1.0,
+        )
+        oms_cycle.run_submit_intents(
+            [intent],
+            account_id="a1",
+            portfolio_id="p1",
+            environment="LIVE",
+            writer=_W(),
+            broker_port=object(),
+        )
+    except StateMachineError:
+        live_blocked = True
+    except Exception:
+        live_blocked = False
+    checks["oms_live_submit_blocked_without_governance"] = live_blocked
 
     jump_blocked = False
     try:

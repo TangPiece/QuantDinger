@@ -781,6 +781,26 @@ def production_controlled_live_run_key(
     )
 
 
+def production_governance_prefix() -> str:
+    """Phase 7E：``qd/production/governance``。"""
+    return f"{_root()}/production/governance"
+
+
+def production_governance_artifact_key(
+    *,
+    account_id: str,
+    yyyy: str,
+    mm: str,
+    dd: str,
+    artifact_id: str,
+) -> str:
+    """``qd/production/governance/{account_id}/{yyyy}/{mm}/{dd}/{artifact_id}.json``。"""
+    safe_acct = str(account_id or "unknown").replace("/", "_")
+    return (
+        f"{production_governance_prefix()}/{safe_acct}/{yyyy}/{mm}/{dd}/{artifact_id}.json"
+    )
+
+
 def production_live_readonly_snapshot_key(
     *,
     account_id: str,

@@ -607,6 +607,39 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 7E Gradual Scale（Trading Governance）
+
+Fake registry 默认；`LIVE` 在 OMS 允许集合内但 **须** `governance_live_authorized` / Gateway 授权。说明：[05_gradual_scale.md](data/phase7/05_gradual_scale.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase7e_gradual_scale.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase7e_gradual_scale.py -q \
+  --confcutdir=tests/research_data
+```
+
+运维显式开启 LIVE 环境审批（勿提交密钥）：
+
+```bash
+export PRODUCTION_READY=true
+export LIVE_ENV_APPROVAL=true
+```
+
+Phase 7A–7D verify 仍应绿（裸 `LIVE` submit 默认拒）：
+
+```bash
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase7a_live_readonly.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase7b_shadow_trading.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase7c_controlled_live.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase7d_controlled_production.py
+```
+```
+
 Fake MD + Fake broker 默认；`LIVE` 仍禁；breach 仅 halt 新单，不 auto flatten。
 
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。

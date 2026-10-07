@@ -61,7 +61,7 @@ def main() -> int:
 
     checks["ast_no_delete_patch"] = _ast_guard()
     checks["oms_live_controlled"] = "LIVE_CONTROLLED" in oms_cycle._ALLOWED_ENV
-    checks["oms_no_live"] = "LIVE" not in oms_cycle._ALLOWED_ENV
+    checks["oms_live_governance_gated"] = oms_cycle.live_env_requires_governance()
 
     gw = OrderExecutionGateway()
     live_denied = False

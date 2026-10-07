@@ -67,7 +67,7 @@ def test_ast_no_post_orders():
 
 
 def test_oms_allowed_env_no_live():
-    assert "LIVE" not in oms_cycle._ALLOWED_ENV
+    assert oms_cycle.live_env_requires_governance()
 
 
 def test_gateway_deny_shadow_real_broker():

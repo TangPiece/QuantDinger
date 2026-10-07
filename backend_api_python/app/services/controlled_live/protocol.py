@@ -85,6 +85,7 @@ class ControlledSession(_ControlledModel):
     opened_at: str = ""
     heartbeat_at: str = ""
     runtime_phase: RuntimePhase = "INIT"
+    scale_level: str = ""
     engine_version: str = ENGINE_VERSION
     config: ControlledLiveConfig = Field(default_factory=ControlledLiveConfig)
     risk_budget: RiskBudget = Field(default_factory=RiskBudget)

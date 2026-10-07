@@ -1,6 +1,6 @@
 # Phase 7 — Controlled Live
 
-> **Status:** Phase 7A–7D implemented (read-only Live + Shadow + controlled production runtime).
+> **Status:** Phase 7A–7E implemented (through Gradual Scale / Trading Governance).
 
 ## Roadmap
 
@@ -9,7 +9,7 @@
 7B  Live Shadow                           ← done
 7C  Single Order                           ← done
 7D  Controlled Live Production             ← done
-7E  Gradual Scale
+7E  Gradual Scale                         ← done
 ```
 
 ## Reading
@@ -18,6 +18,7 @@
 2. [02_live_shadow.md](02_live_shadow.md)
 3. [03_controlled_live.md](03_controlled_live.md)
 4. [04_controlled_live_production.md](04_controlled_live_production.md)
+5. [05_gradual_scale.md](05_gradual_scale.md)
 
 ## Commands
 

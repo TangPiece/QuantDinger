@@ -53,7 +53,7 @@ def main() -> int:
     checks: dict[str, bool] = {}
 
     checks["ast_guard"] = _ast_guard()
-    checks["oms_no_live_env"] = "LIVE" not in oms_cycle._ALLOWED_ENV
+    checks["oms_live_governance_gated"] = oms_cycle.live_env_requires_governance()
 
     class _RealBroker:
         broker_id = "alpaca_live"

@@ -83,6 +83,7 @@ def open_controlled_session(
     snapshot_id: str = "",
     config: ControlledLiveConfig | None = None,
     risk_budget: RiskBudget | None = None,
+    effective_caps: Mapping[str, Any] | None = None,
     salt: str = "",
     metadata: Mapping[str, Any] | None = None,
 ) -> ControlledSession:
@@ -93,6 +94,28 @@ def open_controlled_session(
         strategy_version=strategy_version,
         salt=salt or str(uuid4())[:8],
     )
+    cfg = config or ControlledLiveConfig()
+    rb = risk_budget or load_risk_budget_from_env()
+    meta = dict(metadata or {})
+    scale_level = ""
+    if effective_caps:
+        scale_level = str(effective_caps.get("scale_level") or "")
+        meta["effective_caps"] = dict(effective_caps)
+        # 7E：Session 打开时快照 governance caps，收紧 config / risk_budget
+        max_n = float(effective_caps.get("max_notional_per_order") or 0)
+        max_sess = float(effective_caps.get("max_notional_session") or 0)
+        max_o = int(effective_caps.get("max_orders") or 0)
+        if max_n > 0:
+            cfg = cfg.model_copy(update={"max_notional": min(cfg.max_notional, max_n)})
+        if max_o > 0:
+            cfg = cfg.model_copy(update={"max_orders": min(cfg.max_orders, max_o)})
+        if max_sess > 0:
+            rb = rb.model_copy(
+                update={"max_notional_session": min(rb.max_notional_session, max_sess)}
+            )
+        if max_o > 0:
+            rb = rb.model_copy(update={"max_orders": min(rb.max_orders, max_o)})
+
     sess = ControlledSession(
         session_id=sid,
         account_id=account_id,
@@ -109,9 +132,10 @@ def open_controlled_session(
         opened_at=datetime.now(timezone.utc).isoformat(),
         heartbeat_at=datetime.now(timezone.utc).isoformat(),
         runtime_phase="INIT",
-        config=config or ControlledLiveConfig(),
-        risk_budget=risk_budget or load_risk_budget_from_env(),
-        metadata=dict(metadata or {}),
+        scale_level=scale_level,
+        config=cfg,
+        risk_budget=rb,
+        metadata=meta,
     )
     return attach_risk_budget(sess)
 

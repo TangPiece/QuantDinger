@@ -1499,3 +1499,116 @@ class ControlledLiveDriftDailySummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_controlled_live@2"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovStrategyVersionSummary(_ContractModel):
+    """Phase 7E：策略版本钉扎索引。"""
+
+    strategy_id: str
+    strategy_version: str
+    model_version: str = ""
+    dataset_hash: str = ""
+    feature_version: str = ""
+    content_hash: str = ""
+    is_live: bool = False
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovStrategyLifecycleSummary(_ContractModel):
+    strategy_id: str
+    state: str = "DRAFT"
+    active_version: str = ""
+    previous_stable_version: str = ""
+    scale_level: str = "L0_SHADOW"
+    updated_at: str = ""
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovCapitalAllocationSummary(_ContractModel):
+    account_id: str
+    strategy_id: str
+    allocated_notional: float = 0.0
+    reserve_notional: float = 0.0
+    used_notional: float = 0.0
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovRiskBudgetSummary(_ContractModel):
+    account_id: str
+    portfolio_id: str = ""
+    strategy_id: str = ""
+    layers_json: list[dict[str, Any]] = Field(default_factory=list)
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovCapacitySummary(_ContractModel):
+    strategy_id: str
+    max_notional: float = 0.0
+    max_order_size: float = 0.0
+    max_participation_rate: float = 0.0
+    max_daily_turnover: float = 0.0
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovScaleStateSummary(_ContractModel):
+    strategy_id: str
+    account_id: str = ""
+    current_level: str = "L0_SHADOW"
+    pending_level: str | None = None
+    live_env_approved: bool = False
+    updated_at: str = ""
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovScaleApprovalSummary(_ContractModel):
+    approval_id: str
+    kind: str = "SCALE_UP"
+    strategy_id: str = ""
+    account_id: str = ""
+    operator_actor: str = ""
+    approval_token_hash: str = ""
+    status: str = "PENDING"
+    from_scale: str = ""
+    to_scale: str = ""
+    approved_at: str = ""
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovAccountRegistrySummary(_ContractModel):
+    account_id: str
+    label: str = ""
+    environment: str = "LIVE_CONTROLLED"
+    status: str = "ACTIVE"
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovStrategyAccountBindSummary(_ContractModel):
+    strategy_id: str
+    account_id: str
+    portfolio_id: str = ""
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovAttributionSnapshotSummary(_ContractModel):
+    snapshot_id: str
+    account_id: str = ""
+    rows_json: list[dict[str, Any]] = Field(default_factory=list)
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovAggregationRunSummary(_ContractModel):
+    run_id: str
+    account_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_governance@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
