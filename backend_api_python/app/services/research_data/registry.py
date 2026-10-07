@@ -208,7 +208,11 @@ class ResearchRegistry(Protocol):
     ) -> str: ...
 
     def upsert_dataset(
-        self, definition: DatasetDefinition, *, status: str = "ACTIVE"
+        self,
+        definition: DatasetDefinition,
+        *,
+        status: str = "ACTIVE",
+        manifest_uri: str | None = None,
     ) -> None: ...
 
     def get_dataset(self, dataset_ref: str) -> DatasetHandle: ...
@@ -1158,7 +1162,11 @@ class LocalJsonRegistry:
             return snapshot_id
 
     def upsert_dataset(
-        self, definition: DatasetDefinition, *, status: str = "ACTIVE"
+        self,
+        definition: DatasetDefinition,
+        *,
+        status: str = "ACTIVE",
+        manifest_uri: str | None = None,
     ) -> None:
         """登记 Dataset；status 存旁路字段（Local JSON），供 validated 等验收态。"""
         with self._lock:
@@ -1167,6 +1175,8 @@ class LocalJsonRegistry:
             payload = definition.model_dump(mode="json")
             # Domain Contract 无 status 字段；Registry 侧单独记录
             payload["_registry_status"] = status
+            if manifest_uri:
+                payload["_manifest_uri"] = manifest_uri
             data["datasets"][key] = payload
             self._write(data)
 
@@ -1189,11 +1199,18 @@ class LocalJsonRegistry:
             materializer_version="none",
             price_policy=definition.price_policy.model_dump(mode="json"),
         )
+        from app.services.research_data.dataset_platform.identity import (
+            logical_manifest_uri as _logical_dataset_manifest_uri,
+        )
+
+        manifest_uri = str(raw.get("_manifest_uri") or "").strip() or _logical_dataset_manifest_uri(
+            definition
+        )
         return DatasetHandle(
             definition=definition,
             snapshot=snapshot,
             dataset_hash=digest,
-            manifest_uri="",
+            manifest_uri=manifest_uri,
         )
 
     def upsert_feature(self, feature: FeatureDefinition) -> None:
@@ -3865,9 +3882,14 @@ class D1ResearchRegistry:
         return snapshot_id
 
     def upsert_dataset(
-        self, definition: DatasetDefinition, *, status: str = "ACTIVE"
+        self,
+        definition: DatasetDefinition,
+        *,
+        status: str = "ACTIVE",
+        manifest_uri: str | None = None,
     ) -> None:
         """登记 Dataset；status 文本列可写 validated（不改 DDL）。"""
+        _ = manifest_uri  # 9A 默认无 0039 列；URI 由 get_dataset 推导
         d1_client.query(
             """
             INSERT INTO dataset (
@@ -3933,11 +3955,15 @@ class D1ResearchRegistry:
             materializer_version="none",
             price_policy=definition.price_policy.model_dump(mode="json"),
         )
+        from app.services.research_data.dataset_platform.identity import (
+            logical_manifest_uri as _logical_dataset_manifest_uri,
+        )
+
         return DatasetHandle(
             definition=definition,
             snapshot=snapshot,
             dataset_hash=digest,
-            manifest_uri="",
+            manifest_uri=_logical_dataset_manifest_uri(definition),
         )
 
     def upsert_feature(self, feature: FeatureDefinition) -> None:
