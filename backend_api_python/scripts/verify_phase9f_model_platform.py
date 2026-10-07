@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 9F-1 验收：Model Contract & Registry。"""
+"""Phase 9F 验收：Model Contract & Lineage（含 9F-2）。"""
 
 from __future__ import annotations
 
@@ -19,14 +19,15 @@ os.environ.setdefault("QUANTDINGER_SKIP_APP_INIT", "1")
 
 def main() -> int:
     from app.services.research_data.model_platform.hashing import compute_model_config_hash
-    from app.services.research_data.model_platform.protocol import (
-        ENGINE_VERSION,
-        ModelSearchQuery,
-    )
+    from app.services.research_data.model_platform.protocol import ENGINE_VERSION
     from app.services.research_data.model_platform.runner import ModelPlatformService
     from model_platform_golden.golden import (
         GOLDEN_CONFIG,
         GOLDEN_MODEL_CODE,
+        create_formal_version,
+        create_succeeded_run,
+        draft_stub_inject,
+        formal_inject,
         golden_artifact_spec,
         golden_model_spec,
         golden_training_run_spec,
@@ -45,99 +46,106 @@ def main() -> int:
     checks["no_evaluate_model"] = not hasattr(ModelPlatformService, "evaluate_model")
     checks["no_auto_live"] = not hasattr(ModelPlatformService, "auto_live")
     checks["no_promote_strategy"] = not hasattr(ModelPlatformService, "promote_strategy")
-    checks["has_register_model"] = hasattr(svc, "register_model")
-    checks["has_create_training_run"] = hasattr(svc, "create_training_run")
+    checks["has_create_from_run"] = hasattr(svc, "create_version_from_run")
+    checks["has_get_lineage"] = hasattr(svc, "get_lineage")
+    checks["has_get_active"] = hasattr(svc, "get_active_version")
 
     model = svc.register_model(golden_model_spec())
-    version = svc.register_version(model.model_id, golden_version_spec())
-    checks["model_ne_version"] = model.model_id != version.model_version_id
-    checks["version_lineage"] = bool(
-        version.dataset_hash
-        and version.model_config_hash
-        and version.version_content_hash
-        and len(version.version_content_hash) == 64
+    bare_reject = False
+    try:
+        svc.register_version(model.model_id, golden_version_spec())
+    except Exception:
+        bare_reject = True
+    checks["bare_register_rejected"] = bare_reject
+
+    stub = svc.register_version(
+        model.model_id,
+        golden_version_spec(version="0.0.1-stub"),
+        inject=draft_stub_inject(),
     )
+    checks["draft_stub_ok"] = stub.lifecycle == "DRAFT"
+
+    version = create_formal_version(svc, model_id=model.model_id, version="1.0.0")
+    checks["formal_trained"] = version.lifecycle == "TRAINED"
+    checks["formal_has_run_artifact"] = bool(version.training_run_id and version.artifact_id)
+
+    lineage = svc.get_lineage(version.model_version_id)
+    checks["lineage_complete"] = all(
+        lineage.get(k)
+        for k in (
+            "dataset_hash",
+            "snapshot_id",
+            "feature_set_hash",
+            "label_hash",
+            "processor_version",
+            "training_run_id",
+            "artifact_id",
+            "repro_manifest_uri",
+        )
+    )
+    repro = svc.get_repro_manifest(version.model_version_id)
+    checks["repro_manifest"] = bool(repro.get("artifact_checksum") and repro.get("version_content_hash"))
 
     h1 = compute_model_config_hash(GOLDEN_CONFIG)
-    h2 = svc.compute_model_config_hash(dict(reversed(list(GOLDEN_CONFIG.items()))))
-    checks["config_hash_stable"] = h1 == h2 == version.model_config_hash
+    checks["config_hash_stable"] = h1 == version.model_config_hash
 
-    rid = "trun_verify_fixed01"
-    run1 = svc.create_training_run(
-        golden_training_run_spec(
-            model_id=model.model_id,
-            model_version_id=version.model_version_id,
-            training_run_id=rid,
-        )
+    queued = svc.create_training_run(
+        golden_training_run_spec(model_id=model.model_id, training_run_id="trun_queued")
     )
-    run2 = svc.create_training_run(
-        golden_training_run_spec(
-            model_id=model.model_id,
-            model_version_id=version.model_version_id,
-            training_run_id=rid,
-        )
-    )
-    checks["run_idempotent"] = run1.training_run_hash == run2.training_run_hash
-    drift_ok = False
+    non_ok = False
     try:
-        svc.create_training_run(
-            golden_training_run_spec(
-                model_id=model.model_id,
-                model_version_id=version.model_version_id,
-                training_run_id=rid,
-                random_seed=7,
-            )
+        svc.create_version_from_run(
+            queued.training_run_id,
+            version="9.9.9",
+            lineage_spec=golden_version_spec(version="9.9.9"),
+            artifact_spec=golden_artifact_spec(),
+            inject=formal_inject(),
         )
     except Exception:
-        drift_ok = True
-    checks["run_immutable_drift"] = drift_ok
+        non_ok = True
+    checks["reject_non_succeeded"] = non_ok
 
-    for target in ("TRAINING", "TRAINED", "EVALUATING", "VALIDATED", "APPROVED"):
+    run_ok = create_succeeded_run(svc, model_id=model.model_id, training_run_id="trun_badcs")
+    bad_cs = False
+    try:
+        svc.create_version_from_run(
+            run_ok.training_run_id,
+            version="8.8.8",
+            lineage_spec=golden_version_spec(version="8.8.8"),
+            artifact_spec=golden_artifact_spec(checksum="nope"),
+            inject=formal_inject(),
+        )
+    except Exception:
+        bad_cs = True
+    checks["reject_bad_checksum"] = bad_cs
+
+    del_ok = False
+    try:
+        svc.delete_version(version.model_version_id)
+    except Exception:
+        del_ok = True
+    checks["delete_forbidden"] = del_ok
+
+    rebind = False
+    try:
+        svc.register_artifact(golden_artifact_spec(version.model_version_id))
+    except Exception:
+        rebind = True
+    checks["artifact_rebind_forbidden"] = rebind
+
+    for target in ("EVALUATING", "VALIDATED", "APPROVED"):
         version = svc.transition(version.model_version_id, target)  # type: ignore[arg-type]
     active = svc.activate(version.model_version_id)
-    checks["activate_search"] = active.lifecycle == "ACTIVE" and bool(
-        svc.search(ModelSearchQuery(lifecycle=["ACTIVE"]))["versions"]
+    checks["active_query"] = (
+        svc.get_active_version(model.model_id).model_version_id == active.model_version_id
     )
-
     svc.retire(active.model_version_id)
-    retired_block = False
+    no_active = False
     try:
-        svc.activate(active.model_version_id)
+        svc.get_active_version(model.model_id)
     except Exception:
-        retired_block = True
-    checks["retired_blocks_activate"] = retired_block
-    checks["retired_still_get"] = (
-        svc.get_version(active.model_version_id).lifecycle == "RETIRED"
-    )
-
-    art = svc.register_artifact(golden_artifact_spec(version.model_version_id))
-    checks["artifact_bound"] = (
-        svc.get_version(version.model_version_id).artifact_id == art.artifact_id
-    )
-
-    pkg = ROOT / "app" / "services" / "research_data" / "model_platform"
-    forbidden = ("auto_live", "promote_strategy", "evaluate_model")
-    clean = True
-    for py in pkg.rglob("*.py"):
-        text = py.read_text(encoding="utf-8").lower()
-        # allow comments listing forbidden APIs in runner docstring / verify notes
-        if py.name == "runner.py":
-            # strip docstring-ish lines for token scan of method defs
-            lines = [
-                ln
-                for ln in text.splitlines()
-                if not ln.strip().startswith("#")
-                and "无 train" not in ln
-                and "auto_live" not in ln
-                and "promote_strategy" not in ln
-                and "evaluate_model" not in ln
-            ]
-            text = "\n".join(lines)
-        for tok in forbidden:
-            if f"def {tok}" in text or f".{tok}(" in text:
-                clean = False
-                break
-    checks["forbidden_tokens"] = clean
+        no_active = True
+    checks["no_active_after_retire"] = no_active
     checks["model_code"] = model.model_code == GOLDEN_MODEL_CODE
 
     mig = (

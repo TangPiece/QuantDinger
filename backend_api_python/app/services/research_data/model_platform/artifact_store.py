@@ -60,5 +60,8 @@ class ModelArtifactStore:
             return []
         return sorted(base.glob("*.json"))
 
+    def root_path(self) -> Path:
+        return platform_root(self.root)
+
 
 __all__ = ["ModelArtifactStore", "platform_root"]

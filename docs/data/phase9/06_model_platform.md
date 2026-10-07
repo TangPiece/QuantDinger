@@ -1,17 +1,24 @@
-# Phase 9F — Model Platform（9F-1：Contract & Registry）
+# Phase 9F — Model Platform（9F-1 Registry + 9F-2 Lineage）
 
 ## 目标
 
-把 **Model ≠ ModelVersion**、**TrainingRun 不可变**、**Artifact 自描述索引** 纳入 Research Platform；本子阶段只做契约与注册中心，**不**执行训练、不评价模型、不接 Strategy LIVE。
+把 **Model ≠ ModelVersion**、**TrainingRun 不可变**、**Artifact 自描述索引** 与 **完整可复现血缘** 纳入 Research Platform。
+
+- **9F-1**：契约与注册中心  
+- **9F-2**：正式 ModelVersion 仅由 **SUCCEEDED TrainingRun** 创建；lineage 校验；checksum 绑定；`model_repro_manifest.json`；lineage/active 查询  
+
+**不**执行真实训练、不评价模型、不接 Strategy LIVE。
 
 ```text
 Model
-  → ModelVersion (lineage hashes + lifecycle)
-       ├── TrainingRun (pin only)
-       └── ModelArtifact (index only)
+  → TrainingRun (pin → SUCCEEDED)
+  → create_version_from_run
+  → ModelVersion (TRAINED, immutable lineage)
+       ├── ModelArtifact (checksum-bound)
+       └── model_repro_manifest.json
+  ✕ 空血缘直接 register_version
   ✕ Qlib Adapter / ModelTrainer
-  ✕ Model Evaluation
-  ✕ Strategy Candidate / LIVE
+  ✕ Model Evaluation / Strategy LIVE
 ```
 
 ## 包位置
@@ -22,6 +29,9 @@ Model
 | --- | --- |
 | `protocol.py` | Model / ModelVersion / TrainingRun / ModelArtifact |
 | `lifecycle.py` | FSM：`DRAFT→…→ACTIVE→DEPRECATED→RETIRED` |
+| `lineage.py` | 正式创建血缘校验 + `get_lineage` 视图 |
+| `repro.py` | `model_repro_manifest.json` |
+| `immutability.py` | TrainingRun / Version lineage 硬化 |
 | `catalog.py` / `search.py` | 注册与检索 |
 | `hashing.py` | `model_config_hash` / `version_content_hash` / `training_run_hash` |
 | `bridge_legacy.py` | → Phase 2D `ModelDefinition` / `ModelVersionRecord` |
@@ -39,15 +49,29 @@ Model
 ModelPlatformService(store, registry=None)
 
 .register_model / .get_model / .search
-.register_version / .get_version / .list_versions
-.create_training_run / .get_training_run   # pin only
-.register_artifact / .get_artifact
+.register_version  # 须 SUCCEEDED run，或 inject.allow_draft_stub
+.create_version_from_run(training_run_id, *, version, artifact_spec|artifact_id, ...)
+.update_training_run_status / .create_training_run / .get_training_run
+.register_artifact  # 仅 DRAFT stub 后绑
+.get_version / .list_versions / .get_active_version
+.get_lineage / .get_artifact_for_version / .get_repro_manifest
 .activate / .deprecate / .retire / .transition
+.delete_version  # 永远拒绝
 .compute_model_config_hash(config) -> str
-.to_legacy_definition / .to_legacy_version_record
 ```
 
 **无** `train` / `predict` / `evaluate_model` / `auto_live` / `promote_strategy`。
+
+## 正式创建契约（9F-2）
+
+```text
+TrainingRun.status == SUCCEEDED
+  → lineage: dataset_hash, snapshot_id, feature_set_id/hash,
+             label_hash, processor_version, model_config_hash,
+             training_run_id, artifact checksum
+  → ModelVersion.lifecycle = TRAINED
+  → write model_repro_manifest.json
+```
 
 ## Lifecycle
 
@@ -56,11 +80,11 @@ DRAFT → TRAINING → TRAINED → EVALUATING → VALIDATED
   → APPROVED → ACTIVE → DEPRECATED → RETIRED
 ```
 
-**Model ACTIVE ≠ Strategy LIVE。**
+正式路径从 `TRAINED` 起步。**Model ACTIVE ≠ Strategy LIVE。**
 
 ## D1
 
-Migration [`0039_model_platform.sql`](../../../../workers/qd-research-d1/migrations/0039_model_platform.sql)：扩展 `model` / `model_version` / `artifact`，新增 `training_run`。  
+Migration [`0039_model_platform.sql`](../../../../workers/qd-research-d1/migrations/0039_model_platform.sql)。  
 **Verify 路径以 LocalJson 为 SSOT**，不依赖 D1。
 
 ## 验收
@@ -80,9 +104,9 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research
 ❌ Model Evaluation metrics（→ 9F-6）
 ❌ Auto Strategy / LIVE
 ❌ Replace Phase 2D ModelTrainer
-❌ Delete retired model bytes
+❌ Delete formal ModelVersion
 ```
 
 ## 后续子阶段（未实现）
 
-9F-2 Lineage 深化 · 9F-3 TrainingRun 执行编排 · 9F-4 Qlib Adapter · 9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro · 9F-9 E2E
+9F-3 TrainingRun 执行编排 · 9F-4 Qlib Adapter · 9F-5 Artifact Bundle · 9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro 闭环 · 9F-9 E2E

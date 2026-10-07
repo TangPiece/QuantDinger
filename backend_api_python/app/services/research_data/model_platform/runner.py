@@ -1,4 +1,4 @@
-"""ModelPlatformService：9F-1 对外门面（Registry，无 train/LIVE）。"""
+"""ModelPlatformService：9F Registry + 9F-2 Lineage（无 train/LIVE）。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from .hashing import compute_model_config_hash
 from .immutability import (
     ModelImmutabilityError,
     assert_training_run_immutable,
+    assert_training_run_status_transition,
     assert_version_immutable,
     load_json_model,
 )
@@ -22,6 +23,13 @@ from .lifecycle import (
     can_activate,
     can_deprecate,
     can_retire,
+)
+from .lineage import (
+    LineageValidationError,
+    assert_checksum,
+    assert_lineage_pass,
+    lineage_view,
+    validate_lineage_for_version,
 )
 from .pin import pin_model, pin_model_artifact, pin_model_version, pin_training_run
 from .protocol import (
@@ -37,7 +45,9 @@ from .protocol import (
     ModelVersionSpec,
     TrainingRun,
     TrainingRunSpec,
+    TrainingRunStatus,
 )
+from .repro import load_repro_manifest, write_repro_manifest
 from .search import search_models, search_versions
 from .writers import write_artifact, write_model, write_training_run, write_version
 
@@ -62,7 +72,7 @@ def _coerce_inject(
 
 
 class ModelPlatformService:
-    """Model Contract & Registry（无 train / predict / evaluate_model / auto_live）。"""
+    """Model Contract & Lineage（无 train / predict / evaluate_model / auto_live）。"""
 
     def __init__(
         self,
@@ -134,33 +144,188 @@ class ModelPlatformService:
         *,
         inject: Mapping[str, Any] | ModelPlatformInject | None = None,
     ) -> ModelVersion:
+        """正式路径：须 SUCCEEDED training_run；否则仅 allow_draft_stub。"""
         inj = _coerce_inject(inject)
         if isinstance(spec, dict):
             spec = ModelVersionSpec.model_validate(spec)
         model = self.get_model(model_id_or_code)
-        # duplicate version check
         for v in self._catalog.list_versions(model.model_id):
             if v.version == spec.version:
                 raise ModelPlatformError(
                     f"version already exists: {model.model_code}@{spec.version}"
                 )
-        framework = spec.framework or model.framework
-        spec = spec.model_copy(update={"framework": framework})
-        version = pin_model_version(
+
+        allow_stub = bool(inj and inj.allow_draft_stub)
+        if allow_stub:
+            framework = spec.framework or model.framework
+            spec = spec.model_copy(update={"framework": framework})
+            version = pin_model_version(
+                model_id=model.model_id,
+                model_code=model.model_code,
+                spec=spec,
+                lifecycle="DRAFT",
+            )
+            write_version(self._store, version)
+            self._catalog.upsert_version(version)
+            self._persist_registry_version(version)
+            if inj and inj.auto_activate:
+                for target in ("TRAINING", "TRAINED", "EVALUATING", "VALIDATED", "APPROVED"):
+                    version = self.transition(version.model_version_id, target)  # type: ignore[arg-type]
+                return self.activate(version.model_version_id)
+            return version
+
+        if not (spec.training_run_id or "").strip():
+            raise ModelPlatformError(
+                "register_version requires training_run_id or inject.allow_draft_stub"
+            )
+        return self.create_version_from_run(
+            spec.training_run_id,
+            version=spec.version,
+            lineage_spec=spec,
+            artifact_id=spec.artifact_id or None,
+            inject=inject,
+        )
+
+    def create_version_from_run(
+        self,
+        training_run_id: str,
+        *,
+        version: str,
+        lineage_spec: ModelVersionSpec | dict[str, Any] | None = None,
+        artifact_spec: ModelArtifactSpec | dict[str, Any] | None = None,
+        artifact_id: str | None = None,
+        inject: Mapping[str, Any] | ModelPlatformInject | None = None,
+    ) -> ModelVersion:
+        """SUCCEEDED TrainingRun → TRAINED ModelVersion + artifact + repro manifest。"""
+        inj = _coerce_inject(inject)
+        run = self.get_training_run(training_run_id)
+        if run.status != "SUCCEEDED":
+            raise ModelPlatformError(
+                f"training_run must be SUCCEEDED, got {run.status}"
+            )
+
+        if lineage_spec is None:
+            lineage_spec = ModelVersionSpec(version=version)
+        elif isinstance(lineage_spec, dict):
+            lineage_spec = ModelVersionSpec.model_validate(lineage_spec)
+        else:
+            lineage_spec = lineage_spec.model_copy(update={"version": version or lineage_spec.version})
+
+        model_key = run.model_id or run.model_code
+        if not model_key:
+            raise ModelPlatformError("training_run missing model_id/model_code")
+        model = self.get_model(model_key)
+
+        for v in self._catalog.list_versions(model.model_id):
+            if v.version == lineage_spec.version:
+                raise ModelPlatformError(
+                    f"version already exists: {model.model_code}@{lineage_spec.version}"
+                )
+
+        # fill from run
+        updates: dict[str, Any] = {
+            "training_run_id": run.training_run_id,
+            "dataset_hash": lineage_spec.dataset_hash or run.dataset_hash,
+            "feature_set_hash": lineage_spec.feature_set_hash or run.feature_set_hash,
+            "random_seed": lineage_spec.random_seed or run.random_seed,
+        }
+        if run.hyperparameters and not lineage_spec.hyperparameters:
+            updates["hyperparameters"] = dict(run.hyperparameters)
+        if not lineage_spec.framework:
+            updates["framework"] = model.framework
+        lineage_spec = lineage_spec.model_copy(update=updates)
+
+        cfg_hash = compute_model_config_hash(lineage_spec.config)
+        # artifact first (need id for validation)
+        art: ModelArtifact | None = None
+        if artifact_id:
+            art = self.get_artifact(artifact_id)
+        elif artifact_spec is not None:
+            if isinstance(artifact_spec, dict):
+                artifact_spec = ModelArtifactSpec.model_validate(artifact_spec)
+            # temporary version id placeholder — pin artifact after version created
+            # validate checksum early
+            try:
+                expected = inj.expected_checksum if inj else ""
+                assert_checksum(artifact_spec.checksum, expected=expected or "")
+            except LineageValidationError as exc:
+                raise ModelPlatformError(str(exc)) from exc
+        else:
+            raise ModelPlatformError("artifact_spec or artifact_id required")
+
+        inject_map = inj.model_dump(mode="json") if inj else {}
+        reasons = validate_lineage_for_version(
+            spec=lineage_spec,
+            training_run=run,
+            artifact=art,
+            model_config_hash=cfg_hash,
+            inject=inject_map,
+        )
+        # artifact_id may be filled after pin — if only artifact_spec, strip artifact_id_missing for now
+        if artifact_spec is not None and art is None:
+            reasons = [r for r in reasons if r != "artifact_id_missing"]
+            if not artifact_spec.checksum:
+                reasons.append("artifact_checksum_missing")
+        try:
+            assert_lineage_pass(reasons)
+        except LineageValidationError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+
+        meta = dict(lineage_spec.metadata or {})
+        if run.factor_portfolio_hash:
+            meta["factor_portfolio_hash"] = run.factor_portfolio_hash
+        lineage_spec = lineage_spec.model_copy(update={"metadata": meta})
+
+        version_obj = pin_model_version(
             model_id=model.model_id,
             model_code=model.model_code,
-            spec=spec,
-            lifecycle="DRAFT",
+            spec=lineage_spec,
+            lifecycle="TRAINED",
         )
-        write_version(self._store, version)
-        self._catalog.upsert_version(version)
-        self._persist_registry_version(version)
+
+        if art is None and artifact_spec is not None:
+            aspec = artifact_spec.model_copy(
+                update={"model_version_id": version_obj.model_version_id}
+            )
+            art = pin_model_artifact(aspec)
+            write_artifact(self._store, art)
+            self._artifacts[art.artifact_id] = art
+            version_obj = version_obj.model_copy(update={"artifact_id": art.artifact_id})
+        elif art is not None:
+            version_obj = version_obj.model_copy(update={"artifact_id": art.artifact_id})
+
+        # final lineage check with artifact bound
+        final_spec = lineage_spec.model_copy(
+            update={"artifact_id": version_obj.artifact_id, "training_run_id": run.training_run_id}
+        )
+        reasons2 = validate_lineage_for_version(
+            spec=final_spec,
+            training_run=run,
+            artifact=art,
+            model_config_hash=version_obj.model_config_hash,
+            inject=inject_map,
+        )
+        try:
+            assert_lineage_pass(reasons2)
+        except LineageValidationError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+
+        write_version(self._store, version_obj)
+        self._catalog.upsert_version(version_obj)
+        self._persist_registry_version(version_obj)
+
+        write_repro_manifest(
+            self._store.root_path(),
+            version_obj,
+            training_run=run,
+            artifact=art,
+        )
+
         if inj and inj.auto_activate:
-            # 需先走 APPROVED；auto_activate 仅用于测试捷径：直接推到 APPROVED 再 ACTIVE
-            for target in ("TRAINING", "TRAINED", "EVALUATING", "VALIDATED", "APPROVED"):
-                version = self.transition(version.model_version_id, target)  # type: ignore[arg-type]
-            return self.activate(version.model_version_id)
-        return version
+            for target in ("EVALUATING", "VALIDATED", "APPROVED"):
+                version_obj = self.transition(version_obj.model_version_id, target)  # type: ignore[arg-type]
+            return self.activate(version_obj.model_version_id)
+        return version_obj
 
     def get_version(self, model_version_id_or_ref: str) -> ModelVersion:
         version = self._catalog.get_version(model_version_id_or_ref)
@@ -178,6 +343,65 @@ class ModelPlatformService:
     def list_versions(self, model_id_or_code: str) -> list[ModelVersion]:
         model = self.get_model(model_id_or_code)
         return self._catalog.list_versions(model.model_id)
+
+    def get_active_version(self, model_id_or_code: str) -> ModelVersion:
+        versions = [
+            v for v in self.list_versions(model_id_or_code) if v.lifecycle == "ACTIVE"
+        ]
+        if not versions:
+            raise ModelPlatformError(f"no ACTIVE version for {model_id_or_code}")
+        versions.sort(key=lambda v: v.created_at, reverse=True)
+        return versions[0]
+
+    def get_lineage(self, model_version_id: str) -> dict[str, Any]:
+        version = self.get_version(model_version_id)
+        run = None
+        if version.training_run_id:
+            try:
+                run = self.get_training_run(version.training_run_id)
+            except ModelPlatformError:
+                run = None
+        art = None
+        if version.artifact_id:
+            try:
+                art = self.get_artifact(version.artifact_id)
+            except ModelPlatformError:
+                art = None
+        repro = load_repro_manifest(
+            self._store.root_path(), model_version_id=version.model_version_id
+        )
+        repro_path = ""
+        if repro is not None:
+            from .repro import repro_manifest_path
+
+            repro_path = str(
+                repro_manifest_path(
+                    self._store.root_path(),
+                    model_version_id=version.model_version_id,
+                )
+            )
+        return lineage_view(
+            version, training_run=run, artifact=art, repro_path=repro_path
+        )
+
+    def get_artifact_for_version(self, model_version_id: str) -> ModelArtifact:
+        version = self.get_version(model_version_id)
+        if not version.artifact_id:
+            raise ModelPlatformError(
+                f"version {model_version_id} has no artifact_id"
+            )
+        return self.get_artifact(version.artifact_id)
+
+    def get_repro_manifest(self, model_version_id: str) -> dict[str, Any]:
+        version = self.get_version(model_version_id)
+        data = load_repro_manifest(
+            self._store.root_path(), model_version_id=version.model_version_id
+        )
+        if data is None:
+            raise ModelPlatformError(
+                f"repro manifest not found for {model_version_id}"
+            )
+        return data
 
     def search(
         self, query: ModelSearchQuery | dict[str, Any]
@@ -214,6 +438,31 @@ class ModelPlatformService:
         self._runs[run.training_run_id] = run
         return run
 
+    def update_training_run_status(
+        self,
+        training_run_id: str,
+        status: TrainingRunStatus,
+    ) -> TrainingRun:
+        run = self.get_training_run(training_run_id)
+        try:
+            assert_training_run_status_transition(run.status, status)
+        except ModelImmutabilityError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+        if run.status == status:
+            return run
+        now = datetime.now(timezone.utc)
+        updates: dict[str, Any] = {"status": status}
+        if status == "RUNNING" and run.started_at is None:
+            updates["started_at"] = now
+        if status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+            updates["finished_at"] = now
+            if run.started_at is None:
+                updates["started_at"] = now
+        updated = run.model_copy(update=updates)
+        write_training_run(self._store, updated)
+        self._runs[training_run_id] = updated
+        return updated
+
     def get_training_run(self, training_run_id: str) -> TrainingRun:
         run = self._runs.get(training_run_id)
         if run is None:
@@ -228,16 +477,33 @@ class ModelPlatformService:
     def register_artifact(
         self,
         spec: ModelArtifactSpec | dict[str, Any],
+        *,
+        inject: Mapping[str, Any] | ModelPlatformInject | None = None,
     ) -> ModelArtifact:
+        """仅 DRAFT stub 可后绑 artifact；正式 version 须在 create_version_from_run 绑定。"""
+        inj = _coerce_inject(inject)
         if isinstance(spec, dict):
             spec = ModelArtifactSpec.model_validate(spec)
-        # ensure version exists
-        self.get_version(spec.model_version_id)
+        version = self.get_version(spec.model_version_id)
+        if version.artifact_id:
+            raise ModelPlatformError(
+                f"artifact_id already bound to {version.artifact_id}; rebinding forbidden"
+            )
+        if version.lifecycle != "DRAFT":
+            raise ModelPlatformError(
+                "cannot bind artifact to formal version after create; use create_version_from_run"
+            )
+        try:
+            assert_checksum(
+                spec.checksum,
+                expected=(inj.expected_checksum if inj else "") or "",
+            )
+        except LineageValidationError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+
         art = pin_model_artifact(spec)
         write_artifact(self._store, art)
         self._artifacts[art.artifact_id] = art
-        # bind artifact_id onto version (lifecycle field allowed)
-        version = self.get_version(spec.model_version_id)
         updated = version.model_copy(update={"artifact_id": art.artifact_id})
         write_version(self._store, updated)
         self._catalog.upsert_version(updated)
@@ -254,6 +520,11 @@ class ModelPlatformService:
             raise ModelPlatformError(f"artifact not found: {artifact_id}")
         return art
 
+    def delete_version(self, model_version_id: str) -> None:
+        raise ModelPlatformError(
+            f"delete_version forbidden for immutable ModelVersion: {model_version_id}"
+        )
+
     def transition(
         self,
         model_version_id: str,
@@ -262,7 +533,6 @@ class ModelPlatformService:
         version = self.get_version(model_version_id)
         assert_transition(version.lifecycle, target)
         updated = version.model_copy(update={"lifecycle": target})
-        # lineage fields must not drift
         try:
             assert_version_immutable(version, updated)
         except ModelImmutabilityError as exc:
@@ -295,6 +565,10 @@ class ModelPlatformService:
                 "replacement_ref": replacement_ref,
             }
         )
+        try:
+            assert_version_immutable(version, updated)
+        except ModelImmutabilityError as exc:
+            raise ModelPlatformError(str(exc)) from exc
         write_version(self._store, updated)
         self._catalog.upsert_version(updated)
         return updated

@@ -256,6 +256,9 @@ class ModelPlatformInject(_PlatformModel):
 
     skip_immutability: bool = False
     auto_activate: bool = False
+    allow_draft_stub: bool = False
+    known_hashes: dict[str, str] = Field(default_factory=dict)
+    expected_checksum: str = ""
 
 
 __all__ = [
