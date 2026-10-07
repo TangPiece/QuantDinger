@@ -1988,3 +1988,134 @@ class StrategyGovernanceEventSummary(_ContractModel):
     session_id: str = ""
     engine_version: str = "qd_strategy_monitoring@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GuardrailPolicySummary(_ContractModel):
+    """Phase 8G：GuardrailPolicy 索引。"""
+
+    policy_id: str
+    policy_version: str
+    policy_content_hash: str = ""
+    auto_execute: bool = True
+    auto_action_policy_id: str = ""
+    auto_action_policy_version: str = ""
+    action_matrix_json: list[dict[str, Any]] = Field(default_factory=list)
+    engine_version: str = "qd_strategy_guardrails@1"
+    description: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoActionPolicySummary(_ContractModel):
+    """Phase 8G：AutoActionPolicy 索引。"""
+
+    policy_id: str
+    policy_version: str
+    policy_content_hash: str = ""
+    auto_allowed_json: list[str] = Field(default_factory=list)
+    auto_forbidden_json: list[str] = Field(default_factory=list)
+    auto_resume: bool = False
+    engine_version: str = "qd_strategy_guardrails@1"
+    description: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyRuntimeStateSummary(_ContractModel):
+    """Phase 8G：Strategy Runtime 状态（与 Lifecycle 分离）。"""
+
+    strategy_code: str
+    runtime_status: str = "ACTIVE"
+    lifecycle_phase: str = "UNKNOWN"
+    throttle_tier: str = "NORMAL"
+    throttle_multiplier: float = 1.0
+    policy_id: str = ""
+    policy_version: str = ""
+    policy_content_hash: str = ""
+    last_incident_id: str = ""
+    recovery_check_passed: bool = False
+    last_evaluated_at: Optional[str] = None
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_guardrails@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovernanceIncidentSummary(_ContractModel):
+    """Phase 8G：GovernanceIncident 索引。"""
+
+    incident_id: str
+    strategy_code: str
+    status: str = "DETECTED"
+    severity: str = "CRITICAL"
+    category: str = "SYSTEM"
+    recommended_action: str = "REVIEW"
+    alert_id: str = ""
+    message: str = ""
+    requires_decision: bool = False
+    opened_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_guardrails@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovernanceDecisionSummary(_ContractModel):
+    """Phase 8G：GovernanceDecision 索引。"""
+
+    decision_id: str
+    strategy_code: str
+    incident_id: str = ""
+    decision_type: str
+    status: str = "PENDING"
+    operator: str = ""
+    reason: str = ""
+    to_version: str = ""
+    submitted_at: Optional[str] = None
+    approved_at: Optional[str] = None
+    executed_at: Optional[str] = None
+    session_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_guardrails@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GuardrailGovernanceEventSummary(_ContractModel):
+    """Phase 8G：Guardrail 审计事件（与 8F REVIEW 并存）。"""
+
+    event_id: str
+    strategy_code: str
+    event_type: str
+    runtime_status: str = "ACTIVE"
+    lifecycle_phase: str = "UNKNOWN"
+    severity: str = "INFO"
+    category: str = "SYSTEM"
+    incident_id: str = ""
+    decision_id: str = ""
+    message: str = ""
+    created_at: Optional[str] = None
+    session_id: str = ""
+    engine_version: str = "qd_strategy_guardrails@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GuardrailRollbackRecordSummary(_ContractModel):
+    """Phase 8G：Rollback lineage 记录。"""
+
+    rollback_id: str
+    strategy_code: str
+    from_version: str
+    to_version: str
+    from_model_version: str = ""
+    to_model_version: str = ""
+    from_dataset_hash: str = ""
+    to_dataset_hash: str = ""
+    decision_id: str = ""
+    reason: str = ""
+    operator: str = ""
+    session_id: str = ""
+    created_at: Optional[str] = None
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_guardrails@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

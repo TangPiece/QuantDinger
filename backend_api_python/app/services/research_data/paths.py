@@ -873,6 +873,41 @@ def strategy_monitoring_alert_key(*, strategy_code: str, alert_id: str) -> str:
     return f"{strategy_monitoring_prefix()}/{safe_code}/alerts/{safe_id}.json"
 
 
+def strategy_guardrails_prefix() -> str:
+    """Phase 8G：``qd/registry/strategy_guardrails``。"""
+    return f"{_root()}/registry/strategy_guardrails"
+
+
+def strategy_guardrails_runtime_key(*, strategy_code: str) -> str:
+    """``qd/registry/strategy_guardrails/{strategy_code}/runtime/state.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    return f"{strategy_guardrails_prefix()}/{safe_code}/runtime/state.json"
+
+
+def strategy_guardrails_incident_key(*, strategy_code: str, incident_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(incident_id or "unknown").replace("/", "_")
+    return f"{strategy_guardrails_prefix()}/{safe_code}/incidents/{safe_id}.json"
+
+
+def strategy_guardrails_decision_key(*, strategy_code: str, decision_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(decision_id or "unknown").replace("/", "_")
+    return f"{strategy_guardrails_prefix()}/{safe_code}/decisions/{safe_id}.json"
+
+
+def strategy_guardrails_event_key(*, strategy_code: str, event_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(event_id or "unknown").replace("/", "_")
+    return f"{strategy_guardrails_prefix()}/{safe_code}/events/{safe_id}.json"
+
+
+def strategy_guardrails_rollback_key(*, strategy_code: str, rollback_id: str) -> str:
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(rollback_id or "unknown").replace("/", "_")
+    return f"{strategy_guardrails_prefix()}/{safe_code}/rollbacks/{safe_id}.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

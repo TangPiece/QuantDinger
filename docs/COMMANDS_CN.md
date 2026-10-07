@@ -710,6 +710,28 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 8G Strategy Governance & Auto Guardrails（Runtime 保护）
+
+Fake inject + LocalJson 默认；说明：[07_strategy_governance_guardrails.md](data/phase8/07_strategy_governance_guardrails.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8g_strategy_guardrails.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8g_strategy_guardrails.py -q \
+  --confcutdir=tests/research_data
+```
+
+Phase 8F verify 仍应绿：
+
+```bash
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase8f_strategy_monitoring.py
+```
+
 ### Phase 8F Strategy Monitoring & Alerting（持续监控）
 
 Fake inject + LocalJson 默认；说明：[06_strategy_monitoring.md](data/phase8/06_strategy_monitoring.md)。

@@ -52,6 +52,7 @@ class StrategyMonitoringService:
         reconciliation: Any | None = None,
         writer: StrategyMonitoringWriter | None = None,
         notifier: NotificationDispatcher | None = None,
+        guardrails: Any | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -60,7 +61,19 @@ class StrategyMonitoringService:
         self._reconciliation = reconciliation
         self._writer = writer or StrategyMonitoringWriter(registry)
         self._notifier = notifier or NotificationDispatcher()
+        self._guardrails = guardrails
         self._latest_health: dict[str, StrategyHealth] = {}
+
+    def _try_evaluate_guardrails(self, strategy_code: str, *, inject: Any = None) -> None:
+        """8G 可选：监控成功后评估 Guardrail（失败不回滚监控）。"""
+        if self._guardrails is None:
+            return
+        try:
+            self._guardrails.evaluate_from_monitoring(
+                strategy_code, inject=inject, session_id=""
+            )
+        except Exception:
+            pass
 
     def collect_and_evaluate(
         self,
@@ -142,6 +155,7 @@ class StrategyMonitoringService:
                 gov = build_review_event(alert, session_id=sid)
                 self._writer.write_governance_event(gov)
 
+        self._try_evaluate_guardrails(code, inject=inject)
         return health
 
     def _find_alert_by_dedup(

@@ -114,6 +114,13 @@ from .contracts import (
     StrategyMonitorMetricSummary,
     StrategyMonitorPolicySummary,
     StrategyNotificationDispatchSummary,
+    AutoActionPolicySummary,
+    GuardrailGovernanceEventSummary,
+    GuardrailPolicySummary,
+    GuardrailRollbackRecordSummary,
+    GovernanceDecisionSummary,
+    GovernanceIncidentSummary,
+    StrategyRuntimeStateSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -940,6 +947,56 @@ class ResearchRegistry(Protocol):
     def list_strategy_governance_events(
         self, strategy_code: str | None = None
     ) -> list[StrategyGovernanceEventSummary]: ...
+
+    def upsert_guardrail_policy(self, record: GuardrailPolicySummary) -> None: ...
+
+    def get_guardrail_policy(
+        self, policy_id: str, policy_version: str
+    ) -> GuardrailPolicySummary: ...
+
+    def upsert_auto_action_policy(self, record: AutoActionPolicySummary) -> None: ...
+
+    def get_auto_action_policy(
+        self, policy_id: str, policy_version: str
+    ) -> AutoActionPolicySummary: ...
+
+    def upsert_strategy_runtime_state(
+        self, record: StrategyRuntimeStateSummary
+    ) -> None: ...
+
+    def get_strategy_runtime_state(self, strategy_code: str) -> StrategyRuntimeStateSummary: ...
+
+    def upsert_governance_incident(self, record: GovernanceIncidentSummary) -> None: ...
+
+    def get_governance_incident(self, incident_id: str) -> GovernanceIncidentSummary: ...
+
+    def list_governance_incidents(
+        self, strategy_code: str | None = None
+    ) -> list[GovernanceIncidentSummary]: ...
+
+    def upsert_governance_decision(self, record: GovernanceDecisionSummary) -> None: ...
+
+    def get_governance_decision(self, decision_id: str) -> GovernanceDecisionSummary: ...
+
+    def list_governance_decisions(
+        self, strategy_code: str | None = None
+    ) -> list[GovernanceDecisionSummary]: ...
+
+    def upsert_guardrail_governance_event(
+        self, record: GuardrailGovernanceEventSummary
+    ) -> None: ...
+
+    def list_guardrail_governance_events(
+        self, strategy_code: str | None = None
+    ) -> list[GuardrailGovernanceEventSummary]: ...
+
+    def upsert_guardrail_rollback_record(
+        self, record: GuardrailRollbackRecordSummary
+    ) -> None: ...
+
+    def list_guardrail_rollback_records(
+        self, strategy_code: str | None = None
+    ) -> list[GuardrailRollbackRecordSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -3381,6 +3438,168 @@ class LocalJsonRegistry:
             data = self._read()
             rows = (data.get("strategy_governance_event") or {}).values()
         out = [StrategyGovernanceEventSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_guardrail_policy(self, record: GuardrailPolicySummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("guardrail_policy", {})
+            key = f"{record.policy_id}@{record.policy_version}"
+            data["guardrail_policy"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_guardrail_policy(
+        self, policy_id: str, policy_version: str
+    ) -> GuardrailPolicySummary:
+        key = f"{policy_id}@{policy_version}"
+        with self._lock:
+            data = self._read()
+            raw = (data.get("guardrail_policy") or {}).get(key)
+        if not raw:
+            raise KeyError(f"guardrail_policy missing: {key}")
+        return GuardrailPolicySummary.model_validate(raw)
+
+    def upsert_auto_action_policy(self, record: AutoActionPolicySummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("auto_action_policy", {})
+            key = f"{record.policy_id}@{record.policy_version}"
+            data["auto_action_policy"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_auto_action_policy(
+        self, policy_id: str, policy_version: str
+    ) -> AutoActionPolicySummary:
+        key = f"{policy_id}@{policy_version}"
+        with self._lock:
+            data = self._read()
+            raw = (data.get("auto_action_policy") or {}).get(key)
+        if not raw:
+            raise KeyError(f"auto_action_policy missing: {key}")
+        return AutoActionPolicySummary.model_validate(raw)
+
+    def upsert_strategy_runtime_state(self, record: StrategyRuntimeStateSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_runtime_state", {})
+            data["strategy_runtime_state"][record.strategy_code] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_runtime_state(self, strategy_code: str) -> StrategyRuntimeStateSummary:
+        code = str(strategy_code or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_runtime_state") or {}).get(code)
+        if not raw:
+            raise KeyError(f"strategy_runtime_state missing: {code}")
+        return StrategyRuntimeStateSummary.model_validate(raw)
+
+    def upsert_governance_incident(self, record: GovernanceIncidentSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("governance_incident", {})
+            data["governance_incident"][record.incident_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_governance_incident(self, incident_id: str) -> GovernanceIncidentSummary:
+        iid = str(incident_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("governance_incident") or {}).get(iid)
+        if not raw:
+            raise KeyError(f"governance_incident missing: {iid}")
+        return GovernanceIncidentSummary.model_validate(raw)
+
+    def list_governance_incidents(
+        self, strategy_code: str | None = None
+    ) -> list[GovernanceIncidentSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("governance_incident") or {}).values()
+        out = [GovernanceIncidentSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.opened_at or "")
+        return out
+
+    def upsert_governance_decision(self, record: GovernanceDecisionSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("governance_decision", {})
+            data["governance_decision"][record.decision_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_governance_decision(self, decision_id: str) -> GovernanceDecisionSummary:
+        did = str(decision_id or "").strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("governance_decision") or {}).get(did)
+        if not raw:
+            raise KeyError(f"governance_decision missing: {did}")
+        return GovernanceDecisionSummary.model_validate(raw)
+
+    def list_governance_decisions(
+        self, strategy_code: str | None = None
+    ) -> list[GovernanceDecisionSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("governance_decision") or {}).values()
+        out = [GovernanceDecisionSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.submitted_at or "")
+        return out
+
+    def upsert_guardrail_governance_event(
+        self, record: GuardrailGovernanceEventSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("guardrail_governance_event", {})
+            data["guardrail_governance_event"][record.event_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_guardrail_governance_events(
+        self, strategy_code: str | None = None
+    ) -> list[GuardrailGovernanceEventSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("guardrail_governance_event") or {}).values()
+        out = [GuardrailGovernanceEventSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_guardrail_rollback_record(
+        self, record: GuardrailRollbackRecordSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("guardrail_rollback_record", {})
+            data["guardrail_rollback_record"][record.rollback_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def list_guardrail_rollback_records(
+        self, strategy_code: str | None = None
+    ) -> list[GuardrailRollbackRecordSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("guardrail_rollback_record") or {}).values()
+        out = [GuardrailRollbackRecordSummary.model_validate(r) for r in rows]
         if strategy_code:
             code = str(strategy_code).strip()
             out = [r for r in out if r.strategy_code == code]
@@ -10070,6 +10289,381 @@ class D1ResearchRegistry:
             return []
         return [_strategy_governance_event_from_row(r) for r in rows or []]
 
+    def upsert_guardrail_policy(self, record: GuardrailPolicySummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO guardrail_policy (
+              policy_id, policy_version, policy_content_hash, auto_execute,
+              auto_action_policy_id, auto_action_policy_version, action_matrix_json,
+              engine_version, description, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(policy_id, policy_version) DO UPDATE SET
+              policy_content_hash=excluded.policy_content_hash,
+              auto_execute=excluded.auto_execute,
+              auto_action_policy_id=excluded.auto_action_policy_id,
+              auto_action_policy_version=excluded.auto_action_policy_version,
+              action_matrix_json=excluded.action_matrix_json,
+              engine_version=excluded.engine_version,
+              description=excluded.description,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                1 if record.auto_execute else 0,
+                record.auto_action_policy_id,
+                record.auto_action_policy_version,
+                json.dumps(record.action_matrix_json or [], ensure_ascii=False),
+                record.engine_version,
+                record.description,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_guardrail_policy(
+        self, policy_id: str, policy_version: str
+    ) -> GuardrailPolicySummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM guardrail_policy
+            WHERE policy_id = ? AND policy_version = ?
+            """,
+            [policy_id, policy_version],
+        )
+        if not rows:
+            raise KeyError(f"guardrail_policy missing: {policy_id}@{policy_version}")
+        return _guardrail_policy_from_row(rows[0])
+
+    def upsert_auto_action_policy(self, record: AutoActionPolicySummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO auto_action_policy (
+              policy_id, policy_version, policy_content_hash,
+              auto_allowed_json, auto_forbidden_json, auto_resume,
+              engine_version, description, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(policy_id, policy_version) DO UPDATE SET
+              policy_content_hash=excluded.policy_content_hash,
+              auto_allowed_json=excluded.auto_allowed_json,
+              auto_forbidden_json=excluded.auto_forbidden_json,
+              auto_resume=excluded.auto_resume,
+              engine_version=excluded.engine_version,
+              description=excluded.description,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                json.dumps(record.auto_allowed_json or [], ensure_ascii=False),
+                json.dumps(record.auto_forbidden_json or [], ensure_ascii=False),
+                1 if record.auto_resume else 0,
+                record.engine_version,
+                record.description,
+                record.created_at or _utc_now(),
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_auto_action_policy(
+        self, policy_id: str, policy_version: str
+    ) -> AutoActionPolicySummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM auto_action_policy
+            WHERE policy_id = ? AND policy_version = ?
+            """,
+            [policy_id, policy_version],
+        )
+        if not rows:
+            raise KeyError(f"auto_action_policy missing: {policy_id}@{policy_version}")
+        return _auto_action_policy_from_row(rows[0])
+
+    def upsert_strategy_runtime_state(self, record: StrategyRuntimeStateSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO strategy_runtime_state (
+              strategy_code, runtime_status, lifecycle_phase, throttle_tier,
+              throttle_multiplier, policy_id, policy_version, policy_content_hash,
+              last_incident_id, recovery_check_passed, last_evaluated_at, session_id,
+              storage_uri, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(strategy_code) DO UPDATE SET
+              runtime_status=excluded.runtime_status,
+              lifecycle_phase=excluded.lifecycle_phase,
+              throttle_tier=excluded.throttle_tier,
+              throttle_multiplier=excluded.throttle_multiplier,
+              policy_id=excluded.policy_id,
+              policy_version=excluded.policy_version,
+              policy_content_hash=excluded.policy_content_hash,
+              last_incident_id=excluded.last_incident_id,
+              recovery_check_passed=excluded.recovery_check_passed,
+              last_evaluated_at=excluded.last_evaluated_at,
+              session_id=excluded.session_id,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.strategy_code,
+                record.runtime_status,
+                record.lifecycle_phase,
+                record.throttle_tier,
+                record.throttle_multiplier,
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                record.last_incident_id,
+                1 if record.recovery_check_passed else 0,
+                record.last_evaluated_at or "",
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_strategy_runtime_state(self, strategy_code: str) -> StrategyRuntimeStateSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_runtime_state WHERE strategy_code = ?",
+            [strategy_code],
+        )
+        if not rows:
+            raise KeyError(f"strategy_runtime_state missing: {strategy_code}")
+        return _strategy_runtime_state_from_row(rows[0])
+
+    def upsert_governance_incident(self, record: GovernanceIncidentSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO governance_incident (
+              incident_id, strategy_code, status, severity, category,
+              recommended_action, alert_id, message, requires_decision,
+              opened_at, resolved_at, session_id, storage_uri, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(incident_id) DO UPDATE SET
+              status=excluded.status,
+              message=excluded.message,
+              resolved_at=excluded.resolved_at,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.incident_id,
+                record.strategy_code,
+                record.status,
+                record.severity,
+                record.category,
+                record.recommended_action,
+                record.alert_id,
+                record.message,
+                1 if record.requires_decision else 0,
+                record.opened_at or "",
+                record.resolved_at or "",
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_governance_incident(self, incident_id: str) -> GovernanceIncidentSummary:
+        rows = d1_client.query(
+            "SELECT * FROM governance_incident WHERE incident_id = ?",
+            [incident_id],
+        )
+        if not rows:
+            raise KeyError(f"governance_incident missing: {incident_id}")
+        return _governance_incident_from_row(rows[0])
+
+    def list_governance_incidents(
+        self, strategy_code: str | None = None
+    ) -> list[GovernanceIncidentSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM governance_incident
+                    WHERE strategy_code = ? ORDER BY opened_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM governance_incident ORDER BY opened_at"
+                )
+        except Exception:
+            return []
+        return [_governance_incident_from_row(r) for r in rows or []]
+
+    def upsert_governance_decision(self, record: GovernanceDecisionSummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO governance_decision (
+              decision_id, strategy_code, incident_id, decision_type, status,
+              operator, reason, to_version, submitted_at, approved_at, executed_at,
+              session_id, storage_uri, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(decision_id) DO UPDATE SET
+              status=excluded.status,
+              approved_at=excluded.approved_at,
+              executed_at=excluded.executed_at,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.decision_id,
+                record.strategy_code,
+                record.incident_id,
+                record.decision_type,
+                record.status,
+                record.operator,
+                record.reason,
+                record.to_version,
+                record.submitted_at or "",
+                record.approved_at or "",
+                record.executed_at or "",
+                record.session_id,
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_governance_decision(self, decision_id: str) -> GovernanceDecisionSummary:
+        rows = d1_client.query(
+            "SELECT * FROM governance_decision WHERE decision_id = ?",
+            [decision_id],
+        )
+        if not rows:
+            raise KeyError(f"governance_decision missing: {decision_id}")
+        return _governance_decision_from_row(rows[0])
+
+    def list_governance_decisions(
+        self, strategy_code: str | None = None
+    ) -> list[GovernanceDecisionSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM governance_decision
+                    WHERE strategy_code = ? ORDER BY submitted_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM governance_decision ORDER BY submitted_at"
+                )
+        except Exception:
+            return []
+        return [_governance_decision_from_row(r) for r in rows or []]
+
+    def upsert_guardrail_governance_event(
+        self, record: GuardrailGovernanceEventSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO governance_event (
+              event_id, strategy_code, event_type, runtime_status, lifecycle_phase,
+              severity, category, incident_id, decision_id, message, created_at,
+              session_id, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO NOTHING
+            """,
+            [
+                record.event_id,
+                record.strategy_code,
+                record.event_type,
+                record.runtime_status,
+                record.lifecycle_phase,
+                record.severity,
+                record.category,
+                record.incident_id,
+                record.decision_id,
+                record.message,
+                record.created_at or "",
+                record.session_id,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_guardrail_governance_events(
+        self, strategy_code: str | None = None
+    ) -> list[GuardrailGovernanceEventSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM governance_event
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM governance_event ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_guardrail_governance_event_from_row(r) for r in rows or []]
+
+    def upsert_guardrail_rollback_record(
+        self, record: GuardrailRollbackRecordSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO guardrail_rollback_record (
+              rollback_id, strategy_code, from_version, to_version,
+              from_model_version, to_model_version, from_dataset_hash, to_dataset_hash,
+              decision_id, reason, operator, session_id, created_at, storage_uri,
+              engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rollback_id) DO UPDATE SET
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.rollback_id,
+                record.strategy_code,
+                record.from_version,
+                record.to_version,
+                record.from_model_version,
+                record.to_model_version,
+                record.from_dataset_hash,
+                record.to_dataset_hash,
+                record.decision_id,
+                record.reason,
+                record.operator,
+                record.session_id,
+                record.created_at or "",
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def list_guardrail_rollback_records(
+        self, strategy_code: str | None = None
+    ) -> list[GuardrailRollbackRecordSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM guardrail_rollback_record
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM guardrail_rollback_record ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_guardrail_rollback_record_from_row(r) for r in rows or []]
+
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
     return StrategyVersionBindingSummary(
@@ -10469,6 +11063,137 @@ def _strategy_governance_event_from_row(row: dict[str, Any]) -> StrategyGovernan
         created_at=row.get("created_at"),
         session_id=row.get("session_id") or "",
         engine_version=row.get("engine_version") or "qd_strategy_monitoring@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _guardrail_policy_from_row(row: dict[str, Any]) -> GuardrailPolicySummary:
+    return GuardrailPolicySummary(
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        policy_content_hash=row.get("policy_content_hash") or "",
+        auto_execute=bool(row.get("auto_execute", 1)),
+        auto_action_policy_id=row.get("auto_action_policy_id") or "",
+        auto_action_policy_version=row.get("auto_action_policy_version") or "",
+        action_matrix_json=_json_field(row.get("action_matrix_json"), []),
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
+        description=row.get("description") or "",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _auto_action_policy_from_row(row: dict[str, Any]) -> AutoActionPolicySummary:
+    return AutoActionPolicySummary(
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        policy_content_hash=row.get("policy_content_hash") or "",
+        auto_allowed_json=_json_field(row.get("auto_allowed_json"), []),
+        auto_forbidden_json=_json_field(row.get("auto_forbidden_json"), []),
+        auto_resume=bool(row.get("auto_resume", 0)),
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
+        description=row.get("description") or "",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _strategy_runtime_state_from_row(row: dict[str, Any]) -> StrategyRuntimeStateSummary:
+    return StrategyRuntimeStateSummary(
+        strategy_code=row["strategy_code"],
+        runtime_status=row.get("runtime_status") or "ACTIVE",
+        lifecycle_phase=row.get("lifecycle_phase") or "UNKNOWN",
+        throttle_tier=row.get("throttle_tier") or "NORMAL",
+        throttle_multiplier=float(row.get("throttle_multiplier") or 1.0),
+        policy_id=row.get("policy_id") or "",
+        policy_version=row.get("policy_version") or "",
+        policy_content_hash=row.get("policy_content_hash") or "",
+        last_incident_id=row.get("last_incident_id") or "",
+        recovery_check_passed=bool(row.get("recovery_check_passed", 0)),
+        last_evaluated_at=row.get("last_evaluated_at"),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _governance_incident_from_row(row: dict[str, Any]) -> GovernanceIncidentSummary:
+    return GovernanceIncidentSummary(
+        incident_id=row["incident_id"],
+        strategy_code=row["strategy_code"],
+        status=row.get("status") or "DETECTED",
+        severity=row.get("severity") or "CRITICAL",
+        category=row.get("category") or "SYSTEM",
+        recommended_action=row.get("recommended_action") or "REVIEW",
+        alert_id=row.get("alert_id") or "",
+        message=row.get("message") or "",
+        requires_decision=bool(row.get("requires_decision", 0)),
+        opened_at=row.get("opened_at"),
+        resolved_at=row.get("resolved_at"),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _governance_decision_from_row(row: dict[str, Any]) -> GovernanceDecisionSummary:
+    return GovernanceDecisionSummary(
+        decision_id=row["decision_id"],
+        strategy_code=row["strategy_code"],
+        incident_id=row.get("incident_id") or "",
+        decision_type=row.get("decision_type") or "CONTINUE",
+        status=row.get("status") or "PENDING",
+        operator=row.get("operator") or "",
+        reason=row.get("reason") or "",
+        to_version=row.get("to_version") or "",
+        submitted_at=row.get("submitted_at"),
+        approved_at=row.get("approved_at"),
+        executed_at=row.get("executed_at"),
+        session_id=row.get("session_id") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _guardrail_governance_event_from_row(row: dict[str, Any]) -> GuardrailGovernanceEventSummary:
+    return GuardrailGovernanceEventSummary(
+        event_id=row["event_id"],
+        strategy_code=row["strategy_code"],
+        event_type=row.get("event_type") or "GUARDRAIL_BREACH",
+        runtime_status=row.get("runtime_status") or "ACTIVE",
+        lifecycle_phase=row.get("lifecycle_phase") or "UNKNOWN",
+        severity=row.get("severity") or "INFO",
+        category=row.get("category") or "SYSTEM",
+        incident_id=row.get("incident_id") or "",
+        decision_id=row.get("decision_id") or "",
+        message=row.get("message") or "",
+        created_at=row.get("created_at"),
+        session_id=row.get("session_id") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _guardrail_rollback_record_from_row(row: dict[str, Any]) -> GuardrailRollbackRecordSummary:
+    return GuardrailRollbackRecordSummary(
+        rollback_id=row["rollback_id"],
+        strategy_code=row["strategy_code"],
+        from_version=row.get("from_version") or "",
+        to_version=row.get("to_version") or "",
+        from_model_version=row.get("from_model_version") or "",
+        to_model_version=row.get("to_model_version") or "",
+        from_dataset_hash=row.get("from_dataset_hash") or "",
+        to_dataset_hash=row.get("to_dataset_hash") or "",
+        decision_id=row.get("decision_id") or "",
+        reason=row.get("reason") or "",
+        operator=row.get("operator") or "",
+        session_id=row.get("session_id") or "",
+        created_at=row.get("created_at"),
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_guardrails@1",
         metadata=_json_field(row.get("metadata_json"), {}),
     )
 
