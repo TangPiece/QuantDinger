@@ -14,7 +14,9 @@ def build_repro_manifest(
     *,
     training_run: TrainingRun | None = None,
     artifact: ModelArtifact | None = None,
+    repro_manifest_id: str = "",
 ) -> dict[str, Any]:
+    """Version tip（model_repro_manifest@1）；可选指针到 9F-8 全量 Manifest。"""
     return {
         "schema_version": "model_repro_manifest@1",
         "model_version_id": version.model_version_id,
@@ -44,6 +46,8 @@ def build_repro_manifest(
         "training_run_id": version.training_run_id,
         "artifact_id": version.artifact_id,
         "artifact_checksum": artifact.checksum if artifact else "",
+        # 9F-8 pointer（additive；旧读者可忽略）
+        "repro_manifest_id": repro_manifest_id,
     }
 
 
@@ -57,11 +61,15 @@ def write_repro_manifest(
     *,
     training_run: TrainingRun | None = None,
     artifact: ModelArtifact | None = None,
+    repro_manifest_id: str = "",
 ) -> Path:
     path = repro_manifest_path(store_root, model_version_id=version.model_version_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_repro_manifest(
-        version, training_run=training_run, artifact=artifact
+        version,
+        training_run=training_run,
+        artifact=artifact,
+        repro_manifest_id=repro_manifest_id,
     )
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),

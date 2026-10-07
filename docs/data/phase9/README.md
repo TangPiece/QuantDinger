@@ -9,7 +9,7 @@ Phase 9 在既有 `research_data` Domain（Definition / Snapshot / `dataset_hash
 | **9C** | Factor Evaluation Engine（Policy + Run + 4C–4F 编排） | **Done** — [03_factor_evaluation_engine.md](03_factor_evaluation_engine.md) |
 | **9D** | Factor Mining（DSL 模板搜索 + Screen + 9C） | **Done** — [04_factor_mining.md](04_factor_mining.md) |
 | **9E** | Factor Library / Portfolio（Promotion Gate + Catalog + Collection） | **Done** — [05_factor_library.md](05_factor_library.md) |
-| **9F** | Model Platform（9F-1～9F-7 Approval） | **Done (9F-1…7)** — [06_model_platform.md](06_model_platform.md) |
+| **9F** | Model Platform（9F-1～9F-8 Repro） | **Done (9F-1…8)** — [06_model_platform.md](06_model_platform.md) |
 | 9G | Experiment Orchestration | Planned |
 | 9H | Research UI / API 管理台 | Planned |
 | 9I | Cross-cutting governance | Planned |
@@ -61,7 +61,7 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research
 
 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
 
-## 9F 验收（9F-1～9F-7）
+## 9F 验收（9F-1～9F-8）
 
 ```bash
 cd backend_api_python
@@ -70,16 +70,18 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f4_
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase9f_model_platform.py \
   tests/research_data/test_phase9f3_training_run.py \
   tests/research_data/test_phase9f4_qlib_adapter.py \
   tests/research_data/test_phase9f5_model_artifact.py \
   tests/research_data/test_phase9f6_model_evaluation.py \
-  tests/research_data/test_phase9f7_model_approval.py -q --confcutdir=tests/research_data
+  tests/research_data/test_phase9f7_model_approval.py \
+  tests/research_data/test_phase9f8_model_reproducibility.py -q --confcutdir=tests/research_data
 ```
 
-并保持 `verify_phase9e_factor_library.py` 绿。后续 9F-8 Repro。
+并保持 `verify_phase9e_factor_library.py` 绿。后续 9F-9 E2E。
 
 ## 边界（全 Phase 9 共享）
 

@@ -113,6 +113,7 @@ class ModelPlatformService:
         research_registry: Any | None = None,
         train_artifact_store: Any | None = None,
         evaluation_service: Any | None = None,
+        reproducibility_service: Any | None = None,
     ) -> None:
         if isinstance(store, ModelArtifactStore):
             self._store = store
@@ -126,6 +127,7 @@ class ModelPlatformService:
         self._research_registry = research_registry
         self._train_artifact_store = train_artifact_store
         self._evaluation = evaluation_service
+        self._reproducibility = reproducibility_service
         self._catalog = ModelCatalog()
         self._runs: dict[str, TrainingRun] = {}
         self._jobs: dict[str, TrainingJob] = {}
@@ -140,6 +142,14 @@ class ModelPlatformService:
     def bind_evaluation_service(self, evaluation_service: Any) -> None:
         """绑定 9F-6 ModelEvaluationService（approve/validate 依赖）。"""
         self._evaluation = evaluation_service
+
+    def bind_reproducibility_service(self, reproducibility_service: Any) -> None:
+        """绑定 9F-8 ReproducibilityService（SUCCEEDED → capture）。"""
+        self._reproducibility = reproducibility_service
+        if reproducibility_service is not None and hasattr(
+            reproducibility_service, "bind_model_platform"
+        ):
+            reproducibility_service.bind_model_platform(self)
 
     @property
     def engine_version(self) -> str:
@@ -400,11 +410,31 @@ class ModelPlatformService:
         self._catalog.upsert_version(version_obj)
         self._persist_registry_version(version_obj)
 
+        # bind version id onto run for lineage tip / capture
+        if not run.model_version_id:
+            run = run.model_copy(
+                update={"model_version_id": version_obj.model_version_id}
+            )
+            write_training_run(self._store, run)
+            self._runs[run.training_run_id] = run
+
+        repro_manifest_id = ""
+        if self._reproducibility is not None:
+            try:
+                full = self._reproducibility.capture_from_training_run(
+                    run.training_run_id, artifact=art
+                )
+                repro_manifest_id = getattr(full, "repro_manifest_id", "") or ""
+            except Exception:
+                # capture 失败不阻断 Version 创建；可稍后显式 capture
+                repro_manifest_id = ""
+
         write_repro_manifest(
             self._store.root_path(),
             version_obj,
             training_run=run,
             artifact=art,
+            repro_manifest_id=repro_manifest_id,
         )
 
         if inj and inj.auto_activate:
