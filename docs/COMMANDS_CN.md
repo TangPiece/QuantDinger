@@ -662,6 +662,22 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 8C Validation Gate（Candidate 准入审查）
+
+Fake inject + LocalJson 默认；说明：[03_validation_gate.md](data/phase8/03_validation_gate.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8c_validation_gate.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8c_validation_gate.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 7A–7D verify 仍应绿（裸 `LIVE` submit 默认拒）：
 
 ```bash

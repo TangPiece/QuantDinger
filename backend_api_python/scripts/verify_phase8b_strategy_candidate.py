@@ -88,6 +88,7 @@ def main() -> int:
         target_strategy_version=REGISTRY_VERSION,
         operator="verify",
         reason="phase8b verify",
+        require_gate_passed=False,
     )
     checks["promote_registry"] = prom.to_state == "REGISTERED" and bool(ver.version_id)
     reg_ver = reg_svc.get_version(STRATEGY_CODE, REGISTRY_VERSION)

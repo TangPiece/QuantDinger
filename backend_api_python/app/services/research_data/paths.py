@@ -806,6 +806,17 @@ def strategy_candidate_manifest_key(*, candidate_id: str) -> str:
     return f"{strategy_candidate_prefix()}/{safe_id}/manifest.json"
 
 
+def strategy_validation_prefix() -> str:
+    """Phase 8C：``qd/registry/validations``。"""
+    return f"{_root()}/registry/validations"
+
+
+def strategy_validation_result_key(*, validation_id: str) -> str:
+    """``qd/registry/validations/{validation_id}/result.json``。"""
+    safe_id = str(validation_id or "unknown").replace("/", "_")
+    return f"{strategy_validation_prefix()}/{safe_id}/result.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

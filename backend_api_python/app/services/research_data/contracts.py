@@ -1703,3 +1703,37 @@ class StrategyCandidatePromotionSummary(_ContractModel):
     created_at: Optional[str] = None
     engine_version: str = "qd_strategy_candidate@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyValidationPolicySummary(_ContractModel):
+    """Phase 8C：ValidationPolicy 索引（rules 钉扎 hash）。"""
+
+    policy_id: str
+    policy_version: str
+    policy_content_hash: str
+    rules_json: dict[str, Any] = Field(default_factory=dict)
+    engine_version: str = "qd_strategy_validation@1"
+    description: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyValidationRunSummary(_ContractModel):
+    """Phase 8C：ValidationRun 索引（明细 result 在 R2）。"""
+
+    validation_id: str
+    candidate_id: str
+    candidate_version: str = ""
+    dataset_hash: str = ""
+    snapshot_id: str = ""
+    policy_id: str
+    policy_version: str
+    policy_content_hash: str = ""
+    validator_version: str = "qd_strategy_validation@1"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    status: str = "VALIDATING"
+    operator: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_validation@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

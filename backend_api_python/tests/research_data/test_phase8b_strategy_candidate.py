@@ -165,6 +165,7 @@ def test_promote_to_registry(tmp_path):
         target_strategy_version=REGISTRY_VERSION,
         operator="tester",
         reason="golden promote",
+        require_gate_passed=False,
     )
     assert prom.to_state == "REGISTERED"
     assert prom.version_id == ver.version_id

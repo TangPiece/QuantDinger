@@ -13,7 +13,7 @@ Experiment → Backtest → Evaluation
 ```
 
 - `VALIDATED`（8B）= 研究侧评估包已冻结并人工/脚本确认「可提交 Gate」，**不是** 8C Validation Gate PASSED
-- `promote_to_registry` 仅 `VALIDATED` → 8A `register_version_manual` + `PromotionRecord`
+- `promote_to_registry` 仅 `VALIDATED` → 8A `register_version_manual` + `PromotionRecord`（8C 起默认还须最新 `ValidationRun.status=PASSED`，测试可 `require_gate_passed=False`）
 
 ## 包结构
 

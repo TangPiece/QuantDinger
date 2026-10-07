@@ -99,6 +99,8 @@ from .contracts import (
     StrategyVersionBindingSummary,
     StrategyCandidateSummary,
     StrategyCandidatePromotionSummary,
+    StrategyValidationPolicySummary,
+    StrategyValidationRunSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -771,6 +773,30 @@ class ResearchRegistry(Protocol):
     def list_strategy_candidate_promotions(
         self, candidate_id: str | None = None
     ) -> list[StrategyCandidatePromotionSummary]: ...
+
+    def upsert_strategy_validation_policy(
+        self, record: StrategyValidationPolicySummary
+    ) -> None: ...
+
+    def get_strategy_validation_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyValidationPolicySummary: ...
+
+    def list_strategy_validation_policies(
+        self,
+    ) -> list[StrategyValidationPolicySummary]: ...
+
+    def upsert_strategy_validation_run(
+        self, record: StrategyValidationRunSummary
+    ) -> None: ...
+
+    def get_strategy_validation_run(
+        self, validation_id: str
+    ) -> StrategyValidationRunSummary: ...
+
+    def list_strategy_validation_runs(
+        self, candidate_id: str | None = None
+    ) -> list[StrategyValidationRunSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -2751,6 +2777,77 @@ class LocalJsonRegistry:
             cid = str(candidate_id).strip()
             out = [r for r in out if r.candidate_id == cid]
         out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_strategy_validation_policy(
+        self, record: StrategyValidationPolicySummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_validation_policy", {})
+            key = f"{record.policy_id}@{record.policy_version}"
+            data["strategy_validation_policy"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_strategy_validation_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyValidationPolicySummary:
+        key = f"{str(policy_id).strip()}@{str(policy_version).strip()}"
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_validation_policy") or {}).get(key)
+        if not raw:
+            raise KeyError(f"strategy_validation_policy missing: {key}")
+        return StrategyValidationPolicySummary.model_validate(raw)
+
+    def list_strategy_validation_policies(
+        self,
+    ) -> list[StrategyValidationPolicySummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_validation_policy") or {}).values()
+        out = [StrategyValidationPolicySummary.model_validate(r) for r in rows]
+        out.sort(key=lambda r: (r.policy_id, r.policy_version))
+        return out
+
+    def upsert_strategy_validation_run(
+        self, record: StrategyValidationRunSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_validation_run", {})
+            existing = (data.get("strategy_validation_run") or {}).get(
+                record.validation_id
+            )
+            if existing and existing.get("completed_at"):
+                return
+            data["strategy_validation_run"][record.validation_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_validation_run(
+        self, validation_id: str
+    ) -> StrategyValidationRunSummary:
+        vid = str(validation_id).strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_validation_run") or {}).get(vid)
+        if not raw:
+            raise KeyError(f"strategy_validation_run missing: {vid}")
+        return StrategyValidationRunSummary.model_validate(raw)
+
+    def list_strategy_validation_runs(
+        self, candidate_id: str | None = None
+    ) -> list[StrategyValidationRunSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_validation_run") or {}).values()
+        out = [StrategyValidationRunSummary.model_validate(r) for r in rows]
+        if candidate_id:
+            cid = str(candidate_id).strip()
+            out = [r for r in out if r.candidate_id == cid]
+        out.sort(key=lambda r: r.completed_at or r.started_at or "")
         return out
 
 
@@ -8514,6 +8611,131 @@ class D1ResearchRegistry:
             return []
         return [_strategy_candidate_promotion_from_row(r) for r in rows or []]
 
+    def upsert_strategy_validation_policy(
+        self, record: StrategyValidationPolicySummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO strategy_validation_policy (
+                  policy_id, policy_version, policy_content_hash,
+                  rules_json, engine_version, description, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(policy_id, policy_version) DO UPDATE SET
+                  policy_content_hash=excluded.policy_content_hash,
+                  rules_json=excluded.rules_json,
+                  description=excluded.description,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.policy_id,
+                    record.policy_version,
+                    record.policy_content_hash,
+                    json.dumps(record.rules_json or {}, ensure_ascii=False),
+                    record.engine_version,
+                    record.description,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_strategy_validation_policy(
+        self, policy_id: str, policy_version: str
+    ) -> StrategyValidationPolicySummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM strategy_validation_policy
+            WHERE policy_id = ? AND policy_version = ?
+            """,
+            [policy_id, policy_version],
+        )
+        if not rows:
+            raise KeyError(
+                f"strategy_validation_policy missing: {policy_id}@{policy_version}"
+            )
+        return _strategy_validation_policy_from_row(rows[0])
+
+    def list_strategy_validation_policies(
+        self,
+    ) -> list[StrategyValidationPolicySummary]:
+        try:
+            rows = d1_client.query(
+                "SELECT * FROM strategy_validation_policy ORDER BY policy_id, policy_version"
+            )
+        except Exception:
+            return []
+        return [_strategy_validation_policy_from_row(r) for r in rows or []]
+
+    def upsert_strategy_validation_run(
+        self, record: StrategyValidationRunSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO strategy_validation_run (
+                  validation_id, candidate_id, candidate_version,
+                  dataset_hash, snapshot_id, policy_id, policy_version,
+                  policy_content_hash, validator_version, started_at,
+                  completed_at, status, operator, storage_uri,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(validation_id) DO NOTHING
+                """,
+                [
+                    record.validation_id,
+                    record.candidate_id,
+                    record.candidate_version,
+                    record.dataset_hash,
+                    record.snapshot_id,
+                    record.policy_id,
+                    record.policy_version,
+                    record.policy_content_hash,
+                    record.validator_version,
+                    record.started_at or _utc_now(),
+                    record.completed_at or _utc_now(),
+                    record.status,
+                    record.operator,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_strategy_validation_run(
+        self, validation_id: str
+    ) -> StrategyValidationRunSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_validation_run WHERE validation_id = ?",
+            [validation_id],
+        )
+        if not rows:
+            raise KeyError(f"strategy_validation_run missing: {validation_id}")
+        return _strategy_validation_run_from_row(rows[0])
+
+    def list_strategy_validation_runs(
+        self, candidate_id: str | None = None
+    ) -> list[StrategyValidationRunSummary]:
+        try:
+            if candidate_id:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_validation_run
+                    WHERE candidate_id = ? ORDER BY completed_at
+                    """,
+                    [candidate_id],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_validation_run ORDER BY completed_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_validation_run_from_row(r) for r in rows or []]
+
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
     return StrategyVersionBindingSummary(
@@ -8592,6 +8814,57 @@ def _strategy_candidate_promotion_from_row(
         created_at=row.get("created_at"),
         engine_version=row.get("engine_version") or "qd_strategy_candidate@1",
         metadata=json.loads(row.get("metadata_json") or "{}"),
+    )
+
+
+def _strategy_validation_policy_from_row(
+    row: dict[str, Any],
+) -> StrategyValidationPolicySummary:
+    rules_raw = row.get("rules_json") or "{}"
+    if isinstance(rules_raw, str):
+        rules = json.loads(rules_raw)
+    else:
+        rules = dict(rules_raw)
+    meta_raw = row.get("metadata_json") or "{}"
+    if isinstance(meta_raw, str):
+        meta = json.loads(meta_raw)
+    else:
+        meta = dict(meta_raw)
+    return StrategyValidationPolicySummary(
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        policy_content_hash=row.get("policy_content_hash") or "",
+        rules_json=rules,
+        engine_version=row.get("engine_version") or "qd_strategy_validation@1",
+        description=row.get("description") or "",
+        created_at=row.get("created_at"),
+        metadata=meta,
+    )
+
+
+def _strategy_validation_run_from_row(row: dict[str, Any]) -> StrategyValidationRunSummary:
+    meta_raw = row.get("metadata_json") or "{}"
+    if isinstance(meta_raw, str):
+        meta = json.loads(meta_raw)
+    else:
+        meta = dict(meta_raw)
+    return StrategyValidationRunSummary(
+        validation_id=row["validation_id"],
+        candidate_id=row["candidate_id"],
+        candidate_version=row.get("candidate_version") or "",
+        dataset_hash=row.get("dataset_hash") or "",
+        snapshot_id=row.get("snapshot_id") or "",
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        policy_content_hash=row.get("policy_content_hash") or "",
+        validator_version=row.get("validator_version") or "qd_strategy_validation@1",
+        started_at=row.get("started_at"),
+        completed_at=row.get("completed_at"),
+        status=row.get("status") or "VALIDATING",
+        operator=row.get("operator") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_validation@1",
+        metadata=meta,
     )
 
 

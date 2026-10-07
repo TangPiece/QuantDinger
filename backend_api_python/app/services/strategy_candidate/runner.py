@@ -248,13 +248,21 @@ class StrategyCandidateService:
         target_strategy_version: str,
         operator: str = "",
         reason: str = "",
+        require_gate_passed: bool = True,
     ) -> tuple[StrategyCandidateRecord, PromotionRecord, Any]:
-        """仅 VALIDATED → 8A register_version_manual；不 Shadow/LIVE。"""
+        """仅 VALIDATED → 8A register_version_manual；默认须 8C ValidationRun PASSED。"""
         if self._strategy_registry is None:
             raise CandidateError("strategy_registry required for promote_to_registry")
         rec = self._get_or_load(candidate_id)
         if rec.status != "VALIDATED":
             raise CandidateError("promote_to_registry requires VALIDATED status")
+        if require_gate_passed:
+            runs = self._registry.list_strategy_validation_runs(candidate_id=rec.candidate_id)
+            latest = str(runs[-1].status or "") if runs else ""
+            if latest != "PASSED":
+                raise CandidateError(
+                    "promote_to_registry requires latest ValidationRun.status=PASSED"
+                )
         label = str(target_strategy_version).strip()
         if not label:
             raise CandidateError("target_strategy_version required")
