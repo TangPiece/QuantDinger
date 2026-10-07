@@ -1,18 +1,20 @@
-# Phase 9F — Model Platform（9F-1～9F-5）
+# Phase 9F — Model Platform（9F-1～9F-6）
 
 ## 目标
 
-把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact Bundle** 与 **可复现血缘** 纳入 Research Platform，并经 **Model Adapter** 接合 Qlib 执行层。
+把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact Bundle**、**Model Evaluation** 与 **可复现血缘** 纳入 Research Platform。
 
-- **9F-1**：契约与注册中心  
-- **9F-2**：正式 ModelVersion；lineage / repro  
-- **9F-3**：TrainingJob + TrainingRun FSM + Stub Executor  
-- **9F-4**：Model Adapter Contract + `QlibModelAdapter`  
-- **9F-5**：Model Artifact Store（不可变 Bundle + checksum + Loader）
+- **9F-1～9F-5**：Registry / Lineage / TrainingRun / Adapter / Artifact  
+- **9F-6**：独立 `ModelEvaluationRun`（不可覆盖）+ Policy / Gate / IC·RankIC / Evaluation Artifact  
 
 ```text
-TrainingRun → ArtifactCandidate → BundleStore.put → AVAILABLE
-  → ModelVersion.artifact_id → Loader.verify/cache → Predict
+ModelVersion
+  → ModelEvaluationRequest
+  → QualityGate → Predict → IC/RankIC/Ranking
+  → ModelEvaluationResult
+  → qd/artifacts/evaluation/{run_id}/
+  ✕ PASS → ACTIVE / LIVE
+  ✕ 指标写死在 ModelVersion 上
 ```
 
 ## 包位置
@@ -20,52 +22,40 @@ TrainingRun → ArtifactCandidate → BundleStore.put → AVAILABLE
 | 包 | 职责 |
 | --- | --- |
 | [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 治理 + BundleStore + Loader |
-| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | `TrainingContext` / Qlib 执行门面 |
+| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | Qlib 执行门面 |
+| [`model_evaluation/`](../../../../backend_api_python/app/services/research_data/model_evaluation/) | **9F-6** 评估平台 |
 
-`ENGINE_VERSION=qd_model_platform@1`
+`qd_model_platform@1` · `qd_model_evaluation@1`
+
+## Model Evaluation（9F-6）
+
+- `ModelEvaluationService.run_evaluation`（**不是** `ModelPlatformService.evaluate_model`）  
+- Policy 预设 `MODEL_STANDARD_V1`  
+- 结果分层：`quality` / `predictive` / `stability` / `ranking` / `overall`  
+- 指标键与 9C/4D 语义对齐：`mean_ic` / `mean_rank_ic` / `ic_ir` / …  
+- Artifact：`qd/artifacts/evaluation/{evaluation_run_id}/`  
+
+边界：≠ 9C Factor Evaluation；≠ Backtest/Strategy；≠ 8C 生产审批。
 
 ## Artifact Bundle（9F-5）
 
-布局（`artifact_id` 为根）：
-
 ```text
 qd/artifacts/model/{artifact_id}/
-  model.bin
-  manifest.json
-  metadata.json
-  feature_schema.json / processor.json / label_definition.json / environment.json
-  checksum.sha256
 ```
-
-索引：`qd/model_platform/artifacts/{id}.json`
-
-状态机：`CREATING → UPLOADING → VERIFYING → AVAILABLE`（异常 `FAILED` / `CORRUPTED`）。  
-AVAILABLE 后禁止覆盖同 id 内容；绑定 ModelVersion 后 `delete_artifact` 拒绝。
-
-Loader 缓存：`qd/cache/models/{artifact_id}/`（checksum 命中复用）。
-
-## Service API（增量）
-
-```python
-.put_model_artifact(payload, *, training_run_id=...) -> ModelArtifact
-.verify_artifact / .load_model_artifact / .delete_artifact
-.predict(...)  # 经 Loader verify
-```
-
-`execute_training_run` FINALIZING：stub/qlib payload → `put_model_artifact` → `create_version_from_run(artifact_id=…)`。
 
 ## 验收
 
 ```bash
 cd backend_api_python
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase9f_model_platform.py \
   tests/research_data/test_phase9f3_training_run.py \
   tests/research_data/test_phase9f4_qlib_adapter.py \
-  tests/research_data/test_phase9f5_model_artifact.py -q \
+  tests/research_data/test_phase9f5_model_artifact.py \
+  tests/research_data/test_phase9f6_model_evaluation.py -q \
   --confcutdir=tests/research_data
 ```
 
@@ -74,12 +64,12 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
 ## Non-goals
 
 ```text
-❌ 9F-6 ModelEvaluation
-❌ 任意上传 model.bin → ACTIVE
-❌ Evaluation/Dataset Artifact 全类型
-❌ 物理硬删已绑定 Artifact
+❌ 9F-7 Approval → ACTIVE 自动
+❌ PASS → LIVE / Strategy
+❌ Regime Engine / SHAP 产品化
+❌ D1 存全量 prediction
 ```
 
 ## 后续
 
-9F-6 Evaluation · 9F-7 Approval · 9F-8 Repro · 9F-9 E2E
+9F-7 Lifecycle & Approval · 9F-8 Repro · 9F-9 E2E
