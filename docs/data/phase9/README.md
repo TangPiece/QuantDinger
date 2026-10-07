@@ -6,7 +6,7 @@ Phase 9 在既有 `research_data` Domain（Definition / Snapshot / `dataset_hash
 | --- | --- | --- |
 | **9A** | Research Dataset Platform（manifest + builder + gate + immutability） | **Done** — [01_dataset_platform.md](01_dataset_platform.md) |
 | **9B** | Feature / Factor Platform（taxonomy + FeatureSet + build + lineage） | **Done** — [02_feature_factor_platform.md](02_feature_factor_platform.md) |
-| 9C | Evaluation 编排 | Planned |
+| **9C** | Factor Evaluation Engine（Policy + Run + 4C–4F 编排） | **Done** — [03_factor_evaluation_engine.md](03_factor_evaluation_engine.md) |
 | 9D | Model Platform | Planned |
 | 9E | Experiment Orchestration | Planned |
 | 9F | Research UI / API 管理台 | Planned |
@@ -28,6 +28,16 @@ cd backend_api_python
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9b_feature_factor_platform.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research_data/test_phase9b_feature_factor_platform.py -q --confcutdir=tests/research_data
 ```
+
+## 9C 验收
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9c_factor_evaluation.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research_data/test_phase9c_factor_evaluation.py -q --confcutdir=tests/research_data
+```
+
+并保持 `verify_phase9b_feature_factor_platform.py` 绿。
 
 ## 边界（全 Phase 9 共享）
 
