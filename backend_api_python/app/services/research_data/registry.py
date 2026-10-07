@@ -69,6 +69,8 @@ from .contracts import (
     E2EScenarioRunSummary,
     E2ESessionSummary,
     E2EVirtualOrderSummary,
+    ReadinessCheckResultSummary,
+    ReadinessRunSummary,
     SafetyEventSummary,
     SafetyRuleRecord,
     SafetyStateRecord,
@@ -602,6 +604,18 @@ class ResearchRegistry(Protocol):
         scenario_run_id: str = "",
         limit: int = 200,
     ) -> list[E2EVirtualOrderSummary]: ...
+
+    def upsert_readiness_run(self, record: ReadinessRunSummary) -> None: ...
+
+    def get_readiness_run(self, run_id: str) -> ReadinessRunSummary: ...
+
+    def upsert_readiness_check_result(
+        self, record: ReadinessCheckResultSummary
+    ) -> None: ...
+
+    def list_readiness_check_results(
+        self, *, run_id: str = "", limit: int = 200
+    ) -> list[ReadinessCheckResultSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -2168,6 +2182,42 @@ class LocalJsonRegistry:
         if scenario_run_id:
             rows = [r for r in rows if r.get("scenario_run_id") == scenario_run_id]
         return [E2EVirtualOrderSummary.model_validate(r) for r in rows[:limit]]
+
+    def upsert_readiness_run(self, record: ReadinessRunSummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("readiness_runs", {})
+            data["readiness_runs"][record.run_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_readiness_run(self, run_id: str) -> ReadinessRunSummary:
+        data = self._read()
+        raw = (data.get("readiness_runs") or {}).get(run_id)
+        if not raw:
+            raise KeyError(run_id)
+        return ReadinessRunSummary.model_validate(raw)
+
+    def upsert_readiness_check_result(
+        self, record: ReadinessCheckResultSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("readiness_check_results", {})
+            data["readiness_check_results"][record.check_result_id] = (
+                record.model_dump(mode="json")
+            )
+            self._write(data)
+
+    def list_readiness_check_results(
+        self, *, run_id: str = "", limit: int = 200
+    ) -> list[ReadinessCheckResultSummary]:
+        data = self._read()
+        rows = list((data.get("readiness_check_results") or {}).values())
+        if run_id:
+            rows = [r for r in rows if r.get("run_id") == run_id]
+        return [
+            ReadinessCheckResultSummary.model_validate(r) for r in rows[:limit]
+        ]
 
 
 class D1ResearchRegistry:
@@ -6791,6 +6841,97 @@ class D1ResearchRegistry:
                     quantity=float(r.get("quantity") or 0),
                     status=r.get("status") or "",
                     created_at=r.get("created_at"),
+                    metadata=json.loads(r.get("metadata_json") or "{}"),
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def upsert_readiness_run(self, record: ReadinessRunSummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO readiness_run (
+                  run_id, production_ready, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  production_ready=excluded.production_ready,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    1 if record.production_ready else 0,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_readiness_run(self, run_id: str) -> ReadinessRunSummary:
+        rows = d1_client.query(
+            "SELECT * FROM readiness_run WHERE run_id=? LIMIT 1", [run_id]
+        )
+        if not rows:
+            raise KeyError(run_id)
+        r = rows[0]
+        return ReadinessRunSummary(
+            run_id=r["run_id"],
+            production_ready=bool(r.get("production_ready")),
+            engine_version=r.get("engine_version") or "qd_readiness@1",
+            metadata=json.loads(r.get("metadata_json") or "{}"),
+        )
+
+    def upsert_readiness_check_result(
+        self, record: ReadinessCheckResultSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO readiness_check_result (
+                  check_result_id, run_id, check_id, scenario_id, status,
+                  title, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(check_result_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.check_result_id,
+                    record.run_id,
+                    record.check_id,
+                    record.scenario_id,
+                    record.status,
+                    record.title,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def list_readiness_check_results(
+        self, *, run_id: str = "", limit: int = 200
+    ) -> list[ReadinessCheckResultSummary]:
+        try:
+            sql = "SELECT * FROM readiness_check_result WHERE 1=1"
+            params: list[Any] = []
+            if run_id:
+                sql += " AND run_id=?"
+                params.append(run_id)
+            sql += " ORDER BY check_result_id LIMIT ?"
+            params.append(int(limit))
+            rows = d1_client.query(sql, params) or []
+            return [
+                ReadinessCheckResultSummary(
+                    check_result_id=r["check_result_id"],
+                    run_id=r.get("run_id") or "",
+                    check_id=r.get("check_id") or "",
+                    scenario_id=r.get("scenario_id") or "",
+                    status=r.get("status") or "",
+                    title=r.get("title") or "",
+                    engine_version=r.get("engine_version") or "qd_readiness@1",
                     metadata=json.loads(r.get("metadata_json") or "{}"),
                 )
                 for r in rows

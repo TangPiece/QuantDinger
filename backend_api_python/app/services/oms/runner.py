@@ -14,7 +14,8 @@ from .events import append_event
 from .fill_bridge import bridge_fills_to_portfolio
 from .outbox import OutboxService
 from .paper_broker import PaperBroker
-from .protocol import ENGINE_VERSION, Order, OutboxRecord, SubmitResult
+from .protocol import ENGINE_VERSION, Order, OutboxRecord, RecoverReport, SubmitResult
+from .recover import run_recover_on_start
 from .reducer import apply_execution_report
 from .state_machine import StateMachineError
 from .writers import OmsWriter
@@ -234,5 +235,19 @@ class OMSService:
 
         return self._outbox.drain(_handler, limit=limit)
 
+    def recover_on_start(self, *, account_id: str = "") -> RecoverReport:
+        """Phase 6J：进程启动恢复；只 query Broker，禁止重下单。"""
+        return run_recover_on_start(
+            writer=self._writer,
+            outbox_drain=lambda h, lim: self._outbox.drain(h, limit=lim),
+            get_order=self.get_order,
+            recover_unknown_fn=self.recover_unknown_order,
+            list_orders=self.list_orders,
+            broker_port=self._port,
+            broker_adapter_service=self._broker_svc,
+            portfolio_service=self._portfolio,
+            account_id=account_id,
+        )
 
-__all__ = ["ENGINE_VERSION", "OMSError", "OMSService"]
+
+__all__ = ["ENGINE_VERSION", "OMSError", "OMSService", "RecoverReport"]

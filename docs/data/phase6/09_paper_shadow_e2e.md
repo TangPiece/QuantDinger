@@ -101,3 +101,5 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 ```
 
 See also: [08_ops_monitoring.md](08_ops_monitoring.md) (Ops hooks used by E2E audit).
+
+Next: [10_production_readiness.md](10_production_readiness.md) (Phase 6J hardening gate).

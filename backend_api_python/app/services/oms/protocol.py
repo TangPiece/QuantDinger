@@ -182,6 +182,15 @@ class SubmitResult(_ContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RecoverReport(_ContractModel):
+    """Phase 6J：启动恢复报告；禁止重下单（resubmit_attempted 恒为 False）。"""
+
+    recovered_order_ids: list[str] = Field(default_factory=list)
+    still_unknown: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    resubmit_attempted: bool = False
+
+
 __all__ = [
     "ENGINE_VERSION",
     "CancelRequest",
@@ -198,6 +207,7 @@ __all__ = [
     "OrderType",
     "OrderVersion",
     "OutboxRecord",
+    "RecoverReport",
     "ReplaceRequest",
     "SubmitResult",
     "TimeInForce",

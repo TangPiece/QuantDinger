@@ -1294,3 +1294,25 @@ class E2EVirtualOrderSummary(_ContractModel):
     status: str = "WOULD_SUBMIT"
     created_at: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReadinessRunSummary(_ContractModel):
+    """Phase 6J：PRODUCTION_READY checklist 运行索引（明细在 R2）。"""
+
+    run_id: str
+    production_ready: bool = False
+    engine_version: str = "qd_readiness@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReadinessCheckResultSummary(_ContractModel):
+    """Phase 6J：单项检查 / 场景结果 Registry 行。"""
+
+    check_result_id: str
+    run_id: str = ""
+    check_id: str = ""
+    scenario_id: str = ""
+    status: str = "OK"
+    title: str = ""
+    engine_version: str = "qd_readiness@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

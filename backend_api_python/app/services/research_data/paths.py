@@ -674,6 +674,16 @@ def production_e2e_run_key(*, session_id: str, run_id: str) -> str:
     return f"{production_e2e_prefix(session_id=session_id)}/{run_id}.json"
 
 
+def production_readiness_prefix() -> str:
+    """Phase 6J：``qd/production/readiness``。"""
+    return f"{_root()}/production/readiness"
+
+
+def production_readiness_run_key(*, run_id: str) -> str:
+    """``qd/production/readiness/{run_id}.json``。"""
+    return f"{production_readiness_prefix()}/{run_id}.json"
+
+
 def r2_uri(key: str, *, bucket: str | None = None) -> str:
     """逻辑 URI：r2://{bucket}/{key}。"""
     from app.services.level2_ingest import config as l2_config
