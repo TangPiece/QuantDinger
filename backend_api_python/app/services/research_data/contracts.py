@@ -1418,3 +1418,57 @@ class ShadowCompareRunSummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_shadow@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlledLiveSessionSummary(_ContractModel):
+    """Phase 7C：Controlled Live 会话索引。"""
+
+    session_id: str
+    account_id: str = ""
+    environment: str = "LIVE_CONTROLLED"
+    approved_strategy_id: str = ""
+    dataset_hash: str = ""
+    model_version: str = ""
+    strategy_version: str = ""
+    status: str = "OPEN"
+    order_count: int = 0
+    engine_version: str = "qd_controlled_live@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlledLiveOrderIndexRecord(_ContractModel):
+    """Phase 7C：真实订单索引（client_order_id 唯一）。"""
+
+    order_id: str
+    session_id: str = ""
+    client_order_id: str = ""
+    broker_order_id: str = ""
+    symbol: str = ""
+    side: str = ""
+    status: str = ""
+    engine_version: str = "qd_controlled_live@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlledLiveApprovalSummary(_ContractModel):
+    """Phase 7C：Operator 审批审计（无密钥明文）。"""
+
+    approval_id: str
+    session_id: str = ""
+    operator_actor: str = ""
+    approval_token_hash: str = ""
+    scope: str = "SINGLE_ORDER"
+    status: str = "APPROVED"
+    approved_at: str = ""
+    engine_version: str = "qd_controlled_live@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlledLiveCompareRunSummary(_ContractModel):
+    """Phase 7C：Shadow vs Real 对比运行索引。"""
+
+    run_id: str
+    account_id: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_controlled_live@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

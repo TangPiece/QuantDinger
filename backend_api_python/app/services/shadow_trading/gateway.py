@@ -1,4 +1,4 @@
-"""Phase 7B：OrderExecutionGateway — SHADOW/LIVE_READONLY 硬拒 REAL_BROKER_ORDER。"""
+"""Phase 7B/7C：OrderExecutionGateway — 仅 LIVE_CONTROLLED 允许 real submit。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ class EnvironmentViolation(RuntimeError):
 
 
 _REAL_ENV_BLOCK = frozenset({"SHADOW", "LIVE_READONLY", "PAPER"})
+_LIVE_FORBIDDEN = frozenset({"LIVE"})
 
 
 def is_real_broker(broker_port: Any) -> bool:
@@ -23,6 +24,8 @@ def is_real_broker(broker_port: Any) -> bool:
         return False
     if "paper" in bid or "sandbox" in bid:
         return False
+    if "controlled_fake" in bid:
+        return True
     if bid.startswith("alpaca_live") or bid == "alpaca_live":
         return True
 
@@ -35,13 +38,13 @@ def is_real_broker(broker_port: Any) -> bool:
     if "api.alpaca.markets" in base and "paper" not in base:
         return True
     mode = str(getattr(broker_port, "execution_mode", "") or "").upper()
-    if mode == "LIVE":
+    if mode in ("LIVE", "LIVE_CONTROLLED"):
         return True
     return False
 
 
 class OrderExecutionGateway:
-    """唯一允许触达 BrokerPort.submit 的门（Shadow 路径不得调用 submit_real）。"""
+    """唯一允许触达 BrokerPort.submit 的门。"""
 
     def submit_real(
         self,
@@ -52,6 +55,12 @@ class OrderExecutionGateway:
         submit_fn: Optional[Callable[[Order], Any]] = None,
     ) -> Any:
         env = str(environment or "PAPER").strip().upper()
+        if env in _LIVE_FORBIDDEN:
+            raise EnvironmentViolation("LIVE forbidden")
+        if env == "LIVE_CONTROLLED":
+            if submit_fn is None:
+                raise EnvironmentViolation("submit_fn required for LIVE_CONTROLLED")
+            return submit_fn(order)
         if env in _REAL_ENV_BLOCK and is_real_broker(broker_port):
             raise EnvironmentViolation("REAL_BROKER_ORDER denied")
         if submit_fn is None:
@@ -60,12 +69,20 @@ class OrderExecutionGateway:
 
     def cancel_real(self, environment: str, broker_port: Any, **kwargs: Any) -> Any:
         env = str(environment or "PAPER").strip().upper()
+        if env in _LIVE_FORBIDDEN:
+            raise EnvironmentViolation("LIVE forbidden")
+        if env == "LIVE_CONTROLLED":
+            raise EnvironmentViolation("REAL_BROKER_CANCEL denied for LIVE_CONTROLLED")
         if env in _REAL_ENV_BLOCK and is_real_broker(broker_port):
             raise EnvironmentViolation("REAL_BROKER_CANCEL denied")
         raise EnvironmentViolation("cancel_real not implemented in Phase 7B")
 
     def replace_real(self, environment: str, broker_port: Any, **kwargs: Any) -> Any:
         env = str(environment or "PAPER").strip().upper()
+        if env in _LIVE_FORBIDDEN:
+            raise EnvironmentViolation("LIVE forbidden")
+        if env == "LIVE_CONTROLLED":
+            raise EnvironmentViolation("REAL_BROKER_REPLACE denied for LIVE_CONTROLLED")
         if env in _REAL_ENV_BLOCK and is_real_broker(broker_port):
             raise EnvironmentViolation("REAL_BROKER_REPLACE denied")
         raise EnvironmentViolation("replace_real not implemented in Phase 7B")

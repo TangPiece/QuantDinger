@@ -730,6 +730,26 @@ def production_shadow_run_key(
     )
 
 
+def production_controlled_live_prefix() -> str:
+    """Phase 7C：``qd/production/controlled_live``。"""
+    return f"{_root()}/production/controlled_live"
+
+
+def production_controlled_live_run_key(
+    *,
+    account_id: str,
+    yyyy: str,
+    mm: str,
+    dd: str,
+    run_id: str,
+) -> str:
+    """``qd/production/controlled_live/{account_id}/{yyyy}/{mm}/{dd}/{run_id}.json``。"""
+    safe_acct = str(account_id or "unknown").replace("/", "_")
+    return (
+        f"{production_controlled_live_prefix()}/{safe_acct}/{yyyy}/{mm}/{dd}/{run_id}.json"
+    )
+
+
 def production_live_readonly_snapshot_key(
     *,
     account_id: str,

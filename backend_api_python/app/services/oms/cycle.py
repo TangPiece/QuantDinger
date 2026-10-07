@@ -19,7 +19,7 @@ from .replace import apply_replace
 from .state_machine import StateMachineError
 from .validation import ValidationError, validate_order
 
-_ALLOWED_ENV = frozenset({"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER"})
+_ALLOWED_ENV = frozenset({"PAPER", "SANDBOX", "SHADOW", "ALPACA_PAPER", "LIVE_CONTROLLED"})
 
 
 def _ops_audit_order(

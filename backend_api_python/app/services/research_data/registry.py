@@ -78,6 +78,10 @@ from .contracts import (
     ShadowExecutionIndexRecord,
     ShadowOrderIndexRecord,
     ShadowSessionSummary,
+    ControlledLiveApprovalSummary,
+    ControlledLiveCompareRunSummary,
+    ControlledLiveOrderIndexRecord,
+    ControlledLiveSessionSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -658,6 +662,22 @@ class ResearchRegistry(Protocol):
     ) -> None: ...
 
     def upsert_shadow_compare_run(self, record: ShadowCompareRunSummary) -> None: ...
+
+    def upsert_controlled_live_session(
+        self, record: ControlledLiveSessionSummary
+    ) -> None: ...
+
+    def upsert_controlled_live_order_index(
+        self, record: ControlledLiveOrderIndexRecord
+    ) -> None: ...
+
+    def upsert_controlled_live_approval(
+        self, record: ControlledLiveApprovalSummary
+    ) -> None: ...
+
+    def upsert_controlled_live_compare_run(
+        self, record: ControlledLiveCompareRunSummary
+    ) -> None: ...
 
 
 class LocalJsonRegistry:
@@ -2361,6 +2381,50 @@ class LocalJsonRegistry:
             data = self._read()
             data.setdefault("shadow_compare_runs", {})
             data["shadow_compare_runs"][record.run_id] = record.model_dump(mode="json")
+            self._write(data)
+
+    def upsert_controlled_live_session(
+        self, record: ControlledLiveSessionSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("controlled_live_sessions", {})
+            data["controlled_live_sessions"][record.session_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_controlled_live_order_index(
+        self, record: ControlledLiveOrderIndexRecord
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("controlled_live_order_index", {})
+            data["controlled_live_order_index"][record.order_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_controlled_live_approval(
+        self, record: ControlledLiveApprovalSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("controlled_live_approvals", {})
+            data["controlled_live_approvals"][record.approval_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def upsert_controlled_live_compare_run(
+        self, record: ControlledLiveCompareRunSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("controlled_live_compare_runs", {})
+            data["controlled_live_compare_runs"][record.run_id] = record.model_dump(
+                mode="json"
+            )
             self._write(data)
 
 
@@ -7348,6 +7412,120 @@ class D1ResearchRegistry:
             d1_client.query(
                 """
                 INSERT INTO shadow_compare_run (
+                  run_id, account_id, storage_uri, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.run_id,
+                    record.account_id,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_controlled_live_session(
+        self, record: ControlledLiveSessionSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO controlled_live_session (
+                  session_id, account_id, environment, approved_strategy_id,
+                  dataset_hash, model_version, strategy_version, status,
+                  order_count, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  status=excluded.status,
+                  order_count=excluded.order_count,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.session_id,
+                    record.account_id,
+                    record.environment,
+                    record.approved_strategy_id,
+                    record.dataset_hash,
+                    record.model_version,
+                    record.strategy_version,
+                    record.status,
+                    record.order_count,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_controlled_live_order_index(
+        self, record: ControlledLiveOrderIndexRecord
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO controlled_live_order_index (
+                  order_id, session_id, client_order_id, broker_order_id,
+                  symbol, side, status, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.order_id,
+                    record.session_id,
+                    record.client_order_id,
+                    record.broker_order_id,
+                    record.symbol,
+                    record.side,
+                    record.status,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_controlled_live_approval(
+        self, record: ControlledLiveApprovalSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO controlled_live_approval (
+                  approval_id, session_id, operator_actor, approval_token_hash,
+                  scope, status, approved_at, engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(approval_id) DO UPDATE SET
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.approval_id,
+                    record.session_id,
+                    record.operator_actor,
+                    record.approval_token_hash,
+                    record.scope,
+                    record.status,
+                    record.approved_at,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def upsert_controlled_live_compare_run(
+        self, record: ControlledLiveCompareRunSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO controlled_live_compare_run (
                   run_id, account_id, storage_uri, engine_version, metadata_json
                 ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET

@@ -579,6 +579,21 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 环境阶梯（7B）：`PAPER→SHADOW→LIVE_READONLY`；禁止 `PAPER→LIVE_READONLY`。真实 Alpaca **Data** GET（可选）需 `ALPACA_LIVE_DATA_URL=https://data.alpaca.markets` 与同组 `ALPACA_LIVE_*`。
 
+### Phase 7C Controlled Live（单笔真实 LIMIT）
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase7c_controlled_live.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase7c_controlled_live.py -q \
+  --confcutdir=tests/research_data
+```
+
+仅 `LIVE_CONTROLLED` 可 submit；`max_orders=1`；cancel/replace/MARKET/resubmit 均拒。CI 默认 Fake broker（0 次真实 POST）。真实 Alpaca POST 需 `CONTROLLED_LIVE_ALLOW_REAL_SUBMIT=true` 与 `ALPACA_LIVE_*`（见 `env.example`）。环境阶梯：`LIVE_READONLY→LIVE_CONTROLLED`（需 `PRODUCTION_READY`）。
+
 Phase 4 说明：[docs/data/phase4/README.md](data/phase4/README.md)。
 Phase 5 说明：[docs/data/phase5/README.md](data/phase5/README.md)。
 Phase 6 说明：[docs/data/phase6/README.md](data/phase6/README.md)。

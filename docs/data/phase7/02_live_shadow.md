@@ -24,7 +24,7 @@ Live MD → MarketEvent → Strategy → Risk → OrderIntent
 - `PAPER` → 仅 `SHADOW`
 - `SHADOW` → `LIVE_READONLY`（需 `PRODUCTION_READY`）
 - **禁止** `PAPER` → `LIVE_READONLY` 直跳
-- `LIVE_CONTROLLED` / `LIVE` 仍 7C+ 拒绝
+- `LIVE_CONTROLLED` 见 [03_controlled_live.md](03_controlled_live.md)；`LIVE` 仍禁止
 
 ## 凭证
 
