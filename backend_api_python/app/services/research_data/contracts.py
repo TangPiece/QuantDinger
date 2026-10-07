@@ -1612,3 +1612,41 @@ class GovAggregationRunSummary(_ContractModel):
     storage_uri: str = ""
     engine_version: str = "qd_governance@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyRegistrySummary(_ContractModel):
+    """Phase 8A：策略身份 SSOT 索引。"""
+
+    strategy_code: str
+    display_name: str = ""
+    owner: str = ""
+    status: str = "ACTIVE"
+    active_version: str = ""
+    engine_version: str = "qd_strategy_registry@1"
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StrategyVersionBindingSummary(_ContractModel):
+    """Phase 8A：版本钉扎与 policy 绑定索引。"""
+
+    version_id: str
+    strategy_code: str
+    strategy_version: str
+    dataset_hash: str = ""
+    snapshot_id: str = ""
+    model_version: str = ""
+    model_artifact_id: str = ""
+    feature_version: str = ""
+    processor_version: str = ""
+    processor_hash: str = ""
+    strategy_hash: str = ""
+    bundle_hash: str = ""
+    risk_policy_ref: str = ""
+    execution_policy_ref: str = "NEXT_OPEN"
+    content_hash: str = ""
+    source: str = "MANUAL"
+    registered_at: str = ""
+    storage_uri: str = ""
+    engine_version: str = "qd_strategy_registry@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

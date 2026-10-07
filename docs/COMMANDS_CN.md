@@ -630,6 +630,22 @@ export PRODUCTION_READY=true
 export LIVE_ENV_APPROVAL=true
 ```
 
+### Phase 8A Strategy Registry（身份 + 版本钉扎 SSOT）
+
+Fake ProductionBundle + LocalJson 默认；说明：[01_strategy_registry.md](data/phase8/01_strategy_registry.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8a_strategy_registry.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8a_strategy_registry.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 7A–7D verify 仍应绿（裸 `LIVE` submit 默认拒）：
 
 ```bash

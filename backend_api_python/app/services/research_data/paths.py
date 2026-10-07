@@ -781,6 +781,20 @@ def production_controlled_live_run_key(
     )
 
 
+def strategy_registry_prefix() -> str:
+    """Phase 8A：``qd/registry/strategies``。"""
+    return f"{_root()}/registry/strategies"
+
+
+def strategy_registry_version_manifest_key(
+    *, strategy_code: str, version_id: str
+) -> str:
+    """``qd/registry/strategies/{strategy_code}/versions/{version_id}/manifest.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_vid = str(version_id or "unknown").replace("/", "_")
+    return f"{strategy_registry_prefix()}/{safe_code}/versions/{safe_vid}/manifest.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

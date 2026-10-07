@@ -95,6 +95,8 @@ from .contracts import (
     GovStrategyAccountBindSummary,
     GovStrategyLifecycleSummary,
     GovStrategyVersionSummary,
+    StrategyRegistrySummary,
+    StrategyVersionBindingSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -733,6 +735,24 @@ class ResearchRegistry(Protocol):
     def upsert_gov_aggregation_run(
         self, record: GovAggregationRunSummary
     ) -> None: ...
+
+    def upsert_strategy_registry(self, record: StrategyRegistrySummary) -> None: ...
+
+    def get_strategy_registry(self, strategy_code: str) -> StrategyRegistrySummary: ...
+
+    def list_strategy_registry(self) -> list[StrategyRegistrySummary]: ...
+
+    def upsert_strategy_version_binding(
+        self, record: StrategyVersionBindingSummary
+    ) -> None: ...
+
+    def get_strategy_version_binding(
+        self, version_id: str
+    ) -> StrategyVersionBindingSummary: ...
+
+    def list_strategy_version_bindings(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyVersionBindingSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -2603,6 +2623,63 @@ class LocalJsonRegistry:
             data.setdefault("gov_aggregation_run", {})
             data["gov_aggregation_run"][record.run_id] = record.model_dump(mode="json")
             self._write(data)
+
+    def upsert_strategy_registry(self, record: StrategyRegistrySummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_registry", {})
+            data["strategy_registry"][record.strategy_code] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_registry(self, strategy_code: str) -> StrategyRegistrySummary:
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_registry") or {}).get(strategy_code)
+        if not raw:
+            raise KeyError(f"strategy_registry missing: {strategy_code}")
+        return StrategyRegistrySummary.model_validate(raw)
+
+    def list_strategy_registry(self) -> list[StrategyRegistrySummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_registry") or {}).values()
+        return [StrategyRegistrySummary.model_validate(r) for r in rows]
+
+    def upsert_strategy_version_binding(
+        self, record: StrategyVersionBindingSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("strategy_version_binding", {})
+            data["strategy_version_binding"][record.version_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_strategy_version_binding(
+        self, version_id: str
+    ) -> StrategyVersionBindingSummary:
+        with self._lock:
+            data = self._read()
+            raw = (data.get("strategy_version_binding") or {}).get(version_id)
+        if not raw:
+            raise KeyError(f"strategy_version_binding missing: {version_id}")
+        return StrategyVersionBindingSummary.model_validate(raw)
+
+    def list_strategy_version_bindings(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyVersionBindingSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("strategy_version_binding") or {}).values()
+        out = [StrategyVersionBindingSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.registered_at or "")
+        return out
 
 
 class D1ResearchRegistry:
@@ -8073,6 +8150,184 @@ class D1ResearchRegistry:
             )
         except Exception:
             return
+
+    def upsert_strategy_registry(self, record: StrategyRegistrySummary) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO strategy_registry (
+                  strategy_code, display_name, owner, status, active_version,
+                  engine_version, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy_code) DO UPDATE SET
+                  display_name=excluded.display_name,
+                  active_version=excluded.active_version,
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.strategy_code,
+                    record.display_name,
+                    record.owner,
+                    record.status,
+                    record.active_version,
+                    record.engine_version,
+                    record.created_at or _utc_now(),
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_strategy_registry(self, strategy_code: str) -> StrategyRegistrySummary:
+        rows = d1_client.query(
+            """
+            SELECT strategy_code, display_name, owner, status, active_version,
+                   engine_version, created_at, metadata_json
+            FROM strategy_registry WHERE strategy_code = ?
+            """,
+            [strategy_code],
+        )
+        if not rows:
+            raise KeyError(f"strategy_registry missing: {strategy_code}")
+        row = rows[0]
+        return StrategyRegistrySummary(
+            strategy_code=row["strategy_code"],
+            display_name=row.get("display_name") or "",
+            owner=row.get("owner") or "",
+            status=row.get("status") or "ACTIVE",
+            active_version=row.get("active_version") or "",
+            engine_version=row.get("engine_version") or "qd_strategy_registry@1",
+            created_at=row.get("created_at"),
+            metadata=json.loads(row.get("metadata_json") or "{}"),
+        )
+
+    def list_strategy_registry(self) -> list[StrategyRegistrySummary]:
+        try:
+            rows = d1_client.query(
+                """
+                SELECT strategy_code, display_name, owner, status, active_version,
+                       engine_version, created_at, metadata_json
+                FROM strategy_registry
+                """
+            )
+        except Exception:
+            return []
+        out: list[StrategyRegistrySummary] = []
+        for row in rows or []:
+            out.append(
+                StrategyRegistrySummary(
+                    strategy_code=row["strategy_code"],
+                    display_name=row.get("display_name") or "",
+                    owner=row.get("owner") or "",
+                    status=row.get("status") or "ACTIVE",
+                    active_version=row.get("active_version") or "",
+                    engine_version=row.get("engine_version") or "qd_strategy_registry@1",
+                    created_at=row.get("created_at"),
+                    metadata=json.loads(row.get("metadata_json") or "{}"),
+                )
+            )
+        return out
+
+    def upsert_strategy_version_binding(
+        self, record: StrategyVersionBindingSummary
+    ) -> None:
+        try:
+            d1_client.query(
+                """
+                INSERT INTO strategy_version_binding (
+                  version_id, strategy_code, strategy_version,
+                  dataset_hash, snapshot_id, model_version, model_artifact_id,
+                  feature_version, processor_version, processor_hash,
+                  strategy_hash, bundle_hash, risk_policy_ref, execution_policy_ref,
+                  content_hash, source, registered_at, storage_uri,
+                  engine_version, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(version_id) DO UPDATE SET
+                  storage_uri=excluded.storage_uri,
+                  metadata_json=excluded.metadata_json
+                """,
+                [
+                    record.version_id,
+                    record.strategy_code,
+                    record.strategy_version,
+                    record.dataset_hash,
+                    record.snapshot_id,
+                    record.model_version,
+                    record.model_artifact_id,
+                    record.feature_version,
+                    record.processor_version,
+                    record.processor_hash,
+                    record.strategy_hash,
+                    record.bundle_hash,
+                    record.risk_policy_ref,
+                    record.execution_policy_ref,
+                    record.content_hash,
+                    record.source,
+                    record.registered_at,
+                    record.storage_uri,
+                    record.engine_version,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
+                ],
+            )
+        except Exception:
+            return
+
+    def get_strategy_version_binding(
+        self, version_id: str
+    ) -> StrategyVersionBindingSummary:
+        rows = d1_client.query(
+            "SELECT * FROM strategy_version_binding WHERE version_id = ?",
+            [version_id],
+        )
+        if not rows:
+            raise KeyError(f"strategy_version_binding missing: {version_id}")
+        return _strategy_version_binding_from_row(rows[0])
+
+    def list_strategy_version_bindings(
+        self, strategy_code: str | None = None
+    ) -> list[StrategyVersionBindingSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM strategy_version_binding
+                    WHERE strategy_code = ? ORDER BY registered_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM strategy_version_binding ORDER BY registered_at"
+                )
+        except Exception:
+            return []
+        return [_strategy_version_binding_from_row(r) for r in rows or []]
+
+
+def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
+    return StrategyVersionBindingSummary(
+        version_id=row["version_id"],
+        strategy_code=row["strategy_code"],
+        strategy_version=row["strategy_version"],
+        dataset_hash=row.get("dataset_hash") or "",
+        snapshot_id=row.get("snapshot_id") or "",
+        model_version=row.get("model_version") or "",
+        model_artifact_id=row.get("model_artifact_id") or "",
+        feature_version=row.get("feature_version") or "",
+        processor_version=row.get("processor_version") or "",
+        processor_hash=row.get("processor_hash") or "",
+        strategy_hash=row.get("strategy_hash") or "",
+        bundle_hash=row.get("bundle_hash") or "",
+        risk_policy_ref=row.get("risk_policy_ref") or "",
+        execution_policy_ref=row.get("execution_policy_ref") or "NEXT_OPEN",
+        content_hash=row.get("content_hash") or "",
+        source=row.get("source") or "MANUAL",
+        registered_at=row.get("registered_at") or "",
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_strategy_registry@1",
+        metadata=json.loads(row.get("metadata_json") or "{}"),
+    )
 
 
 def get_default_registry(root: Path | None = None) -> ResearchRegistry:

@@ -1,6 +1,7 @@
 # Phase 7 — Controlled Live
 
-> **Status:** Phase 7A–7E implemented (through Gradual Scale / Trading Governance).
+> **Status:** Phase 7A–7E implemented (through Gradual Scale / Trading Governance).  
+> **Next:** [Phase 8A Strategy Registry](../phase8/01_strategy_registry.md).
 
 ## Roadmap
 
@@ -10,6 +11,7 @@
 7C  Single Order                           ← done
 7D  Controlled Live Production             ← done
 7E  Gradual Scale                         ← done
+8A  Strategy Registry (identity SSOT)     ← see phase8/
 ```
 
 ## Reading

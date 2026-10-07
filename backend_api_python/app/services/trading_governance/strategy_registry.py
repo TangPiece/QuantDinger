@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any, Mapping
+
+from app.services.strategy_registry.pin import content_hash_for_pin
 
 from .protocol import StrategyLifecycleRecord, StrategyVersionPin
 
@@ -13,24 +13,14 @@ class VersionImmutableError(RuntimeError):
     """LIVE 版本禁止原地 mutate，须新版本重新走阶梯。"""
 
 
-def content_hash_for_pin(
-    *,
-    strategy_version: str,
-    model_version: str,
-    dataset_hash: str,
-    feature_version: str,
-    extra: Mapping[str, Any] | None = None,
-) -> str:
-    """确定性内容 hash，用于检测 LIVE 版本篡改。"""
-    payload = {
-        "strategy_version": strategy_version,
-        "model_version": model_version,
-        "dataset_hash": dataset_hash,
-        "feature_version": feature_version,
-        **dict(extra or {}),
-    }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+# content_hash_for_pin 已迁至 strategy_registry.pin（8A SSOT）；下方 re-export 供旧 import 路径。
+__all__ = [
+    "VersionImmutableError",
+    "assert_version_immutable",
+    "content_hash_for_pin",
+    "new_lifecycle",
+    "register_version_pin",
+]
 
 
 def register_version_pin(
