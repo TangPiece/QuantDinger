@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from .artifact_store import ModelArtifactStore
 from .bridge_legacy import to_legacy_model_definition, to_legacy_model_version_record
+from .bundle_store import BundleStoreError, ModelBundleStore, stub_payload_for_run
 from .catalog import ModelCatalog
 from .executor import (
     RunningStageResult,
@@ -17,6 +18,7 @@ from .executor import (
     run_prepare_stage,
     run_running_stage,
 )
+from .model_loader import ModelArtifactLoader, ModelLoadError
 from .hashing import compute_model_config_hash
 from .immutability import (
     ModelImmutabilityError,
@@ -118,6 +120,8 @@ class ModelPlatformService:
         self._jobs: dict[str, TrainingJob] = {}
         self._jobs_by_idem: dict[str, str] = {}
         self._artifacts: dict[str, ModelArtifact] = {}
+        self._bundles = ModelBundleStore(self._store)
+        self._loader = ModelArtifactLoader(self._store, self._bundles)
         self._hydrate()
 
     @property
@@ -143,6 +147,10 @@ class ModelPlatformService:
                 self._jobs[j.job_id] = j
                 if j.idempotency_key:
                     self._jobs_by_idem[j.idempotency_key] = j.job_id
+        for path in self._store.list_artifact_paths():
+            a = load_json_model(path, ModelArtifact)
+            if a:
+                self._artifacts[a.artifact_id] = a
 
     def compute_model_config_hash(self, config: dict[str, Any] | None) -> str:
         return compute_model_config_hash(config)
@@ -321,15 +329,27 @@ class ModelPlatformService:
         )
 
         if art is None and artifact_spec is not None:
+            # 旧路径：仅索引（DRAFT）；正式训练应先 put_model_artifact
             aspec = artifact_spec.model_copy(
-                update={"model_version_id": version_obj.model_version_id}
+                update={
+                    "model_version_id": version_obj.model_version_id,
+                    "status": artifact_spec.status or "AVAILABLE",
+                }
             )
             art = pin_model_artifact(aspec)
+            if art.status == "CREATING":
+                art = art.model_copy(update={"status": "AVAILABLE"})
             write_artifact(self._store, art)
             self._artifacts[art.artifact_id] = art
             version_obj = version_obj.model_copy(update={"artifact_id": art.artifact_id})
         elif art is not None:
             version_obj = version_obj.model_copy(update={"artifact_id": art.artifact_id})
+            if art.model_version_id != version_obj.model_version_id:
+                art = art.model_copy(
+                    update={"model_version_id": version_obj.model_version_id}
+                )
+                write_artifact(self._store, art)
+                self._artifacts[art.artifact_id] = art
 
         # final lineage check with artifact bound
         final_spec = lineage_spec.model_copy(
@@ -805,31 +825,33 @@ class ModelPlatformService:
                     lineage = lineage.model_copy(
                         update={"processor_version": inj.processor_version}
                     )
-            artifact_uri = running.artifact_uri or (
-                f"qd/artifacts/model/{run.training_run_id}/"
-            )
             try:
+                payload = self._resolve_artifact_payload(run, running)
+                art = self.put_model_artifact(
+                    payload,
+                    training_run_id=run.training_run_id,
+                    framework=running.framework or run.framework or "CUSTOM",
+                    framework_version=running.framework_version
+                    or run.framework_version,
+                    source_uri=running.artifact_uri,
+                    metadata={
+                        "executor_checksum": checksum,
+                        "candidate_file_size": int(running.file_size or 0),
+                    },
+                )
                 ver = self.create_version_from_run(
                     run.training_run_id,
                     version=version_label,
                     lineage_spec=lineage,
-                    artifact_spec=ModelArtifactSpec(
-                        model_version_id="pending",
-                        artifact_uri=artifact_uri,
-                        checksum=checksum,
-                        file_size=int(running.file_size or 0),
-                        framework=running.framework or run.framework or "CUSTOM",
-                        framework_version=running.framework_version
-                        or run.framework_version,
-                    ),
+                    artifact_id=art.artifact_id,
                     inject=inject,
                 )
                 model_version_id = ver.model_version_id
-            except ModelPlatformError as exc:
+            except (ModelPlatformError, BundleStoreError) as exc:
                 return self.update_training_run_status(
                     training_run_id,
                     "FAILED",
-                    failure_class="ARTIFACT_ERROR",
+                    failure_class=getattr(exc, "failure_class", "ARTIFACT_ERROR"),
                     failure_reason=str(exc),
                     failure_detail="FINALIZING",
                 )
@@ -854,6 +876,98 @@ class ModelPlatformService:
             self._jobs[job.job_id] = closed
         return run
 
+    def _resolve_artifact_payload(
+        self, run: TrainingRun, running: RunningStageResult
+    ) -> bytes:
+        uri = (running.artifact_uri or "").strip()
+        if uri:
+            path = Path(uri)
+            if path.is_file():
+                return path.read_bytes()
+            if path.is_dir():
+                bin_path = path / "model.bin"
+                if bin_path.is_file():
+                    return bin_path.read_bytes()
+        return stub_payload_for_run(run)
+
+    def put_model_artifact(
+        self,
+        payload: bytes,
+        *,
+        training_run_id: str = "",
+        model_version_id: str = "",
+        model_id: str = "",
+        framework: str = "",
+        framework_version: str = "",
+        source_uri: str = "",
+        metadata: Mapping[str, Any] | None = None,
+        artifact_id: str | None = None,
+    ) -> ModelArtifact:
+        """Candidate/payload → BundleStore.put → AVAILABLE ModelArtifact。"""
+        run = self.get_training_run(training_run_id) if training_run_id else None
+        try:
+            art = self._bundles.put(
+                payload,
+                run=run,
+                model_version_id=model_version_id,
+                model_id=model_id or (run.model_id if run else ""),
+                framework=framework,
+                framework_version=framework_version,
+                metadata=metadata,
+                artifact_id=artifact_id,
+                source_uri=source_uri,
+            )
+        except BundleStoreError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+        self._artifacts[art.artifact_id] = art
+        return art
+
+    def verify_artifact(self, artifact_id: str) -> bool:
+        art = self.get_artifact(artifact_id)
+        try:
+            return self._bundles.verify(
+                artifact_id, expected_checksum=art.checksum
+            )
+        except BundleStoreError as exc:
+            if art.status == "AVAILABLE":
+                from .artifact_fsm import assert_artifact_status_transition
+
+                assert_artifact_status_transition(art.status, "CORRUPTED")
+                corrupted = art.model_copy(
+                    update={
+                        "status": "CORRUPTED",
+                        "metadata": {
+                            **dict(art.metadata or {}),
+                            "verify_error": str(exc),
+                        },
+                    }
+                )
+                write_artifact(self._store, corrupted)
+                self._artifacts[artifact_id] = corrupted
+            raise ModelPlatformError(str(exc)) from exc
+
+    def load_model_artifact(self, model_version_id: str):
+        version = self.get_version(model_version_id)
+        if not version.artifact_id:
+            raise ModelPlatformError("model version missing artifact_id")
+        art = self.get_artifact(version.artifact_id)
+        try:
+            return self._loader.load(version, art)
+        except ModelLoadError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+
+    def delete_artifact(self, artifact_id: str) -> None:
+        refs = [
+            v.model_version_id
+            for v in self._catalog.list_versions()
+            if v.artifact_id == artifact_id
+        ]
+        try:
+            self._bundles.delete(artifact_id, referenced_by_versions=refs)
+        except BundleStoreError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+        self._artifacts.pop(artifact_id, None)
+
     def predict(
         self,
         model_version_id: str,
@@ -863,7 +977,7 @@ class ModelPlatformService:
         prediction_time: str = "",
         segments: Mapping[str, str] | None = None,
     ) -> Any:
-        """薄 Predict：加载 TRAINED artifact → Adapter.predict（非 Signal）。"""
+        """薄 Predict：Loader verify → Adapter.predict（非 Signal）。"""
         from app.services.research_data.model_adapters import (
             PredictionRequest,
             TrainingSegments,
@@ -874,13 +988,11 @@ class ModelPlatformService:
             raise ModelPlatformError(
                 f"predict not allowed for lifecycle {version.lifecycle}"
             )
-        if not version.artifact_id:
-            raise ModelPlatformError("model version missing artifact_id")
-        art = self.get_artifact(version.artifact_id)
+        loaded = self.load_model_artifact(model_version_id)
         seg_map = dict(segments or {})
         req = PredictionRequest(
             model_version_id=version.model_version_id,
-            artifact_uri=art.artifact_uri,
+            artifact_uri=str(loaded.bin_path),
             dataset_ref=dataset_ref,
             dataset_hash=dataset_hash or version.dataset_hash,
             feature_schema_hash=version.feature_set_hash,
@@ -894,7 +1006,6 @@ class ModelPlatformService:
                 test_end=seg_map.get("test_end", ""),
             ),
         )
-        # 构造假 run 仅用于 resolve adapter
         fake = TrainingRun.model_construct(
             training_run_id="predict",
             training_run_hash="",

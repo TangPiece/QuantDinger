@@ -201,22 +201,31 @@ def pin_model_artifact(
     artifact_id: str | None = None,
     created_at: datetime | None = None,
 ) -> ModelArtifact:
+    from .artifact_manifest import normalize_artifact_type
+
     ts = created_at or datetime.now(timezone.utc)
     return ModelArtifact(
         engine_version=ENGINE_VERSION,
         artifact_id=artifact_id or new_artifact_id(),
         model_version_id=spec.model_version_id,
-        artifact_type=spec.artifact_type,
+        artifact_type=normalize_artifact_type(spec.artifact_type),
         artifact_uri=spec.artifact_uri,
         file_size=int(spec.file_size or 0),
         checksum=spec.checksum,
+        checksum_algorithm=spec.checksum_algorithm or "SHA256",
+        content_type=spec.content_type or "application/octet-stream",
         framework=str(spec.framework or "").upper(),
         framework_version=spec.framework_version,
+        producer_type=spec.producer_type,
+        producer_id=spec.producer_id,
         feature_schema_uri=spec.feature_schema_uri,
         processor_uri=spec.processor_uri,
         label_definition_uri=spec.label_definition_uri,
         environment_uri=spec.environment_uri,
         training_metadata_uri=spec.training_metadata_uri,
+        manifest_uri=spec.manifest_uri,
+        metadata_uri=spec.metadata_uri,
+        status=spec.status or "CREATING",
         created_at=ts,
         metadata=dict(spec.metadata or {}),
     )

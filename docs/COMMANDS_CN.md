@@ -808,9 +808,9 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
 
-### Phase 9F Model Platform（9F-1～9F-4）
+### Phase 9F Model Platform（9F-1～9F-5）
 
-Registry / Lineage / TrainingJob+TrainingRun + Qlib Model Adapter；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
+Registry / Lineage / TrainingRun / Qlib Adapter / Artifact Bundle Store；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
 
 ```bash
 cd backend_api_python
@@ -822,10 +822,14 @@ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
   .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase9f_model_platform.py \
   tests/research_data/test_phase9f3_training_run.py \
-  tests/research_data/test_phase9f4_qlib_adapter.py -q \
+  tests/research_data/test_phase9f4_qlib_adapter.py \
+  tests/research_data/test_phase9f5_model_artifact.py -q \
   --confcutdir=tests/research_data
 ```
 

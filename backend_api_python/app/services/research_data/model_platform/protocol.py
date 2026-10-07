@@ -50,6 +50,15 @@ TrainingRunStatus = Literal[
 
 TrainingJobStatus = Literal["OPEN", "CLOSED"]
 
+ArtifactStatus = Literal[
+    "CREATING",
+    "UPLOADING",
+    "VERIFYING",
+    "AVAILABLE",
+    "FAILED",
+    "CORRUPTED",
+]
+
 FailureClass = Literal[
     "DATA_ERROR",
     "DATA_MISSING",
@@ -344,43 +353,58 @@ class TrainingRun(_PlatformModel):
 
 
 class ModelArtifactSpec(_PlatformModel):
-    """register_artifact 输入（索引，非 bin）。"""
+    """register_artifact / put 输入（索引 + 可选 payload 引用）。"""
 
-    model_version_id: str
-    artifact_type: str = "model_bundle"
+    model_version_id: str = ""
+    artifact_type: str = "MODEL"
     artifact_uri: str = ""
     file_size: int = 0
     checksum: str = ""
+    checksum_algorithm: str = "SHA256"
+    content_type: str = "application/octet-stream"
     framework: str = ""
     framework_version: str = ""
+    producer_type: str = ""
+    producer_id: str = ""
     feature_schema_uri: str = ""
     processor_uri: str = ""
     label_definition_uri: str = ""
     environment_uri: str = ""
     training_metadata_uri: str = ""
+    manifest_uri: str = ""
+    metadata_uri: str = ""
+    status: ArtifactStatus = "CREATING"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelArtifact(_PlatformModel):
-    """模型 Artifact 索引（大文件在 R2 / local cache）。"""
+    """模型 Artifact 索引（二进制在 qd/artifacts/model/{id}/）。"""
 
     schema_version: str = MODEL_ARTIFACT_SCHEMA
     engine_version: str = ENGINE_VERSION
     artifact_id: str
-    model_version_id: str
-    artifact_type: str = "model_bundle"
+    model_version_id: str = ""
+    artifact_type: str = "MODEL"
     artifact_uri: str = ""
     file_size: int = 0
     checksum: str = ""
+    checksum_algorithm: str = "SHA256"
+    content_type: str = "application/octet-stream"
     framework: str = ""
     framework_version: str = ""
+    producer_type: str = ""
+    producer_id: str = ""
     feature_schema_uri: str = ""
     processor_uri: str = ""
     label_definition_uri: str = ""
     environment_uri: str = ""
     training_metadata_uri: str = ""
+    manifest_uri: str = ""
+    metadata_uri: str = ""
+    status: ArtifactStatus = "CREATING"
     immutable: bool = True
     created_at: datetime
+    immutable_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -417,6 +441,7 @@ class ModelPlatformInject(_PlatformModel):
 
 __all__ = [
     "ENGINE_VERSION",
+    "ArtifactStatus",
     "FailureClass",
     "MODEL_ARTIFACT_SCHEMA",
     "MODEL_SCHEMA",

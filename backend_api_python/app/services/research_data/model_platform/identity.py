@@ -52,12 +52,29 @@ def model_artifact_key(*, artifact_id: str) -> str:
     return f"{root}/model_platform/artifacts/{artifact_id}.json"
 
 
+def model_bundle_prefix(*, artifact_id: str) -> str:
+    """二进制 Bundle 根键：qd/artifacts/model/{artifact_id}/。"""
+    root = rd_config.canonical_prefix()
+    return f"{root}/artifacts/model/{artifact_id}"
+
+
+def model_bundle_bin_key(*, artifact_id: str) -> str:
+    return f"{model_bundle_prefix(artifact_id=artifact_id)}/model.bin"
+
+
+def model_bundle_manifest_key(*, artifact_id: str) -> str:
+    return f"{model_bundle_prefix(artifact_id=artifact_id)}/manifest.json"
+
+
 def model_version_ref(*, model_code: str, version: str) -> str:
     return f"{model_code}@{version}"
 
 
 __all__ = [
     "model_artifact_key",
+    "model_bundle_bin_key",
+    "model_bundle_manifest_key",
+    "model_bundle_prefix",
     "model_key",
     "model_version_key",
     "model_version_ref",

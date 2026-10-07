@@ -1,4 +1,4 @@
-"""Model Platform 本地镜像路径。"""
+"""Model Platform 本地镜像路径 + Artifact Bundle / Cache 根。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from app.services.research_data import config as rd_config
 
 from .identity import (
     model_artifact_key,
+    model_bundle_prefix,
     model_key,
     model_version_key,
     training_job_key,
@@ -16,9 +17,27 @@ from .identity import (
 )
 
 
+def cache_base(root: Path | None = None) -> Path:
+    """与 ModelArtifactStore.root 对齐的缓存根（默认 research_cache）。"""
+    return Path(root) if root is not None else rd_config.research_cache_dir()
+
+
 def platform_root(root: Path | None = None) -> Path:
-    base = Path(root) if root is not None else rd_config.research_cache_dir()
-    path = base / rd_config.canonical_prefix() / "model_platform"
+    path = cache_base(root) / rd_config.canonical_prefix() / "model_platform"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def artifacts_model_root(root: Path | None = None) -> Path:
+    """qd/artifacts/model/。"""
+    path = cache_base(root) / rd_config.canonical_prefix() / "artifacts" / "model"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def model_cache_root(root: Path | None = None) -> Path:
+    """qd/cache/models/ — Artifact Loader 本地缓存。"""
+    path = cache_base(root) / rd_config.canonical_prefix() / "cache" / "models"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -51,6 +70,20 @@ class ModelArtifactStore:
     def artifact_path(self, *, artifact_id: str) -> Path:
         return self._rel(model_artifact_key(artifact_id=artifact_id))
 
+    def bundle_dir(self, *, artifact_id: str) -> Path:
+        """本地 Bundle 目录：{cache}/qd/artifacts/model/{artifact_id}/。"""
+        path = artifacts_model_root(self.root) / artifact_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def cache_dir(self, *, artifact_id: str) -> Path:
+        path = model_cache_root(self.root) / artifact_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def bundle_key_prefix(self, *, artifact_id: str) -> str:
+        return model_bundle_prefix(artifact_id=artifact_id)
+
     def list_model_paths(self) -> list[Path]:
         base = platform_root(self.root) / "models"
         if not base.is_dir():
@@ -75,8 +108,20 @@ class ModelArtifactStore:
             return []
         return sorted(base.glob("*.json"))
 
+    def list_artifact_paths(self) -> list[Path]:
+        base = platform_root(self.root) / "artifacts"
+        if not base.is_dir():
+            return []
+        return sorted(base.glob("*.json"))
+
     def root_path(self) -> Path:
         return platform_root(self.root)
 
 
-__all__ = ["ModelArtifactStore", "platform_root"]
+__all__ = [
+    "ModelArtifactStore",
+    "artifacts_model_root",
+    "cache_base",
+    "model_cache_root",
+    "platform_root",
+]
