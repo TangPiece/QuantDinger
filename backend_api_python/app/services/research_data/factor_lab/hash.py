@@ -36,4 +36,7 @@ def compute_factor_hash(feature: FeatureDefinition) -> str:
         "information_policy": feature.information_policy,
         "contract_version": FACTOR_LAB_CONTRACT_VERSION,
     }
+    # Phase 9B：非空 definition（pipeline / asset_kind）参与 hash；空 dict 保持 4A 兼容
+    if feature.definition:
+        payload["definition"] = feature.definition
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
