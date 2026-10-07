@@ -13,6 +13,11 @@ MODEL_VERSION_SCHEMA = "model_version@1"
 TRAINING_RUN_SCHEMA = "training_run@1"
 TRAINING_JOB_SCHEMA = "training_job@1"
 MODEL_ARTIFACT_SCHEMA = "model_artifact@1"
+MODEL_APPROVAL_SCHEMA = "model_approval@1"
+MODEL_APPROVAL_POLICY_SCHEMA = "model_approval_policy@1"
+MODEL_ACTIVATION_SCHEMA = "model_activation@1"
+
+DEFAULT_USAGE_SCOPE: list[str] = ["RESEARCH", "EXPERIMENT", "BACKTEST"]
 
 ModelType = Literal[
     "REGRESSION",
@@ -73,6 +78,26 @@ FailureClass = Literal[
     "ARTIFACT_ERROR",
     "SYSTEM_ERROR",
     "CANCELLED",
+]
+
+ApprovalDecision = Literal["APPROVED", "REJECTED", "REVOKED"]
+
+DeprecateReason = Literal[
+    "PERFORMANCE_DEGRADATION",
+    "DATA_ISSUE",
+    "MODEL_ISSUE",
+    "NEW_VERSION",
+    "SECURITY_ISSUE",
+    "RESEARCH_DECISION",
+    "OTHER",
+]
+
+UsageScope = Literal[
+    "RESEARCH",
+    "EXPERIMENT",
+    "BACKTEST",
+    "PAPER",
+    "PRODUCTION",
 ]
 
 
@@ -168,7 +193,9 @@ class ModelVersion(_PlatformModel):
     training_run_id: str = ""
     artifact_id: str = ""
     deprecate_reason: str = ""
+    deprecate_reason_code: str = ""
     replacement_ref: str = ""
+    usage_scope: list[str] = Field(default_factory=lambda: list(DEFAULT_USAGE_SCOPE))
     immutable: bool = True
     created_at: datetime
     tags: list[str] = Field(default_factory=list)
@@ -420,6 +447,73 @@ class ModelSearchQuery(_PlatformModel):
     text: str = ""
 
 
+class ModelApprovalPolicy(_PlatformModel):
+    """审批策略（阈值与整体状态白名单）。"""
+
+    schema_version: str = MODEL_APPROVAL_POLICY_SCHEMA
+    policy_code: str = "MODEL_APPROVAL_V1"
+    version: str = "1.0.0"
+    name: str = "Model Approval V1"
+    allowed_overall_status: list[str] = Field(default_factory=lambda: ["PASS"])
+    require_eval_succeeded: bool = True
+    require_artifact_available: bool = True
+    require_lineage_hashes: bool = True
+    require_pit: bool = True
+    min_mean_ic: float | None = None
+    min_mean_rank_ic: float | None = None
+    min_ic_ir: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelApproval(_PlatformModel):
+    """不可变审批审计（仅追加）。"""
+
+    schema_version: str = MODEL_APPROVAL_SCHEMA
+    engine_version: str = ENGINE_VERSION
+    approval_id: str
+    model_id: str
+    model_version_id: str
+    evaluation_run_id: str = ""
+    approval_policy_version: str = "MODEL_APPROVAL_V1@1.0.0"
+    decision: ApprovalDecision
+    reason: str = ""
+    operator: str = ""
+    approved_at: datetime | None = None
+    created_at: datetime
+    gate_dump: dict[str, Any] = Field(default_factory=dict)
+    immutable: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelActivationRecord(_PlatformModel):
+    """ACTIVE 切换审计（仅追加）。"""
+
+    schema_version: str = MODEL_ACTIVATION_SCHEMA
+    engine_version: str = ENGINE_VERSION
+    activation_id: str
+    model_id: str
+    from_model_version_id: str = ""
+    to_model_version_id: str
+    reason: str = ""
+    operator: str = ""
+    policy_version: str = "MODEL_APPROVAL_V1@1.0.0"
+    created_at: datetime
+    immutable: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalGateResult(_PlatformModel):
+    """ApprovalGate 输出。"""
+
+    verdict: Literal["PASS", "REJECT"] = "REJECT"
+    reasons: list[str] = Field(default_factory=list)
+    evaluation_run_id: str = ""
+    overall_status: str = ""
+    policy_version: str = ""
+    artifact_id: str = ""
+    metrics_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelPlatformInject(_PlatformModel):
     """测试注入。"""
 
@@ -437,16 +531,28 @@ class ModelPlatformInject(_PlatformModel):
     snapshot_id: str = ""
     # 9F-4：注入 DataQuery 侧已解析的 dataset_hash（无 registry 时跳过 live 校验）
     skip_dataset_ref_check: bool = False
+    # 9F-7：仅单测可跳过 ApprovalGate（禁止产品化静默绕过）
+    skip_approval_gate: bool = False
 
 
 __all__ = [
     "ENGINE_VERSION",
+    "ApprovalDecision",
+    "ApprovalGateResult",
     "ArtifactStatus",
+    "DEFAULT_USAGE_SCOPE",
+    "DeprecateReason",
     "FailureClass",
+    "MODEL_ACTIVATION_SCHEMA",
+    "MODEL_APPROVAL_POLICY_SCHEMA",
+    "MODEL_APPROVAL_SCHEMA",
     "MODEL_ARTIFACT_SCHEMA",
     "MODEL_SCHEMA",
     "MODEL_VERSION_SCHEMA",
     "Model",
+    "ModelActivationRecord",
+    "ModelApproval",
+    "ModelApprovalPolicy",
     "ModelArtifact",
     "ModelArtifactSpec",
     "ModelPlatformInject",
@@ -467,4 +573,5 @@ __all__ = [
     "TrainingRun",
     "TrainingRunSpec",
     "TrainingRunStatus",
+    "UsageScope",
 ]

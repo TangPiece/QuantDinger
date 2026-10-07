@@ -7,7 +7,15 @@ import json
 from dataclasses import dataclass
 
 from .artifact_store import ModelArtifactStore
-from .protocol import Model, ModelArtifact, ModelVersion, TrainingJob, TrainingRun
+from .protocol import (
+    Model,
+    ModelActivationRecord,
+    ModelApproval,
+    ModelArtifact,
+    ModelVersion,
+    TrainingJob,
+    TrainingRun,
+)
 
 
 @dataclass
@@ -44,8 +52,22 @@ def write_artifact(store: ModelArtifactStore, artifact: ModelArtifact) -> WriteR
     return _write_json(store.artifact_path(artifact_id=artifact.artifact_id), artifact)
 
 
+def write_approval(store: ModelArtifactStore, approval: ModelApproval) -> WriteResult:
+    return _write_json(store.approval_path(approval_id=approval.approval_id), approval)
+
+
+def write_activation(
+    store: ModelArtifactStore, activation: ModelActivationRecord
+) -> WriteResult:
+    return _write_json(
+        store.activation_path(activation_id=activation.activation_id), activation
+    )
+
+
 __all__ = [
     "WriteResult",
+    "write_activation",
+    "write_approval",
     "write_artifact",
     "write_model",
     "write_training_job",

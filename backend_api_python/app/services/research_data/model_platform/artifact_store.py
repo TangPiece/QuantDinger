@@ -8,6 +8,8 @@ from pathlib import Path
 from app.services.research_data import config as rd_config
 
 from .identity import (
+    model_activation_key,
+    model_approval_key,
     model_artifact_key,
     model_bundle_prefix,
     model_key,
@@ -70,6 +72,12 @@ class ModelArtifactStore:
     def artifact_path(self, *, artifact_id: str) -> Path:
         return self._rel(model_artifact_key(artifact_id=artifact_id))
 
+    def approval_path(self, *, approval_id: str) -> Path:
+        return self._rel(model_approval_key(approval_id=approval_id))
+
+    def activation_path(self, *, activation_id: str) -> Path:
+        return self._rel(model_activation_key(activation_id=activation_id))
+
     def bundle_dir(self, *, artifact_id: str) -> Path:
         """本地 Bundle 目录：{cache}/qd/artifacts/model/{artifact_id}/。"""
         path = artifacts_model_root(self.root) / artifact_id
@@ -110,6 +118,18 @@ class ModelArtifactStore:
 
     def list_artifact_paths(self) -> list[Path]:
         base = platform_root(self.root) / "artifacts"
+        if not base.is_dir():
+            return []
+        return sorted(base.glob("*.json"))
+
+    def list_approval_paths(self) -> list[Path]:
+        base = platform_root(self.root) / "approvals"
+        if not base.is_dir():
+            return []
+        return sorted(base.glob("*.json"))
+
+    def list_activation_paths(self) -> list[Path]:
+        base = platform_root(self.root) / "activations"
         if not base.is_dir():
             return []
         return sorted(base.glob("*.json"))

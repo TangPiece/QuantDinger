@@ -163,16 +163,29 @@ def test_reject_artifact_rebind_and_delete(tmp_path: Path):
 
 
 def test_lifecycle_activate_retire_and_active_query(tmp_path: Path):
+    from app.services.research_data.model_platform.protocol import ModelPlatformInject
+
     svc = make_model_platform_env(tmp_path / "life")
     model = svc.register_model(golden_model_spec())
     version = create_formal_version(svc, model_id=model.model_id)
-    for target in ("EVALUATING", "VALIDATED", "APPROVED"):
-        version = svc.transition(version.model_version_id, target)  # type: ignore[arg-type]
-    active = svc.activate(version.model_version_id)
+    version = svc.transition(version.model_version_id, "EVALUATING")
+    version = svc.transition(version.model_version_id, "VALIDATED")
+    with pytest.raises(ModelPlatformError):
+        svc.transition(version.model_version_id, "APPROVED")
+    version, approval = svc.approve_version(
+        version.model_version_id,
+        operator="tester",
+        reason="golden",
+        inject=ModelPlatformInject(skip_approval_gate=True),
+    )
+    assert approval.decision == "APPROVED"
+    assert version.lifecycle == "APPROVED"
+    active = svc.activate(version.model_version_id, operator="tester", reason="go")
     assert active.lifecycle == "ACTIVE"
     assert svc.get_active_version(model.model_id).model_version_id == active.model_version_id
     hits = svc.search(ModelSearchQuery(lifecycle=["ACTIVE"], tags_any=["golden"]))
     assert any(v.model_version_id == active.model_version_id for v in hits["versions"])
+    assert svc.list_activations(model_id=model.model_id)
 
     svc.retire(active.model_version_id)
     with pytest.raises(ModelLifecycleError):

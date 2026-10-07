@@ -27,6 +27,14 @@ def new_artifact_id() -> str:
     return f"mart_{uuid.uuid4().hex[:16]}"
 
 
+def new_approval_id() -> str:
+    return f"mappr_{uuid.uuid4().hex[:16]}"
+
+
+def new_activation_id() -> str:
+    return f"mact_{uuid.uuid4().hex[:16]}"
+
+
 def model_key(*, model_id: str) -> str:
     root = rd_config.canonical_prefix()
     return f"{root}/model_platform/models/{model_id}.json"
@@ -52,6 +60,16 @@ def model_artifact_key(*, artifact_id: str) -> str:
     return f"{root}/model_platform/artifacts/{artifact_id}.json"
 
 
+def model_approval_key(*, approval_id: str) -> str:
+    root = rd_config.canonical_prefix()
+    return f"{root}/model_platform/approvals/{approval_id}.json"
+
+
+def model_activation_key(*, activation_id: str) -> str:
+    root = rd_config.canonical_prefix()
+    return f"{root}/model_platform/activations/{activation_id}.json"
+
+
 def model_bundle_prefix(*, artifact_id: str) -> str:
     """二进制 Bundle 根键：qd/artifacts/model/{artifact_id}/。"""
     root = rd_config.canonical_prefix()
@@ -71,6 +89,8 @@ def model_version_ref(*, model_code: str, version: str) -> str:
 
 
 __all__ = [
+    "model_activation_key",
+    "model_approval_key",
     "model_artifact_key",
     "model_bundle_bin_key",
     "model_bundle_manifest_key",
@@ -78,6 +98,8 @@ __all__ = [
     "model_key",
     "model_version_key",
     "model_version_ref",
+    "new_activation_id",
+    "new_approval_id",
     "new_artifact_id",
     "new_model_id",
     "new_model_version_id",

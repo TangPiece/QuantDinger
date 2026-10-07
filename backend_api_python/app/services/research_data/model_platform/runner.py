@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from .approval import ApprovalException, evaluate_approval_gate, resolve_policy
+from .approval_policy import MODEL_APPROVAL_V1, policy_version_ref
 from .artifact_store import ModelArtifactStore
 from .bridge_legacy import to_legacy_model_definition, to_legacy_model_version_record
 from .bundle_store import BundleStoreError, ModelBundleStore, stub_payload_for_run
@@ -20,6 +22,7 @@ from .executor import (
 )
 from .model_loader import ModelArtifactLoader, ModelLoadError
 from .hashing import compute_model_config_hash
+from .identity import new_activation_id, new_approval_id
 from .immutability import (
     ModelImmutabilityError,
     assert_training_run_immutable,
@@ -46,7 +49,11 @@ from .lineage import (
 from .pin import pin_model, pin_model_artifact, pin_model_version, pin_training_run
 from .protocol import (
     ENGINE_VERSION,
+    DeprecateReason,
     Model,
+    ModelActivationRecord,
+    ModelApproval,
+    ModelApprovalPolicy,
     ModelArtifact,
     ModelArtifactSpec,
     ModelPlatformInject,
@@ -64,6 +71,8 @@ from .protocol import (
 from .repro import load_repro_manifest, write_repro_manifest
 from .search import search_models, search_versions
 from .writers import (
+    write_activation,
+    write_approval,
     write_artifact,
     write_model,
     write_training_job,
@@ -103,6 +112,7 @@ class ModelPlatformService:
         qlib_adapter: Any | None = None,
         research_registry: Any | None = None,
         train_artifact_store: Any | None = None,
+        evaluation_service: Any | None = None,
     ) -> None:
         if isinstance(store, ModelArtifactStore):
             self._store = store
@@ -115,14 +125,21 @@ class ModelPlatformService:
         self._qlib_adapter = qlib_adapter
         self._research_registry = research_registry
         self._train_artifact_store = train_artifact_store
+        self._evaluation = evaluation_service
         self._catalog = ModelCatalog()
         self._runs: dict[str, TrainingRun] = {}
         self._jobs: dict[str, TrainingJob] = {}
         self._jobs_by_idem: dict[str, str] = {}
         self._artifacts: dict[str, ModelArtifact] = {}
+        self._approvals: dict[str, ModelApproval] = {}
+        self._activations: dict[str, ModelActivationRecord] = {}
         self._bundles = ModelBundleStore(self._store)
         self._loader = ModelArtifactLoader(self._store, self._bundles)
         self._hydrate()
+
+    def bind_evaluation_service(self, evaluation_service: Any) -> None:
+        """绑定 9F-6 ModelEvaluationService（approve/validate 依赖）。"""
+        self._evaluation = evaluation_service
 
     @property
     def engine_version(self) -> str:
@@ -151,6 +168,14 @@ class ModelPlatformService:
             a = load_json_model(path, ModelArtifact)
             if a:
                 self._artifacts[a.artifact_id] = a
+        for path in self._store.list_approval_paths():
+            ap = load_json_model(path, ModelApproval)
+            if ap:
+                self._approvals[ap.approval_id] = ap
+        for path in self._store.list_activation_paths():
+            ac = load_json_model(path, ModelActivationRecord)
+            if ac:
+                self._activations[ac.activation_id] = ac
 
     def compute_model_config_hash(self, config: dict[str, Any] | None) -> str:
         return compute_model_config_hash(config)
@@ -213,7 +238,11 @@ class ModelPlatformService:
             self._persist_registry_version(version)
             if inj and inj.auto_activate:
                 for target in ("TRAINING", "TRAINED", "EVALUATING", "VALIDATED", "APPROVED"):
-                    version = self.transition(version.model_version_id, target)  # type: ignore[arg-type]
+                    version = self.transition(
+                        version.model_version_id,
+                        target,  # type: ignore[arg-type]
+                        _internal_approve=(target == "APPROVED"),
+                    )
                 return self.activate(version.model_version_id)
             return version
 
@@ -380,7 +409,11 @@ class ModelPlatformService:
 
         if inj and inj.auto_activate:
             for target in ("EVALUATING", "VALIDATED", "APPROVED"):
-                version_obj = self.transition(version_obj.model_version_id, target)  # type: ignore[arg-type]
+                version_obj = self.transition(
+                    version_obj.model_version_id,
+                    target,  # type: ignore[arg-type]
+                    _internal_approve=(target == "APPROVED"),
+                )
             return self.activate(version_obj.model_version_id)
         return version_obj
 
@@ -1120,7 +1153,13 @@ class ModelPlatformService:
         self,
         model_version_id: str,
         target: ModelVersionLifecycle,
+        *,
+        _internal_approve: bool = False,
     ) -> ModelVersion:
+        if target == "APPROVED" and not _internal_approve:
+            raise ModelPlatformError(
+                "bare transition to APPROVED forbidden; use approve_version"
+            )
         version = self.get_version(model_version_id)
         assert_transition(version.lifecycle, target)
         updated = version.model_copy(update={"lifecycle": target})
@@ -1132,17 +1171,295 @@ class ModelPlatformService:
         self._catalog.upsert_version(updated)
         return updated
 
-    def activate(self, model_version_id: str) -> ModelVersion:
+    def _resolve_evaluation_run(
+        self,
+        model_version_id: str,
+        *,
+        evaluation_run_id: str | None = None,
+    ) -> Any | None:
+        if self._evaluation is None:
+            return None
+        if evaluation_run_id:
+            return self._evaluation.get_run(evaluation_run_id)
+        runs = list(self._evaluation.list_runs_for_version(model_version_id) or [])
+        succeeded = [r for r in runs if getattr(r, "status", None) == "SUCCEEDED"]
+        if not succeeded:
+            return None
+
+        def _sort_key(r: Any):
+            return getattr(r, "finished_at", None) or getattr(r, "created_at", None)
+
+        succeeded.sort(key=_sort_key, reverse=True)
+        return succeeded[0]
+
+    def _artifact_checksum_ok(self, artifact: ModelArtifact | None) -> bool:
+        if artifact is None:
+            return False
+        try:
+            return bool(self.verify_artifact(artifact.artifact_id))
+        except Exception:
+            cs = (artifact.checksum or "").strip()
+            return len(cs) >= 32
+
+    def validate_version(
+        self,
+        model_version_id: str,
+        *,
+        evaluation_run_id: str | None = None,
+        inject: Mapping[str, Any] | ModelPlatformInject | None = None,
+        policy: ModelApprovalPolicy | None = None,
+        policy_code: str = "MODEL_APPROVAL_V1",
+    ) -> ModelVersion:
+        """EVALUATING/TRAINED → VALIDATED（须 Evaluation PASS）。"""
+        inj = _coerce_inject(inject)
         version = self.get_version(model_version_id)
-        if not can_activate(version.lifecycle):
+        if version.lifecycle not in ("TRAINED", "EVALUATING", "VALIDATED"):
+            raise ModelLifecycleError(
+                f"cannot validate from {version.lifecycle}"
+            )
+        if version.lifecycle == "VALIDATED":
+            return version
+        if version.lifecycle == "TRAINED":
+            version = self.transition(model_version_id, "EVALUATING")
+        evaluation_run = self._resolve_evaluation_run(
+            model_version_id, evaluation_run_id=evaluation_run_id
+        )
+        artifact = None
+        if version.artifact_id:
+            try:
+                artifact = self.get_artifact(version.artifact_id)
+            except ModelPlatformError:
+                artifact = None
+        pol = resolve_policy(policy_code, policy=policy)
+        gate = evaluate_approval_gate(
+            version=version,
+            evaluation_run=evaluation_run,
+            artifact=artifact,
+            policy=pol,
+            inject=inj,
+            checksum_ok=self._artifact_checksum_ok(artifact) if artifact else False,
+        )
+        if gate.verdict != "PASS":
+            raise ApprovalException("; ".join(gate.reasons) or "validate_rejected")
+        return self.transition(model_version_id, "VALIDATED")
+
+    def approve_version(
+        self,
+        model_version_id: str,
+        *,
+        evaluation_run_id: str | None = None,
+        operator: str = "",
+        reason: str = "",
+        inject: Mapping[str, Any] | ModelPlatformInject | None = None,
+        policy: ModelApprovalPolicy | None = None,
+        policy_code: str = "MODEL_APPROVAL_V1",
+    ) -> tuple[ModelVersion, ModelApproval]:
+        """ApprovalGate → ModelApproval 审计；PASS 则 lifecycle=APPROVED；REJECT 不改 lifecycle。"""
+        inj = _coerce_inject(inject)
+        version = self.get_version(model_version_id)
+        if version.lifecycle in ("DRAFT", "TRAINING", "RETIRED", "DEPRECATED", "ACTIVE"):
+            raise ModelLifecycleError(
+                f"cannot approve from {version.lifecycle}"
+            )
+        if version.lifecycle not in (
+            "TRAINED",
+            "EVALUATING",
+            "VALIDATED",
+            "APPROVED",
+        ):
+            raise ModelLifecycleError(
+                f"cannot approve from {version.lifecycle}"
+            )
+        # TRAINED → EVALUATING 以便闸门；REJECT 时停在 EVALUATING
+        if version.lifecycle == "TRAINED":
+            version = self.transition(model_version_id, "EVALUATING")
+
+        evaluation_run = self._resolve_evaluation_run(
+            model_version_id, evaluation_run_id=evaluation_run_id
+        )
+        artifact = None
+        if version.artifact_id:
+            try:
+                artifact = self.get_artifact(version.artifact_id)
+            except ModelPlatformError:
+                artifact = None
+        pol = resolve_policy(policy_code, policy=policy)
+        gate = evaluate_approval_gate(
+            version=version,
+            evaluation_run=evaluation_run,
+            artifact=artifact,
+            policy=pol,
+            inject=inj,
+            checksum_ok=self._artifact_checksum_ok(artifact) if artifact else False,
+        )
+        now = datetime.now(timezone.utc)
+        decision = "APPROVED" if gate.verdict == "PASS" else "REJECTED"
+        approval = ModelApproval(
+            approval_id=new_approval_id(),
+            model_id=version.model_id,
+            model_version_id=version.model_version_id,
+            evaluation_run_id=gate.evaluation_run_id
+            or (getattr(evaluation_run, "evaluation_run_id", "") if evaluation_run else ""),
+            approval_policy_version=gate.policy_version or policy_version_ref(pol),
+            decision=decision,  # type: ignore[arg-type]
+            reason=reason
+            or (
+                "approval_pass"
+                if decision == "APPROVED"
+                else "; ".join(gate.reasons) or "approval_rejected"
+            ),
+            operator=operator or "system",
+            approved_at=now if decision == "APPROVED" else None,
+            created_at=now,
+            gate_dump=gate.model_dump(mode="json"),
+            immutable=True,
+        )
+        write_approval(self._store, approval)
+        self._approvals[approval.approval_id] = approval
+
+        if decision != "APPROVED":
+            return version, approval
+
+        if version.lifecycle == "APPROVED":
+            return version, approval
+        if version.lifecycle == "EVALUATING":
+            version = self.transition(model_version_id, "VALIDATED")
+        updated = self.transition(
+            model_version_id, "APPROVED", _internal_approve=True
+        )
+        return updated, approval
+
+    def revoke_approval(
+        self,
+        model_version_id: str,
+        *,
+        reason: str = "",
+        operator: str = "",
+    ) -> tuple[ModelVersion, ModelApproval]:
+        """追加 REVOKED 记录；若仍 APPROVED/ACTIVE → DEPRECATED。"""
+        version = self.get_version(model_version_id)
+        now = datetime.now(timezone.utc)
+        prior = [
+            a
+            for a in self._approvals.values()
+            if a.model_version_id == model_version_id and a.decision == "APPROVED"
+        ]
+        prior.sort(key=lambda a: a.created_at, reverse=True)
+        eval_id = prior[0].evaluation_run_id if prior else ""
+        policy_ver = (
+            prior[0].approval_policy_version
+            if prior
+            else policy_version_ref(MODEL_APPROVAL_V1)
+        )
+        revocation = ModelApproval(
+            approval_id=new_approval_id(),
+            model_id=version.model_id,
+            model_version_id=version.model_version_id,
+            evaluation_run_id=eval_id,
+            approval_policy_version=policy_ver,
+            decision="REVOKED",
+            reason=reason or "approval_revoked",
+            operator=operator or "system",
+            approved_at=None,
+            created_at=now,
+            gate_dump={"revoked_from": prior[0].approval_id if prior else ""},
+            immutable=True,
+        )
+        write_approval(self._store, revocation)
+        self._approvals[revocation.approval_id] = revocation
+
+        if version.lifecycle in ("APPROVED", "ACTIVE"):
+            version = self.deprecate(
+                model_version_id,
+                reason or "approval_revoked",
+                reason_code="RESEARCH_DECISION",
+            )
+        return version, revocation
+
+    def activate(
+        self,
+        model_version_id: str,
+        *,
+        operator: str = "",
+        reason: str = "",
+    ) -> ModelVersion:
+        """须 APPROVED；同 model 其他 ACTIVE → DEPRECATED(NEW_VERSION)；写 ActivationRecord。"""
+        version = self.get_version(model_version_id)
+        if version.lifecycle == "ACTIVE":
+            return version
+        if version.lifecycle != "APPROVED" and not can_activate(version.lifecycle):
             raise ModelLifecycleError(f"cannot activate from {version.lifecycle}")
-        return self.transition(model_version_id, "ACTIVE")
+        # DEPRECATED 可 reactivate（须曾 APPROVED）；ACTIVE 切换仅从 APPROVED
+        if version.lifecycle == "DEPRECATED":
+            # 允许 DEPRECATED→ACTIVE（lifecycle FSM），但仍要求曾有 APPROVED 审计
+            had_approve = any(
+                a.model_version_id == model_version_id and a.decision == "APPROVED"
+                for a in self._approvals.values()
+            )
+            if not had_approve:
+                raise ModelLifecycleError(
+                    "cannot reactivate DEPRECATED without prior APPROVED record"
+                )
+        elif version.lifecycle != "APPROVED":
+            raise ModelLifecycleError(f"cannot activate from {version.lifecycle}")
+
+        from_id = ""
+        for other in self.list_versions(version.model_id):
+            if (
+                other.lifecycle == "ACTIVE"
+                and other.model_version_id != model_version_id
+            ):
+                from_id = other.model_version_id
+                self.deprecate(
+                    other.model_version_id,
+                    reason or f"superseded by {model_version_id}",
+                    reason_code="NEW_VERSION",
+                    replacement_ref=model_version_id,
+                )
+
+        assert_transition(version.lifecycle, "ACTIVE")
+        updated = version.model_copy(update={"lifecycle": "ACTIVE"})
+        try:
+            assert_version_immutable(version, updated)
+        except ModelImmutabilityError as exc:
+            raise ModelPlatformError(str(exc)) from exc
+        write_version(self._store, updated)
+        self._catalog.upsert_version(updated)
+
+        # 强制单 ACTIVE
+        actives = [
+            v
+            for v in self.list_versions(updated.model_id)
+            if v.lifecycle == "ACTIVE"
+        ]
+        if len(actives) > 1:
+            raise ModelPlatformError(
+                f"single ACTIVE invariant broken for {updated.model_id}: "
+                f"{[v.model_version_id for v in actives]}"
+            )
+
+        now = datetime.now(timezone.utc)
+        record = ModelActivationRecord(
+            activation_id=new_activation_id(),
+            model_id=updated.model_id,
+            from_model_version_id=from_id,
+            to_model_version_id=updated.model_version_id,
+            reason=reason or "activate",
+            operator=operator or "system",
+            policy_version=policy_version_ref(MODEL_APPROVAL_V1),
+            created_at=now,
+            immutable=True,
+        )
+        write_activation(self._store, record)
+        self._activations[record.activation_id] = record
+        return updated
 
     def deprecate(
         self,
         model_version_id: str,
         reason: str,
         *,
+        reason_code: DeprecateReason | str = "OTHER",
         replacement_ref: str = "",
     ) -> ModelVersion:
         version = self.get_version(model_version_id)
@@ -1153,6 +1470,7 @@ class ModelPlatformService:
             update={
                 "lifecycle": "DEPRECATED",
                 "deprecate_reason": reason,
+                "deprecate_reason_code": str(reason_code or "OTHER"),
                 "replacement_ref": replacement_ref,
             }
         )
@@ -1169,6 +1487,39 @@ class ModelPlatformService:
         if not can_retire(version.lifecycle):
             raise ModelLifecycleError(f"cannot retire from {version.lifecycle}")
         return self.transition(model_version_id, "RETIRED")
+
+    def list_approvals(
+        self,
+        *,
+        model_version_id: str = "",
+        model_id: str = "",
+    ) -> list[ModelApproval]:
+        items = list(self._approvals.values())
+        if model_version_id:
+            items = [a for a in items if a.model_version_id == model_version_id]
+        if model_id:
+            items = [a for a in items if a.model_id == model_id]
+        items.sort(key=lambda a: a.created_at)
+        return items
+
+    def list_activations(
+        self,
+        *,
+        model_id: str = "",
+        model_version_id: str = "",
+    ) -> list[ModelActivationRecord]:
+        items = list(self._activations.values())
+        if model_id:
+            items = [a for a in items if a.model_id == model_id]
+        if model_version_id:
+            items = [
+                a
+                for a in items
+                if a.to_model_version_id == model_version_id
+                or a.from_model_version_id == model_version_id
+            ]
+        items.sort(key=lambda a: a.created_at)
+        return items
 
     def to_legacy_definition(
         self, model_id_or_code: str, *, version: str | None = None
