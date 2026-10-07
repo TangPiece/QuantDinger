@@ -1,0 +1,599 @@
+diff --git a/backend_api_python/app/services/research_data/model_platform/lineage.py b/backend_api_python/app/services/research_data/model_platform/lineage.py
+index 5af314b..78190a5 100644
+--- a/backend_api_python/app/services/research_data/model_platform/lineage.py
++++ b/backend_api_python/app/services/research_data/model_platform/lineage.py
+@@ -160,11 +160,65 @@ def lineage_view(
+     }
+ 
+ 
++def full_lineage_view(
++    *,
++    model: Any | None,
++    version: ModelVersion,
++    training_run: TrainingRun | None = None,
++    artifact: ModelArtifact | None = None,
++    tip_repro: Mapping[str, Any] | None = None,
++    full_repro_manifest: Mapping[str, Any] | None = None,
++    evaluation_runs: list[Any] | None = None,
++    approvals: list[Any] | None = None,
++    activations: list[Any] | None = None,
++    reproducibility_runs: list[Any] | None = None,
++    experiment_refs: list[Mapping[str, Any]] | None = None,
++) -> dict[str, Any]:
++    """9F-9：一键完整血缘树（Service 契约；无 Flask）。"""
++
++    def _dump(obj: Any) -> Any:
++        if obj is None:
++            return None
++        if hasattr(obj, "model_dump"):
++            return obj.model_dump(mode="json")
++        if isinstance(obj, Mapping):
++            return dict(obj)
++        return obj
++
++    tip = lineage_view(
++        version,
++        training_run=training_run,
++        artifact=artifact,
++        repro_path=str((tip_repro or {}).get("repro_manifest_uri") or ""),
++    )
++    return {
++        "schema": "model_full_lineage@1",
++        "model": _dump(model),
++        "model_version": tip,
++        "training_run": _dump(training_run),
++        "artifact": _dump(artifact),
++        "repro_tip": dict(tip_repro) if tip_repro else None,
++        "reproducibility_manifest": dict(full_repro_manifest)
++        if full_repro_manifest
++        else None,
++        "evaluation_runs": [_dump(r) for r in (evaluation_runs or [])],
++        "approvals": [_dump(a) for a in (approvals or [])],
++        "activation_records": [_dump(a) for a in (activations or [])],
++        "reproducibility_runs": [_dump(r) for r in (reproducibility_runs or [])],
++        "experiment_refs": [dict(x) for x in (experiment_refs or [])],
++        "boundaries": {
++            "model_active_ne_strategy_live": True,
++            "http_deferred_to_9h": True,
++        },
++    }
++
++
+ __all__ = [
+     "LineageValidationError",
+     "REQUIRED_VERSION_FIELDS",
+     "assert_checksum",
+     "assert_lineage_pass",
++    "full_lineage_view",
+     "is_sha256_hex",
+     "lineage_view",
+     "validate_lineage_for_version",
+diff --git a/backend_api_python/app/services/research_data/model_platform/runner.py b/backend_api_python/app/services/research_data/model_platform/runner.py
+index 6337903..cde7d69 100644
+--- a/backend_api_python/app/services/research_data/model_platform/runner.py
++++ b/backend_api_python/app/services/research_data/model_platform/runner.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import threading
+ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any, Mapping
+@@ -43,6 +44,7 @@ from .lineage import (
+     LineageValidationError,
+     assert_checksum,
+     assert_lineage_pass,
++    full_lineage_view,
+     lineage_view,
+     validate_lineage_for_version,
+ )
+@@ -137,8 +139,18 @@ class ModelPlatformService:
+         self._activations: dict[str, ModelActivationRecord] = {}
+         self._bundles = ModelBundleStore(self._store)
+         self._loader = ModelArtifactLoader(self._store, self._bundles)
++        self._activate_locks: dict[str, threading.Lock] = {}
++        self._activate_locks_guard = threading.Lock()
+         self._hydrate()
+ 
++    def _activate_lock_for(self, model_id: str) -> threading.Lock:
++        with self._activate_locks_guard:
++            lock = self._activate_locks.get(model_id)
++            if lock is None:
++                lock = threading.Lock()
++                self._activate_locks[model_id] = lock
++            return lock
++
+     def bind_evaluation_service(self, evaluation_service: Any) -> None:
+         """绑定 9F-6 ModelEvaluationService（approve/validate 依赖）。"""
+         self._evaluation = evaluation_service
+@@ -504,6 +516,87 @@ class ModelPlatformService:
+             version, training_run=run, artifact=art, repro_path=repro_path
+         )
+ 
++    def get_full_lineage(self, model_version_id: str) -> dict[str, Any]:
++        """9F-9：完整血缘树（Evaluation / Approval / Activation / Repro）。"""
++        version = self.get_version(model_version_id)
++        model = None
++        try:
++            model = self.get_model(version.model_id)
++        except ModelPlatformError:
++            model = None
++        run = None
++        if version.training_run_id:
++            try:
++                run = self.get_training_run(version.training_run_id)
++            except ModelPlatformError:
++                run = None
++        art = None
++        if version.artifact_id:
++            try:
++                art = self.get_artifact(version.artifact_id)
++            except ModelPlatformError:
++                art = None
++        tip_repro = None
++        try:
++            tip_repro = self.get_repro_manifest(model_version_id)
++        except ModelPlatformError:
++            tip_repro = None
++
++        full_man = None
++        repro_runs: list[Any] = []
++        if self._reproducibility is not None and version.training_run_id:
++            try:
++                man = self._reproducibility.get_manifest_for_training_run(
++                    version.training_run_id
++                )
++                full_man = man.model_dump(mode="json")
++            except Exception:
++                full_man = None
++            try:
++                repro_runs = list(
++                    self._reproducibility.list_runs_for_training_run(
++                        version.training_run_id
++                    )
++                )
++            except Exception:
++                repro_runs = []
++
++        evals: list[Any] = []
++        if self._evaluation is not None:
++            try:
++                evals = list(
++                    self._evaluation.list_runs_for_version(version.model_version_id)
++                )
++            except Exception:
++                evals = []
++
++        approvals = self.list_approvals(model_version_id=version.model_version_id)
++        activations = self.list_activations(model_version_id=version.model_version_id)
++        # Research consumer stub refs（不实现 Strategy）
++        experiment_refs: list[dict[str, Any]] = []
++        if version.lifecycle == "ACTIVE":
++            experiment_refs.append(
++                {
++                    "ref_type": "research_consumer",
++                    "model_version_id": version.model_version_id,
++                    "usage_scope": list(version.usage_scope or []),
++                }
++            )
++
++        return full_lineage_view(
++            model=model,
++            version=version,
++            training_run=run,
++            artifact=art,
++            tip_repro=tip_repro,
++            full_repro_manifest=full_man,
++            evaluation_runs=evals,
++            approvals=approvals,
++            activations=activations,
++            reproducibility_runs=repro_runs,
++            experiment_refs=experiment_refs,
++        )
++
+     def get_artifact_for_version(self, model_version_id: str) -> ModelArtifact:
+         version = self.get_version(model_version_id)
+         if not version.artifact_id:
+@@ -1415,74 +1508,97 @@ class ModelPlatformService:
+     ) -> ModelVersion:
+         """须 APPROVED；同 model 其他 ACTIVE → DEPRECATED(NEW_VERSION)；写 ActivationRecord。"""
+         version = self.get_version(model_version_id)
+-        if version.lifecycle == "ACTIVE":
+-            return version
+-        if version.lifecycle != "APPROVED" and not can_activate(version.lifecycle):
+-            raise ModelLifecycleError(f"cannot activate from {version.lifecycle}")
+-        # DEPRECATED 可 reactivate（须曾 APPROVED）；ACTIVE 切换仅从 APPROVED
+-        if version.lifecycle == "DEPRECATED":
+-            # 允许 DEPRECATED→ACTIVE（lifecycle FSM），但仍要求曾有 APPROVED 审计
+-            had_approve = any(
+-                a.model_version_id == model_version_id and a.decision == "APPROVED"
+-                for a in self._approvals.values()
+-            )
+-            if not had_approve:
++        lock = self._activate_lock_for(version.model_id)
++        with lock:
++            # re-read under lock
++            version = self.get_version(model_version_id)
++            if version.lifecycle == "ACTIVE":
++                return version
++            if version.lifecycle != "APPROVED" and not can_activate(version.lifecycle):
+                 raise ModelLifecycleError(
+-                    "cannot reactivate DEPRECATED without prior APPROVED record"
++                    f"cannot activate from {version.lifecycle}"
+                 )
+-        elif version.lifecycle != "APPROVED":
+-            raise ModelLifecycleError(f"cannot activate from {version.lifecycle}")
+-
+-        from_id = ""
+-        for other in self.list_versions(version.model_id):
+-            if (
+-                other.lifecycle == "ACTIVE"
+-                and other.model_version_id != model_version_id
+-            ):
+-                from_id = other.model_version_id
+-                self.deprecate(
+-                    other.model_version_id,
+-                    reason or f"superseded by {model_version_id}",
+-                    reason_code="NEW_VERSION",
+-                    replacement_ref=model_version_id,
++            if version.lifecycle == "DEPRECATED":
++                had_approve = any(
++                    a.model_version_id == model_version_id
++                    and a.decision == "APPROVED"
++                    for a in self._approvals.values()
++                )
++                if not had_approve:
++                    raise ModelLifecycleError(
++                        "cannot reactivate DEPRECATED without prior APPROVED record"
++                    )
++            elif version.lifecycle != "APPROVED":
++                raise ModelLifecycleError(
++                    f"cannot activate from {version.lifecycle}"
+                 )
+ 
+-        assert_transition(version.lifecycle, "ACTIVE")
+-        updated = version.model_copy(update={"lifecycle": "ACTIVE"})
+-        try:
+-            assert_version_immutable(version, updated)
+-        except ModelImmutabilityError as exc:
+-            raise ModelPlatformError(str(exc)) from exc
+-        write_version(self._store, updated)
+-        self._catalog.upsert_version(updated)
++            # Artifact integrity gate
++            if version.artifact_id:
++                try:
++                    art = self.get_artifact(version.artifact_id)
++                except ModelPlatformError as exc:
++                    raise ModelLifecycleError(
++                        f"artifact_integrity_error: missing {version.artifact_id}"
++                    ) from exc
++                if art.status == "CORRUPTED":
++                    raise ModelLifecycleError(
++                        "artifact_integrity_error: CORRUPTED artifact cannot activate"
++                    )
++                if art.status != "AVAILABLE":
++                    raise ModelLifecycleError(
++                        f"artifact_integrity_error: status={art.status}"
++                    )
+ 
+-        # 强制单 ACTIVE
+-        actives = [
+-            v
+-            for v in self.list_versions(updated.model_id)
+-            if v.lifecycle == "ACTIVE"
+-        ]
+-        if len(actives) > 1:
+-            raise ModelPlatformError(
+-                f"single ACTIVE invariant broken for {updated.model_id}: "
+-                f"{[v.model_version_id for v in actives]}"
+-            )
++            from_id = ""
++            for other in self.list_versions(version.model_id):
++                if (
++                    other.lifecycle == "ACTIVE"
++                    and other.model_version_id != model_version_id
++                ):
++                    from_id = other.model_version_id
++                    self.deprecate(
++                        other.model_version_id,
++                        reason or f"superseded by {model_version_id}",
++                        reason_code="NEW_VERSION",
++                        replacement_ref=model_version_id,
++                    )
+ 
+-        now = datetime.now(timezone.utc)
+-        record = ModelActivationRecord(
+-            activation_id=new_activation_id(),
+-            model_id=updated.model_id,
+-            from_model_version_id=from_id,
+-            to_model_version_id=updated.model_version_id,
+-            reason=reason or "activate",
+-            operator=operator or "system",
+-            policy_version=policy_version_ref(MODEL_APPROVAL_V1),
+-            created_at=now,
+-            immutable=True,
+-        )
+-        write_activation(self._store, record)
+-        self._activations[record.activation_id] = record
+-        return updated
++            assert_transition(version.lifecycle, "ACTIVE")
++            updated = version.model_copy(update={"lifecycle": "ACTIVE"})
++            try:
++                assert_version_immutable(version, updated)
++            except ModelImmutabilityError as exc:
++                raise ModelPlatformError(str(exc)) from exc
++            write_version(self._store, updated)
++            self._catalog.upsert_version(updated)
++
++            actives = [
++                v
++                for v in self.list_versions(updated.model_id)
++                if v.lifecycle == "ACTIVE"
++            ]
++            if len(actives) > 1:
++                raise ModelPlatformError(
++                    f"single ACTIVE invariant broken for {updated.model_id}: "
++                    f"{[v.model_version_id for v in actives]}"
++                )
++
++            now = datetime.now(timezone.utc)
++            record = ModelActivationRecord(
++                activation_id=new_activation_id(),
++                model_id=updated.model_id,
++                from_model_version_id=from_id,
++                to_model_version_id=updated.model_version_id,
++                reason=reason or "activate",
++                operator=operator or "system",
++                policy_version=policy_version_ref(MODEL_APPROVAL_V1),
++                created_at=now,
++                immutable=True,
++            )
++            write_activation(self._store, record)
++            self._activations[record.activation_id] = record
++            return updated
+ 
+     def deprecate(
+         self,
+diff --git a/docs/COMMANDS_CN.md b/docs/COMMANDS_CN.md
+index fe324bb..5d60321 100644
+--- a/docs/COMMANDS_CN.md
++++ b/docs/COMMANDS_CN.md
+@@ -808,45 +808,37 @@ QUANTDINGER_SKIP_APP_INIT=1 \
+ 
+ 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
+ 
+-### Phase 9F Model Platform（9F-1～9F-8）
++### Phase 9F Model Platform（9F-1～9F-9 Done）
+ 
+-Registry / Lineage / TrainingRun / Adapter / Artifact / Evaluation / Approval / Reproducibility；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
++Registry → Training → Artifact → Evaluation → Approval → Activation → Reproducibility → E2E Hardening；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
+ 
+ ```bash
+ cd backend_api_python
+ 
++# 推荐：9F 总验收（串联 9F-1～8 + hardening + golden + 9E）
+ QUANTDINGER_SKIP_APP_INIT=1 \
+-  .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
++  .test_deps/py312/bin/python scripts/verify_phase9f9_model_platform_e2e.py
++
++QUANTDINGER_SKIP_APP_INIT=1 \
++  .test_deps/py312/bin/python -m pytest \
++  tests/research_data/test_phase9f9_model_platform_e2e.py -q \
++  --confcutdir=tests/research_data
+ 
++# 分阶段（可选）
++QUANTDINGER_SKIP_APP_INIT=1 \
++  .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
+ QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+   .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
+-
+ QUANTDINGER_SKIP_APP_INIT=1 \
+   .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
+-
+ QUANTDINGER_SKIP_APP_INIT=1 \
+   .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
+-
+ QUANTDINGER_SKIP_APP_INIT=1 \
+   .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
+-
+ QUANTDINGER_SKIP_APP_INIT=1 \
+   .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
+-
+-QUANTDINGER_SKIP_APP_INIT=1 \
+-  .test_deps/py312/bin/python -m pytest \
+-  tests/research_data/test_phase9f_model_platform.py \
+-  tests/research_data/test_phase9f3_training_run.py \
+-  tests/research_data/test_phase9f4_qlib_adapter.py \
+-  tests/research_data/test_phase9f5_model_artifact.py \
+-  tests/research_data/test_phase9f6_model_evaluation.py \
+-  tests/research_data/test_phase9f7_model_approval.py \
+-  tests/research_data/test_phase9f8_model_reproducibility.py -q \
+-  --confcutdir=tests/research_data
+ ```
+ 
+-并保持 `verify_phase9e_factor_library.py` 绿。
+-
+ ### Phase 8I Architecture Hardening & E2E Acceptance
+ 
+ 编排 8A–8H verify + 平面隔离扫描 + FSM/immutability/inject 矩阵 + 单链 E2E + 7E 回归；说明：[09_architecture_hardening_e2e.md](data/phase8/09_architecture_hardening_e2e.md)。
+diff --git a/docs/data/phase9/06_model_platform.md b/docs/data/phase9/06_model_platform.md
+index c7cb966..dbe6970 100644
+--- a/docs/data/phase9/06_model_platform.md
++++ b/docs/data/phase9/06_model_platform.md
+@@ -1,87 +1,68 @@
+-# Phase 9F — Model Platform（9F-1～9F-8）
++# Phase 9F — Model Platform（9F-1～9F-9 **Done**）
+ 
+ ## 目标
+ 
+-把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact Bundle**、**Model Evaluation**、**Approval / Activation** 与 **Reproducible Training** 纳入 Research Platform。
+-
+-- **9F-1～9F-5**：Registry / Lineage / TrainingRun / Adapter / Artifact  
+-- **9F-6**：独立 `ModelEvaluationRun`  
+-- **9F-7**：`ModelApproval` / 单 `ACTIVE`  
+-- **9F-8**：TrainingRun 级 `ReproducibilityManifest` + `ReproducibilityRun`（不改源 Run）
+-
+-```text
+-VALIDATED ≠ APPROVED ≠ ACTIVE
+-Model APPROVED ≠ Strategy VALIDATED ≠ Strategy LIVE
+-STRICT | REPRODUCIBLE | AUDITABLE
+-```
++把 **Model ≠ ModelVersion**、Training、Artifact、Evaluation、Approval、Activation、Reproducibility 串成可长期运行的 Model Platform，并以 **9F-9 E2E Hardening** 收口。
+ 
+ ```text
+-TrainingRun
+-  → ReproducibilityManifest (+ Input / Env / Seeds)
+-  → ReproducibilityRun
+-  → NEW child TrainingRun (parent_training_run_id)
+-  → Compare → Report
+-  ✕ mutate 原 TrainingRun / ModelVersion
+-  ✕ 复现产物自动 Approval / ACTIVE / LIVE
++Dataset → Feature/Label → TrainingRun → Artifact → ModelVersion
++  → Evaluation → Approval → Activation
++  → Reproducibility
++  ✕ Model ACTIVE ≠ Strategy LIVE
++  ✕ Flask（契约以 Service 为准；HTTP → 9H）
+ ```
+ 
+-## 包位置
+-
+-| 包 | 职责 |
+-| --- | --- |
+-| [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 治理 + Bundle + Approval |
+-| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | Qlib 执行门面 |
+-| [`model_evaluation/`](../../../../backend_api_python/app/services/research_data/model_evaluation/) | **9F-6** 评估 |
+-| [`model_reproducibility/`](../../../../backend_api_python/app/services/research_data/model_reproducibility/) | **9F-8** 可复现 |
+-
+ `qd_model_platform@1` · `qd_model_evaluation@1` · `qd_model_reproducibility@1`
+ 
+-## Reproducible Training（9F-8）
+-
+-- `ReproducibilityService.capture_from_training_run` / `reproduce`  
+-- Policy：`REPRO_STRICT_V1` / `REPRO_NUMERICAL_V1` / `REPRO_AUDITABLE_V1`  
+-- 结果码：`EXACT_MATCH` / `NUMERICAL_MATCH` / `DATA_MISMATCH` / `INPUT_MISMATCH` / `CODE_MISMATCH` / `ENV_MISMATCH` / `DEPENDENCY_MISMATCH` / `SEED_MISMATCH` / `NON_DETERMINISTIC` / …  
+-- Artifact：`qd/artifacts/reproducibility/{repro_run_id}/`  
+-- Version tip `model_repro_manifest@1` 增加 `repro_manifest_id` 指针（向后兼容）
+-
+-## Model Approval（9F-7）
++## 包
+ 
+-- `approve_version` / `activate`（单 ACTIVE）；禁止裸 `transition(..., APPROVED)`
+-
+-## Model Evaluation（9F-6）
+-
+-- `ModelEvaluationService.run_evaluation`（**不是** `evaluate_model`）
++| 包 | 阶段 |
++| --- | --- |
++| [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 9F-1～5, 7, 9 lineage |
++| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | 9F-4 |
++| [`model_evaluation/`](../../../../backend_api_python/app/services/research_data/model_evaluation/) | 9F-6 |
++| [`model_reproducibility/`](../../../../backend_api_python/app/services/research_data/model_reproducibility/) | 9F-8 |
++
++## 9F-9 E2E & Hardening
++
++- `ModelPlatformService.get_full_lineage`：一键树（Model / Run / Artifact / Eval / Approval / Activation / Repro）  
++- `activate`：按 `model_id` 进程锁 + Artifact AVAILABLE 门控 + 单 ACTIVE  
++- Orchestrator：[`verify_phase9f9_model_platform_e2e.py`](../../../../backend_api_python/scripts/verify_phase9f9_model_platform_e2e.py)  
++- Hardening：`phase9f_hardening/` · Golden：`phase9f_lifecycle_golden/`  
++- 平面扫描：[`scan_phase9f_plane_isolation.py`](../../../../backend_api_python/scripts/scan_phase9f_plane_isolation.py)
++
++### Done Criteria（8）
++
++1. 完整 Model Lifecycle E2E  
++2. TrainingRun ↔ Version ↔ Artifact 绑定  
++3. Evaluation → Approval → Activation 不可绕过；ACTIVE ≠ Strategy LIVE  
++4. Dataset / Code / Env / Dep / Seed 可追溯  
++5. 历史对象不可变 + 禁删  
++6. Reproduce → EXACT / NUMERICAL_MATCH  
++7. 故障注入 + Job 幂等 + 并发 activate  
++8. Active Version → `get_full_lineage`
+ 
+ ## 验收
+ 
+ ```bash
+ cd backend_api_python
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
++QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f9_model_platform_e2e.py
+ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
+-  tests/research_data/test_phase9f_model_platform.py \
+-  tests/research_data/test_phase9f5_model_artifact.py \
+-  tests/research_data/test_phase9f6_model_evaluation.py \
+-  tests/research_data/test_phase9f7_model_approval.py \
+-  tests/research_data/test_phase9f8_model_reproducibility.py -q \
++  tests/research_data/test_phase9f9_model_platform_e2e.py -q \
+   --confcutdir=tests/research_data
+ ```
+ 
+-保持 `verify_phase9e` / `9f7` / `9f6` / `9f5` 绿。
++保持 `verify_phase9e` 绿（由 9F-9 orchestrator 回归）。
+ 
+ ## Non-goals
+ 
+ ```text
+-❌ 改写原 TrainingRun / ModelVersion
+-❌ 复现 → 自动 Evaluation / Approval / ACTIVE / LIVE
+-❌ 真实 Docker 重建 / 强制本机 uv.lock
+-❌ GPU bit-identical 保证
+-❌ HTTP Admin UI / D1 必过 Verify
++❌ Flask / Admin UI
++❌ D1 唯一索引落地（文档可选未来）
++❌ Strategy Candidate / Promotion / Shadow / LIVE / OMS
++❌ 物理 DELETE 历史对象
+ ```
+ 
+ ## 后续
+ 
+-9F-9 E2E Acceptance & Hardening
++**Phase 9G — Research Experiment Platform**（实验编排 / 对比 / Ranking → Strategy Candidate）
+diff --git a/docs/data/phase9/README.md b/docs/data/phase9/README.md
+index 5711831..b0c54f4 100644
+--- a/docs/data/phase9/README.md
++++ b/docs/data/phase9/README.md
+@@ -9,8 +9,8 @@ Phase 9 在既有 `research_data` Domain（Definition / Snapshot / `dataset_hash
+ | **9C** | Factor Evaluation Engine（Policy + Run + 4C–4F 编排） | **Done** — [03_factor_evaluation_engine.md](03_factor_evaluation_engine.md) |
+ | **9D** | Factor Mining（DSL 模板搜索 + Screen + 9C） | **Done** — [04_factor_mining.md](04_factor_mining.md) |
+ | **9E** | Factor Library / Portfolio（Promotion Gate + Catalog + Collection） | **Done** — [05_factor_library.md](05_factor_library.md) |
+-| **9F** | Model Platform（9F-1～9F-8 Repro） | **Done (9F-1…8)** — [06_model_platform.md](06_model_platform.md) |
+-| 9G | Experiment Orchestration | Planned |
++| **9F** | Model Platform（9F-1～9F-9 E2E） | **Done** — [06_model_platform.md](06_model_platform.md) |
++| **9G** | Research Experiment Platform | Planned |
+ | 9H | Research UI / API 管理台 | Planned |
+ | 9I | Cross-cutting governance | Planned |
+ | 9J | E2E / hardening | Planned |
+@@ -61,27 +61,16 @@ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research
+ 
+ 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
+ 
+-## 9F 验收（9F-1～9F-8）
++## 9F 验收（9F-1～9F-9 Done）
+ 
+ ```bash
+ cd backend_api_python
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
+-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
++QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f9_model_platform_e2e.py
+ QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
+-  tests/research_data/test_phase9f_model_platform.py \
+-  tests/research_data/test_phase9f3_training_run.py \
+-  tests/research_data/test_phase9f4_qlib_adapter.py \
+-  tests/research_data/test_phase9f5_model_artifact.py \
+-  tests/research_data/test_phase9f6_model_evaluation.py \
+-  tests/research_data/test_phase9f7_model_approval.py \
+-  tests/research_data/test_phase9f8_model_reproducibility.py -q --confcutdir=tests/research_data
++  tests/research_data/test_phase9f9_model_platform_e2e.py -q --confcutdir=tests/research_data
+ ```
+ 
+-并保持 `verify_phase9e_factor_library.py` 绿。后续 9F-9 E2E。
++Orchestrator 串联 9F-1～8 verify + hardening + golden E2E + `verify_phase9e`。后续 **9G Experiment**。
+ 
+ ## 边界（全 Phase 9 共享）
+ 

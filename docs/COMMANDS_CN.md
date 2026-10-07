@@ -808,44 +808,36 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 
 并保持 `verify_phase9c_factor_evaluation.py` 与 `verify_phase9d_factor_mining.py` 绿。
 
-### Phase 9F Model Platform（9F-1～9F-8）
+### Phase 9F Model Platform（9F-1～9F-9 Done）
 
-Registry / Lineage / TrainingRun / Adapter / Artifact / Evaluation / Approval / Reproducibility；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
+Registry → Training → Artifact → Evaluation → Approval → Activation → Reproducibility → E2E Hardening；说明：[06_model_platform.md](data/phase9/06_model_platform.md)。
 
 ```bash
 cd backend_api_python
 
+# 推荐：9F 总验收（串联 9F-1～8 + hardening + golden + 9E）
 QUANTDINGER_SKIP_APP_INIT=1 \
-  .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
-
-QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
-  .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
-
-QUANTDINGER_SKIP_APP_INIT=1 \
-  .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
-
-QUANTDINGER_SKIP_APP_INIT=1 \
-  .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
-
-QUANTDINGER_SKIP_APP_INIT=1 \
-  .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
-
-QUANTDINGER_SKIP_APP_INIT=1 \
-  .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
+  .test_deps/py312/bin/python scripts/verify_phase9f9_model_platform_e2e.py
 
 QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
-  tests/research_data/test_phase9f_model_platform.py \
-  tests/research_data/test_phase9f3_training_run.py \
-  tests/research_data/test_phase9f4_qlib_adapter.py \
-  tests/research_data/test_phase9f5_model_artifact.py \
-  tests/research_data/test_phase9f6_model_evaluation.py \
-  tests/research_data/test_phase9f7_model_approval.py \
-  tests/research_data/test_phase9f8_model_reproducibility.py -q \
+  tests/research_data/test_phase9f9_model_platform_e2e.py -q \
   --confcutdir=tests/research_data
-```
 
-并保持 `verify_phase9e_factor_library.py` 绿。
+# 分阶段（可选）
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
+QUANTDINGER_SKIP_APP_INIT=1 MLFLOW_DISABLE_AGENT_HINT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f4_qlib_adapter.py
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
+```
 
 ### Phase 8I Architecture Hardening & E2E Acceptance
 

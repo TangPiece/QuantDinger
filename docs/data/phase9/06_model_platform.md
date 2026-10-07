@@ -1,87 +1,68 @@
-# Phase 9F — Model Platform（9F-1～9F-8）
+# Phase 9F — Model Platform（9F-1～9F-9 **Done**）
 
 ## 目标
 
-把 **Model ≠ ModelVersion**、**TrainingJob / TrainingRun**、**Artifact Bundle**、**Model Evaluation**、**Approval / Activation** 与 **Reproducible Training** 纳入 Research Platform。
-
-- **9F-1～9F-5**：Registry / Lineage / TrainingRun / Adapter / Artifact  
-- **9F-6**：独立 `ModelEvaluationRun`  
-- **9F-7**：`ModelApproval` / 单 `ACTIVE`  
-- **9F-8**：TrainingRun 级 `ReproducibilityManifest` + `ReproducibilityRun`（不改源 Run）
+把 **Model ≠ ModelVersion**、Training、Artifact、Evaluation、Approval、Activation、Reproducibility 串成可长期运行的 Model Platform，并以 **9F-9 E2E Hardening** 收口。
 
 ```text
-VALIDATED ≠ APPROVED ≠ ACTIVE
-Model APPROVED ≠ Strategy VALIDATED ≠ Strategy LIVE
-STRICT | REPRODUCIBLE | AUDITABLE
+Dataset → Feature/Label → TrainingRun → Artifact → ModelVersion
+  → Evaluation → Approval → Activation
+  → Reproducibility
+  ✕ Model ACTIVE ≠ Strategy LIVE
+  ✕ Flask（契约以 Service 为准；HTTP → 9H）
 ```
-
-```text
-TrainingRun
-  → ReproducibilityManifest (+ Input / Env / Seeds)
-  → ReproducibilityRun
-  → NEW child TrainingRun (parent_training_run_id)
-  → Compare → Report
-  ✕ mutate 原 TrainingRun / ModelVersion
-  ✕ 复现产物自动 Approval / ACTIVE / LIVE
-```
-
-## 包位置
-
-| 包 | 职责 |
-| --- | --- |
-| [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 治理 + Bundle + Approval |
-| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | Qlib 执行门面 |
-| [`model_evaluation/`](../../../../backend_api_python/app/services/research_data/model_evaluation/) | **9F-6** 评估 |
-| [`model_reproducibility/`](../../../../backend_api_python/app/services/research_data/model_reproducibility/) | **9F-8** 可复现 |
 
 `qd_model_platform@1` · `qd_model_evaluation@1` · `qd_model_reproducibility@1`
 
-## Reproducible Training（9F-8）
+## 包
 
-- `ReproducibilityService.capture_from_training_run` / `reproduce`  
-- Policy：`REPRO_STRICT_V1` / `REPRO_NUMERICAL_V1` / `REPRO_AUDITABLE_V1`  
-- 结果码：`EXACT_MATCH` / `NUMERICAL_MATCH` / `DATA_MISMATCH` / `INPUT_MISMATCH` / `CODE_MISMATCH` / `ENV_MISMATCH` / `DEPENDENCY_MISMATCH` / `SEED_MISMATCH` / `NON_DETERMINISTIC` / …  
-- Artifact：`qd/artifacts/reproducibility/{repro_run_id}/`  
-- Version tip `model_repro_manifest@1` 增加 `repro_manifest_id` 指针（向后兼容）
+| 包 | 阶段 |
+| --- | --- |
+| [`model_platform/`](../../../../backend_api_python/app/services/research_data/model_platform/) | 9F-1～5, 7, 9 lineage |
+| [`model_adapters/`](../../../../backend_api_python/app/services/research_data/model_adapters/) | 9F-4 |
+| [`model_evaluation/`](../../../../backend_api_python/app/services/research_data/model_evaluation/) | 9F-6 |
+| [`model_reproducibility/`](../../../../backend_api_python/app/services/research_data/model_reproducibility/) | 9F-8 |
 
-## Model Approval（9F-7）
+## 9F-9 E2E & Hardening
 
-- `approve_version` / `activate`（单 ACTIVE）；禁止裸 `transition(..., APPROVED)`
+- `ModelPlatformService.get_full_lineage`：一键树（Model / Run / Artifact / Eval / Approval / Activation / Repro）  
+- `activate`：按 `model_id` 进程锁 + Artifact AVAILABLE 门控 + 单 ACTIVE  
+- Orchestrator：[`verify_phase9f9_model_platform_e2e.py`](../../../../backend_api_python/scripts/verify_phase9f9_model_platform_e2e.py)  
+- Hardening：`phase9f_hardening/` · Golden：`phase9f_lifecycle_golden/`  
+- 平面扫描：[`scan_phase9f_plane_isolation.py`](../../../../backend_api_python/scripts/scan_phase9f_plane_isolation.py)
 
-## Model Evaluation（9F-6）
+### Done Criteria（8）
 
-- `ModelEvaluationService.run_evaluation`（**不是** `evaluate_model`）
+1. 完整 Model Lifecycle E2E  
+2. TrainingRun ↔ Version ↔ Artifact 绑定  
+3. Evaluation → Approval → Activation 不可绕过；ACTIVE ≠ Strategy LIVE  
+4. Dataset / Code / Env / Dep / Seed 可追溯  
+5. 历史对象不可变 + 禁删  
+6. Reproduce → EXACT / NUMERICAL_MATCH  
+7. 故障注入 + Job 幂等 + 并发 activate  
+8. Active Version → `get_full_lineage`
 
 ## 验收
 
 ```bash
 cd backend_api_python
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f_model_platform.py
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f5_model_artifact.py
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f6_model_evaluation.py
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f7_model_approval.py
-QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f8_model_reproducibility.py
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python scripts/verify_phase9f9_model_platform_e2e.py
 QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest \
-  tests/research_data/test_phase9f_model_platform.py \
-  tests/research_data/test_phase9f5_model_artifact.py \
-  tests/research_data/test_phase9f6_model_evaluation.py \
-  tests/research_data/test_phase9f7_model_approval.py \
-  tests/research_data/test_phase9f8_model_reproducibility.py -q \
+  tests/research_data/test_phase9f9_model_platform_e2e.py -q \
   --confcutdir=tests/research_data
 ```
 
-保持 `verify_phase9e` / `9f7` / `9f6` / `9f5` 绿。
+保持 `verify_phase9e` 绿（由 9F-9 orchestrator 回归）。
 
 ## Non-goals
 
 ```text
-❌ 改写原 TrainingRun / ModelVersion
-❌ 复现 → 自动 Evaluation / Approval / ACTIVE / LIVE
-❌ 真实 Docker 重建 / 强制本机 uv.lock
-❌ GPU bit-identical 保证
-❌ HTTP Admin UI / D1 必过 Verify
+❌ Flask / Admin UI
+❌ D1 唯一索引落地（文档可选未来）
+❌ Strategy Candidate / Promotion / Shadow / LIVE / OMS
+❌ 物理 DELETE 历史对象
 ```
 
 ## 后续
 
-9F-9 E2E Acceptance & Hardening
+**Phase 9G — Research Experiment Platform**（实验编排 / 对比 / Ranking → Strategy Candidate）

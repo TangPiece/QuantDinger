@@ -160,11 +160,65 @@ def lineage_view(
     }
 
 
+def full_lineage_view(
+    *,
+    model: Any | None,
+    version: ModelVersion,
+    training_run: TrainingRun | None = None,
+    artifact: ModelArtifact | None = None,
+    tip_repro: Mapping[str, Any] | None = None,
+    full_repro_manifest: Mapping[str, Any] | None = None,
+    evaluation_runs: list[Any] | None = None,
+    approvals: list[Any] | None = None,
+    activations: list[Any] | None = None,
+    reproducibility_runs: list[Any] | None = None,
+    experiment_refs: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """9F-9：一键完整血缘树（Service 契约；无 Flask）。"""
+
+    def _dump(obj: Any) -> Any:
+        if obj is None:
+            return None
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump(mode="json")
+        if isinstance(obj, Mapping):
+            return dict(obj)
+        return obj
+
+    tip = lineage_view(
+        version,
+        training_run=training_run,
+        artifact=artifact,
+        repro_path=str((tip_repro or {}).get("repro_manifest_uri") or ""),
+    )
+    return {
+        "schema": "model_full_lineage@1",
+        "model": _dump(model),
+        "model_version": tip,
+        "training_run": _dump(training_run),
+        "artifact": _dump(artifact),
+        "repro_tip": dict(tip_repro) if tip_repro else None,
+        "reproducibility_manifest": dict(full_repro_manifest)
+        if full_repro_manifest
+        else None,
+        "evaluation_runs": [_dump(r) for r in (evaluation_runs or [])],
+        "approvals": [_dump(a) for a in (approvals or [])],
+        "activation_records": [_dump(a) for a in (activations or [])],
+        "reproducibility_runs": [_dump(r) for r in (reproducibility_runs or [])],
+        "experiment_refs": [dict(x) for x in (experiment_refs or [])],
+        "boundaries": {
+            "model_active_ne_strategy_live": True,
+            "http_deferred_to_9h": True,
+        },
+    }
+
+
 __all__ = [
     "LineageValidationError",
     "REQUIRED_VERSION_FIELDS",
     "assert_checksum",
     "assert_lineage_pass",
+    "full_lineage_view",
     "is_sha256_hex",
     "lineage_view",
     "validate_lineage_for_version",

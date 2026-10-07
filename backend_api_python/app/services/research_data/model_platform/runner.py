@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -43,6 +44,7 @@ from .lineage import (
     LineageValidationError,
     assert_checksum,
     assert_lineage_pass,
+    full_lineage_view,
     lineage_view,
     validate_lineage_for_version,
 )
@@ -137,7 +139,17 @@ class ModelPlatformService:
         self._activations: dict[str, ModelActivationRecord] = {}
         self._bundles = ModelBundleStore(self._store)
         self._loader = ModelArtifactLoader(self._store, self._bundles)
+        self._activate_locks: dict[str, threading.Lock] = {}
+        self._activate_locks_guard = threading.Lock()
         self._hydrate()
+
+    def _activate_lock_for(self, model_id: str) -> threading.Lock:
+        with self._activate_locks_guard:
+            lock = self._activate_locks.get(model_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._activate_locks[model_id] = lock
+            return lock
 
     def bind_evaluation_service(self, evaluation_service: Any) -> None:
         """绑定 9F-6 ModelEvaluationService（approve/validate 依赖）。"""
@@ -502,6 +514,87 @@ class ModelPlatformService:
             )
         return lineage_view(
             version, training_run=run, artifact=art, repro_path=repro_path
+        )
+
+    def get_full_lineage(self, model_version_id: str) -> dict[str, Any]:
+        """9F-9：完整血缘树（Evaluation / Approval / Activation / Repro）。"""
+        version = self.get_version(model_version_id)
+        model = None
+        try:
+            model = self.get_model(version.model_id)
+        except ModelPlatformError:
+            model = None
+        run = None
+        if version.training_run_id:
+            try:
+                run = self.get_training_run(version.training_run_id)
+            except ModelPlatformError:
+                run = None
+        art = None
+        if version.artifact_id:
+            try:
+                art = self.get_artifact(version.artifact_id)
+            except ModelPlatformError:
+                art = None
+        tip_repro = None
+        try:
+            tip_repro = self.get_repro_manifest(model_version_id)
+        except ModelPlatformError:
+            tip_repro = None
+
+        full_man = None
+        repro_runs: list[Any] = []
+        if self._reproducibility is not None and version.training_run_id:
+            try:
+                man = self._reproducibility.get_manifest_for_training_run(
+                    version.training_run_id
+                )
+                full_man = man.model_dump(mode="json")
+            except Exception:
+                full_man = None
+            try:
+                repro_runs = list(
+                    self._reproducibility.list_runs_for_training_run(
+                        version.training_run_id
+                    )
+                )
+            except Exception:
+                repro_runs = []
+
+        evals: list[Any] = []
+        if self._evaluation is not None:
+            try:
+                evals = list(
+                    self._evaluation.list_runs_for_version(version.model_version_id)
+                )
+            except Exception:
+                evals = []
+
+        approvals = self.list_approvals(model_version_id=version.model_version_id)
+        activations = self.list_activations(model_version_id=version.model_version_id)
+        # Research consumer stub refs（不实现 Strategy）
+        experiment_refs: list[dict[str, Any]] = []
+        if version.lifecycle == "ACTIVE":
+            experiment_refs.append(
+                {
+                    "ref_type": "research_consumer",
+                    "model_version_id": version.model_version_id,
+                    "usage_scope": list(version.usage_scope or []),
+                }
+            )
+
+        return full_lineage_view(
+            model=model,
+            version=version,
+            training_run=run,
+            artifact=art,
+            tip_repro=tip_repro,
+            full_repro_manifest=full_man,
+            evaluation_runs=evals,
+            approvals=approvals,
+            activations=activations,
+            reproducibility_runs=repro_runs,
+            experiment_refs=experiment_refs,
         )
 
     def get_artifact_for_version(self, model_version_id: str) -> ModelArtifact:
@@ -1415,74 +1508,97 @@ class ModelPlatformService:
     ) -> ModelVersion:
         """须 APPROVED；同 model 其他 ACTIVE → DEPRECATED(NEW_VERSION)；写 ActivationRecord。"""
         version = self.get_version(model_version_id)
-        if version.lifecycle == "ACTIVE":
-            return version
-        if version.lifecycle != "APPROVED" and not can_activate(version.lifecycle):
-            raise ModelLifecycleError(f"cannot activate from {version.lifecycle}")
-        # DEPRECATED 可 reactivate（须曾 APPROVED）；ACTIVE 切换仅从 APPROVED
-        if version.lifecycle == "DEPRECATED":
-            # 允许 DEPRECATED→ACTIVE（lifecycle FSM），但仍要求曾有 APPROVED 审计
-            had_approve = any(
-                a.model_version_id == model_version_id and a.decision == "APPROVED"
-                for a in self._approvals.values()
-            )
-            if not had_approve:
+        lock = self._activate_lock_for(version.model_id)
+        with lock:
+            # re-read under lock
+            version = self.get_version(model_version_id)
+            if version.lifecycle == "ACTIVE":
+                return version
+            if version.lifecycle != "APPROVED" and not can_activate(version.lifecycle):
                 raise ModelLifecycleError(
-                    "cannot reactivate DEPRECATED without prior APPROVED record"
+                    f"cannot activate from {version.lifecycle}"
                 )
-        elif version.lifecycle != "APPROVED":
-            raise ModelLifecycleError(f"cannot activate from {version.lifecycle}")
-
-        from_id = ""
-        for other in self.list_versions(version.model_id):
-            if (
-                other.lifecycle == "ACTIVE"
-                and other.model_version_id != model_version_id
-            ):
-                from_id = other.model_version_id
-                self.deprecate(
-                    other.model_version_id,
-                    reason or f"superseded by {model_version_id}",
-                    reason_code="NEW_VERSION",
-                    replacement_ref=model_version_id,
+            if version.lifecycle == "DEPRECATED":
+                had_approve = any(
+                    a.model_version_id == model_version_id
+                    and a.decision == "APPROVED"
+                    for a in self._approvals.values()
+                )
+                if not had_approve:
+                    raise ModelLifecycleError(
+                        "cannot reactivate DEPRECATED without prior APPROVED record"
+                    )
+            elif version.lifecycle != "APPROVED":
+                raise ModelLifecycleError(
+                    f"cannot activate from {version.lifecycle}"
                 )
 
-        assert_transition(version.lifecycle, "ACTIVE")
-        updated = version.model_copy(update={"lifecycle": "ACTIVE"})
-        try:
-            assert_version_immutable(version, updated)
-        except ModelImmutabilityError as exc:
-            raise ModelPlatformError(str(exc)) from exc
-        write_version(self._store, updated)
-        self._catalog.upsert_version(updated)
+            # Artifact integrity gate
+            if version.artifact_id:
+                try:
+                    art = self.get_artifact(version.artifact_id)
+                except ModelPlatformError as exc:
+                    raise ModelLifecycleError(
+                        f"artifact_integrity_error: missing {version.artifact_id}"
+                    ) from exc
+                if art.status == "CORRUPTED":
+                    raise ModelLifecycleError(
+                        "artifact_integrity_error: CORRUPTED artifact cannot activate"
+                    )
+                if art.status != "AVAILABLE":
+                    raise ModelLifecycleError(
+                        f"artifact_integrity_error: status={art.status}"
+                    )
 
-        # 强制单 ACTIVE
-        actives = [
-            v
-            for v in self.list_versions(updated.model_id)
-            if v.lifecycle == "ACTIVE"
-        ]
-        if len(actives) > 1:
-            raise ModelPlatformError(
-                f"single ACTIVE invariant broken for {updated.model_id}: "
-                f"{[v.model_version_id for v in actives]}"
+            from_id = ""
+            for other in self.list_versions(version.model_id):
+                if (
+                    other.lifecycle == "ACTIVE"
+                    and other.model_version_id != model_version_id
+                ):
+                    from_id = other.model_version_id
+                    self.deprecate(
+                        other.model_version_id,
+                        reason or f"superseded by {model_version_id}",
+                        reason_code="NEW_VERSION",
+                        replacement_ref=model_version_id,
+                    )
+
+            assert_transition(version.lifecycle, "ACTIVE")
+            updated = version.model_copy(update={"lifecycle": "ACTIVE"})
+            try:
+                assert_version_immutable(version, updated)
+            except ModelImmutabilityError as exc:
+                raise ModelPlatformError(str(exc)) from exc
+            write_version(self._store, updated)
+            self._catalog.upsert_version(updated)
+
+            actives = [
+                v
+                for v in self.list_versions(updated.model_id)
+                if v.lifecycle == "ACTIVE"
+            ]
+            if len(actives) > 1:
+                raise ModelPlatformError(
+                    f"single ACTIVE invariant broken for {updated.model_id}: "
+                    f"{[v.model_version_id for v in actives]}"
+                )
+
+            now = datetime.now(timezone.utc)
+            record = ModelActivationRecord(
+                activation_id=new_activation_id(),
+                model_id=updated.model_id,
+                from_model_version_id=from_id,
+                to_model_version_id=updated.model_version_id,
+                reason=reason or "activate",
+                operator=operator or "system",
+                policy_version=policy_version_ref(MODEL_APPROVAL_V1),
+                created_at=now,
+                immutable=True,
             )
-
-        now = datetime.now(timezone.utc)
-        record = ModelActivationRecord(
-            activation_id=new_activation_id(),
-            model_id=updated.model_id,
-            from_model_version_id=from_id,
-            to_model_version_id=updated.model_version_id,
-            reason=reason or "activate",
-            operator=operator or "system",
-            policy_version=policy_version_ref(MODEL_APPROVAL_V1),
-            created_at=now,
-            immutable=True,
-        )
-        write_activation(self._store, record)
-        self._activations[record.activation_id] = record
-        return updated
+            write_activation(self._store, record)
+            self._activations[record.activation_id] = record
+            return updated
 
     def deprecate(
         self,

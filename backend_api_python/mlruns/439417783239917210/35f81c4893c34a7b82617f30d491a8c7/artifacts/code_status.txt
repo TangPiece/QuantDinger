@@ -1,0 +1,23 @@
+On branch feature/20261005-qlib
+Your branch is ahead of 'origin/feature/20261005-qlib' by 68 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   app/services/research_data/model_platform/lineage.py
+	modified:   app/services/research_data/model_platform/runner.py
+	modified:   ../docs/COMMANDS_CN.md
+	modified:   ../docs/data/phase9/06_model_platform.md
+	modified:   ../docs/data/phase9/README.md
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	mlruns/439417783239917210/35f81c4893c34a7b82617f30d491a8c7/
+	scripts/scan_phase9f_plane_isolation.py
+	scripts/verify_phase9f9_model_platform_e2e.py
+	tests/research_data/phase9f_hardening/
+	tests/research_data/phase9f_lifecycle_golden/
+	tests/research_data/test_phase9f9_model_platform_e2e.py
+
+no changes added to commit (use "git add" and/or "git commit -a")
