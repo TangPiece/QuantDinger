@@ -1,6 +1,6 @@
 # Phase 8 — Research → Production Strategy Lifecycle
 
-> **Status:** Phase 8A–8H implemented (Registry + Candidate + Validation Gate + Promotion + Performance Feedback + Monitoring + Guardrails + Production→Research Feedback).
+> **Status:** Phase 8A–8I implemented (Registry + Candidate + Validation Gate + Promotion + Performance Feedback + Monitoring + Guardrails + Production→Research Feedback + Architecture Hardening E2E).
 
 ## Roadmap
 
@@ -13,6 +13,7 @@
 8F  Strategy Health Monitoring  ← done
 8G  Strategy Governance & Auto Guardrails  ← done
 8H  Production → Research Feedback Loop  ← done
+8I  Architecture Hardening & E2E Acceptance  ← done
 ```
 
 ## Reading
@@ -25,6 +26,7 @@
 6. [06_strategy_monitoring.md](06_strategy_monitoring.md)
 7. [07_strategy_governance_guardrails.md](07_strategy_governance_guardrails.md)
 8. [08_production_research_feedback.md](08_production_research_feedback.md)
+9. [09_architecture_hardening_e2e.md](09_architecture_hardening_e2e.md)
 
 ## Commands
 
@@ -93,6 +95,14 @@ QUANTDINGER_SKIP_APP_INIT=1 \
 QUANTDINGER_SKIP_APP_INIT=1 \
   .test_deps/py312/bin/python -m pytest \
   tests/research_data/test_phase8h_production_research_feedback.py -q \
+  --confcutdir=tests/research_data
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8i_architecture_hardening.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8i_architecture_hardening.py -q \
   --confcutdir=tests/research_data
 ```
 

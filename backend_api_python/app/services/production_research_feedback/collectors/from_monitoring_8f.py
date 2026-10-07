@@ -30,7 +30,7 @@ def collect_from_monitoring_8f(
                 row_id=f"8f_{alert.alert_id}",
                 metric=str(alert.category or "alert"),
                 value=1.0,
-                as_of_time=alert.created_at or "",
+                as_of_time=alert.last_seen_at or alert.first_seen_at or "",
                 source_artifact_id=alert.alert_id,
                 source_phase="8F",
             )

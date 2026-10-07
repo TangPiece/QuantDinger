@@ -726,6 +726,25 @@ QUANTDINGER_SKIP_APP_INIT=1 \
   --confcutdir=tests/research_data
 ```
 
+### Phase 8I Architecture Hardening & E2E Acceptance
+
+编排 8A–8H verify + 平面隔离扫描 + FSM/immutability/inject 矩阵 + 单链 E2E + 7E 回归；说明：[09_architecture_hardening_e2e.md](data/phase8/09_architecture_hardening_e2e.md)。
+
+```bash
+cd backend_api_python
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/verify_phase8i_architecture_hardening.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python scripts/scan_phase8_plane_isolation.py
+
+QUANTDINGER_SKIP_APP_INIT=1 \
+  .test_deps/py312/bin/python -m pytest \
+  tests/research_data/test_phase8i_architecture_hardening.py -q \
+  --confcutdir=tests/research_data
+```
+
 Phase 8G verify 仍应绿：
 
 ```bash
