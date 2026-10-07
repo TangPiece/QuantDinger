@@ -1815,3 +1815,68 @@ class StrategyPromotionRollbackSummary(_ContractModel):
     created_at: Optional[str] = None
     engine_version: str = "qd_strategy_promotion@1"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DriftPolicySummary(_ContractModel):
+    """Phase 8E：DriftPolicy 索引。"""
+
+    policy_id: str
+    policy_version: str
+    policy_content_hash: str = ""
+    rules_json: list[dict[str, Any]] = Field(default_factory=list)
+    engine_version: str = "qd_live_performance_feedback@1"
+    description: str = ""
+    created_at: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PerformanceExpectedBaselineSummary(_ContractModel):
+    """Phase 8E：ExpectedBaseline 索引（R2 存完整 JSON）。"""
+
+    baseline_id: str
+    strategy_code: str
+    strategy_version: str = ""
+    content_hash: str = ""
+    candidate_id: str = ""
+    validation_id: str = ""
+    pipeline_run_id: str = ""
+    dataset_hash: str = ""
+    snapshot_id: str = ""
+    model_version: str = ""
+    feature_version: str = ""
+    backtest_hash: str = ""
+    baseline_type: str = "PROMOTION_BASELINE"
+    metrics_snapshot_json: dict[str, Any] = Field(default_factory=dict)
+    drift_policy_id: str = ""
+    drift_policy_version: str = ""
+    drift_policy_content_hash: str = ""
+    immutable: bool = True
+    created_at: Optional[str] = None
+    storage_uri: str = ""
+    engine_version: str = "qd_live_performance_feedback@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PerformanceComparisonRunSummary(_ContractModel):
+    """Phase 8E：PerformanceComparisonRun 索引。"""
+
+    run_id: str
+    strategy_code: str
+    baseline_id: str
+    actual_source: str = "SHADOW"
+    window_start: str = ""
+    window_end: str = ""
+    idempotency_key: str = ""
+    status: str = "CREATED"
+    policy_id: str = ""
+    policy_version: str = ""
+    policy_content_hash: str = ""
+    actual_metrics_json: dict[str, Any] = Field(default_factory=dict)
+    deviation_json: list[dict[str, Any]] = Field(default_factory=list)
+    drift_findings_json: list[dict[str, Any]] = Field(default_factory=list)
+    report_id: str = ""
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    storage_uri: str = ""
+    engine_version: str = "qd_live_performance_feedback@1"
+    metadata: dict[str, Any] = Field(default_factory=dict)

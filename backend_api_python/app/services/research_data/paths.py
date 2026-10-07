@@ -828,6 +828,25 @@ def strategy_promotion_manifest_key(*, pipeline_run_id: str) -> str:
     return f"{strategy_promotion_prefix()}/{safe_id}/manifest.json"
 
 
+def performance_feedback_prefix() -> str:
+    """Phase 8E：``qd/registry/performance_feedback``。"""
+    return f"{_root()}/registry/performance_feedback"
+
+
+def performance_feedback_baseline_key(*, strategy_code: str, baseline_id: str) -> str:
+    """``qd/registry/performance_feedback/{strategy_code}/baselines/{id}.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(baseline_id or "unknown").replace("/", "_")
+    return f"{performance_feedback_prefix()}/{safe_code}/baselines/{safe_id}.json"
+
+
+def performance_feedback_run_key(*, strategy_code: str, run_id: str) -> str:
+    """``qd/registry/performance_feedback/{strategy_code}/runs/{id}.json``。"""
+    safe_code = str(strategy_code or "unknown").replace("/", "_")
+    safe_id = str(run_id or "unknown").replace("/", "_")
+    return f"{performance_feedback_prefix()}/{safe_code}/runs/{safe_id}.json"
+
+
 def production_governance_prefix() -> str:
     """Phase 7E：``qd/production/governance``。"""
     return f"{_root()}/production/governance"

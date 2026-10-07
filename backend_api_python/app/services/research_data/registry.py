@@ -105,6 +105,9 @@ from .contracts import (
     StrategyPromotionRequestSummary,
     StrategyPromotionRollbackSummary,
     StrategyPromotionRunSummary,
+    DriftPolicySummary,
+    PerformanceComparisonRunSummary,
+    PerformanceExpectedBaselineSummary,
     TradingEnvironmentStateRecord,
     SafetyEventSummary,
     SafetyRuleRecord,
@@ -845,6 +848,40 @@ class ResearchRegistry(Protocol):
     def list_strategy_promotion_rollbacks(
         self, strategy_code: str | None = None
     ) -> list[StrategyPromotionRollbackSummary]: ...
+
+    def upsert_drift_policy(self, record: DriftPolicySummary) -> None: ...
+
+    def get_drift_policy(
+        self, policy_id: str, policy_version: str
+    ) -> DriftPolicySummary: ...
+
+    def upsert_performance_expected_baseline(
+        self, record: PerformanceExpectedBaselineSummary
+    ) -> None: ...
+
+    def get_performance_expected_baseline(
+        self, baseline_id: str
+    ) -> PerformanceExpectedBaselineSummary: ...
+
+    def get_performance_expected_baseline_by_promotion(
+        self, pipeline_run_id: str
+    ) -> PerformanceExpectedBaselineSummary: ...
+
+    def list_performance_expected_baselines(
+        self, strategy_code: str | None = None
+    ) -> list[PerformanceExpectedBaselineSummary]: ...
+
+    def upsert_performance_comparison_run(
+        self, record: PerformanceComparisonRunSummary
+    ) -> None: ...
+
+    def get_performance_comparison_run(
+        self, run_id: str
+    ) -> PerformanceComparisonRunSummary: ...
+
+    def list_performance_comparison_runs(
+        self, strategy_code: str | None = None
+    ) -> list[PerformanceComparisonRunSummary]: ...
 
 
 class LocalJsonRegistry:
@@ -3019,6 +3056,114 @@ class LocalJsonRegistry:
             code = str(strategy_code).strip()
             out = [r for r in out if r.strategy_code == code]
         out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_drift_policy(self, record: DriftPolicySummary) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("drift_policy", {})
+            key = f"{record.policy_id}@{record.policy_version}"
+            data["drift_policy"][key] = record.model_dump(mode="json")
+            self._write(data)
+
+    def get_drift_policy(
+        self, policy_id: str, policy_version: str
+    ) -> DriftPolicySummary:
+        key = f"{policy_id}@{policy_version}"
+        with self._lock:
+            data = self._read()
+            raw = (data.get("drift_policy") or {}).get(key)
+        if not raw:
+            raise KeyError(f"drift_policy missing: {key}")
+        return DriftPolicySummary.model_validate(raw)
+
+    def upsert_performance_expected_baseline(
+        self, record: PerformanceExpectedBaselineSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("performance_expected_baseline", {})
+            data["performance_expected_baseline"][record.baseline_id] = record.model_dump(
+                mode="json"
+            )
+            data.setdefault("performance_expected_baseline_by_promotion", {})
+            if record.pipeline_run_id:
+                data["performance_expected_baseline_by_promotion"][
+                    record.pipeline_run_id
+                ] = record.baseline_id
+            self._write(data)
+
+    def get_performance_expected_baseline(
+        self, baseline_id: str
+    ) -> PerformanceExpectedBaselineSummary:
+        bid = str(baseline_id).strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("performance_expected_baseline") or {}).get(bid)
+        if not raw:
+            raise KeyError(f"performance_expected_baseline missing: {bid}")
+        return PerformanceExpectedBaselineSummary.model_validate(raw)
+
+    def get_performance_expected_baseline_by_promotion(
+        self, pipeline_run_id: str
+    ) -> PerformanceExpectedBaselineSummary:
+        pid = str(pipeline_run_id).strip()
+        with self._lock:
+            data = self._read()
+            bid = (data.get("performance_expected_baseline_by_promotion") or {}).get(pid)
+            if not bid:
+                raise KeyError(f"baseline for promotion missing: {pid}")
+            raw = (data.get("performance_expected_baseline") or {}).get(bid)
+        if not raw:
+            raise KeyError(f"performance_expected_baseline missing: {bid}")
+        return PerformanceExpectedBaselineSummary.model_validate(raw)
+
+    def list_performance_expected_baselines(
+        self, strategy_code: str | None = None
+    ) -> list[PerformanceExpectedBaselineSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("performance_expected_baseline") or {}).values()
+        out = [PerformanceExpectedBaselineSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.created_at or "")
+        return out
+
+    def upsert_performance_comparison_run(
+        self, record: PerformanceComparisonRunSummary
+    ) -> None:
+        with self._lock:
+            data = self._read()
+            data.setdefault("performance_comparison_run", {})
+            data["performance_comparison_run"][record.run_id] = record.model_dump(
+                mode="json"
+            )
+            self._write(data)
+
+    def get_performance_comparison_run(
+        self, run_id: str
+    ) -> PerformanceComparisonRunSummary:
+        rid = str(run_id).strip()
+        with self._lock:
+            data = self._read()
+            raw = (data.get("performance_comparison_run") or {}).get(rid)
+        if not raw:
+            raise KeyError(f"performance_comparison_run missing: {rid}")
+        return PerformanceComparisonRunSummary.model_validate(raw)
+
+    def list_performance_comparison_runs(
+        self, strategy_code: str | None = None
+    ) -> list[PerformanceComparisonRunSummary]:
+        with self._lock:
+            data = self._read()
+            rows = (data.get("performance_comparison_run") or {}).values()
+        out = [PerformanceComparisonRunSummary.model_validate(r) for r in rows]
+        if strategy_code:
+            code = str(strategy_code).strip()
+            out = [r for r in out if r.strategy_code == code]
+        out.sort(key=lambda r: r.completed_at or r.started_at or "")
         return out
 
 
@@ -9158,6 +9303,210 @@ class D1ResearchRegistry:
             return []
         return [_strategy_promotion_rollback_from_row(r) for r in rows or []]
 
+    def upsert_drift_policy(self, record: DriftPolicySummary) -> None:
+        d1_client.query(
+            """
+            INSERT INTO drift_policy (
+              policy_id, policy_version, policy_content_hash, rules_json,
+              engine_version, description, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(policy_id, policy_version) DO UPDATE SET
+              policy_content_hash=excluded.policy_content_hash,
+              rules_json=excluded.rules_json,
+              engine_version=excluded.engine_version,
+              description=excluded.description,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                json.dumps(record.rules_json or [], ensure_ascii=False),
+                record.engine_version,
+                record.description,
+                record.created_at or "",
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_drift_policy(
+        self, policy_id: str, policy_version: str
+    ) -> DriftPolicySummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM drift_policy
+            WHERE policy_id = ? AND policy_version = ?
+            """,
+            [policy_id, policy_version],
+        )
+        if not rows:
+            raise KeyError(f"drift_policy missing: {policy_id}@{policy_version}")
+        return _drift_policy_from_row(rows[0])
+
+    def upsert_performance_expected_baseline(
+        self, record: PerformanceExpectedBaselineSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO performance_expected_baseline (
+              baseline_id, strategy_code, strategy_version, content_hash,
+              candidate_id, validation_id, pipeline_run_id,
+              dataset_hash, snapshot_id, model_version, feature_version,
+              backtest_hash, baseline_type, metrics_snapshot_json,
+              drift_policy_id, drift_policy_version, drift_policy_content_hash,
+              immutable, created_at, storage_uri, engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(baseline_id) DO NOTHING
+            """,
+            [
+                record.baseline_id,
+                record.strategy_code,
+                record.strategy_version,
+                record.content_hash,
+                record.candidate_id,
+                record.validation_id,
+                record.pipeline_run_id,
+                record.dataset_hash,
+                record.snapshot_id,
+                record.model_version,
+                record.feature_version,
+                record.backtest_hash,
+                record.baseline_type,
+                json.dumps(record.metrics_snapshot_json or {}, ensure_ascii=False),
+                record.drift_policy_id,
+                record.drift_policy_version,
+                record.drift_policy_content_hash,
+                1 if record.immutable else 0,
+                record.created_at or "",
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_performance_expected_baseline(
+        self, baseline_id: str
+    ) -> PerformanceExpectedBaselineSummary:
+        rows = d1_client.query(
+            "SELECT * FROM performance_expected_baseline WHERE baseline_id = ?",
+            [baseline_id],
+        )
+        if not rows:
+            raise KeyError(f"performance_expected_baseline missing: {baseline_id}")
+        return _performance_expected_baseline_from_row(rows[0])
+
+    def get_performance_expected_baseline_by_promotion(
+        self, pipeline_run_id: str
+    ) -> PerformanceExpectedBaselineSummary:
+        rows = d1_client.query(
+            """
+            SELECT * FROM performance_expected_baseline
+            WHERE pipeline_run_id = ? LIMIT 1
+            """,
+            [pipeline_run_id],
+        )
+        if not rows:
+            raise KeyError(f"baseline for promotion missing: {pipeline_run_id}")
+        return _performance_expected_baseline_from_row(rows[0])
+
+    def list_performance_expected_baselines(
+        self, strategy_code: str | None = None
+    ) -> list[PerformanceExpectedBaselineSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM performance_expected_baseline
+                    WHERE strategy_code = ? ORDER BY created_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM performance_expected_baseline ORDER BY created_at"
+                )
+        except Exception:
+            return []
+        return [_performance_expected_baseline_from_row(r) for r in rows or []]
+
+    def upsert_performance_comparison_run(
+        self, record: PerformanceComparisonRunSummary
+    ) -> None:
+        d1_client.query(
+            """
+            INSERT INTO performance_comparison_run (
+              run_id, strategy_code, baseline_id, actual_source,
+              window_start, window_end, idempotency_key, status,
+              policy_id, policy_version, policy_content_hash,
+              actual_metrics_json, deviation_json, drift_findings_json,
+              report_id, started_at, completed_at, storage_uri,
+              engine_version, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+              status=excluded.status,
+              actual_metrics_json=excluded.actual_metrics_json,
+              deviation_json=excluded.deviation_json,
+              drift_findings_json=excluded.drift_findings_json,
+              report_id=excluded.report_id,
+              completed_at=excluded.completed_at,
+              storage_uri=excluded.storage_uri,
+              metadata_json=excluded.metadata_json
+            """,
+            [
+                record.run_id,
+                record.strategy_code,
+                record.baseline_id,
+                record.actual_source,
+                record.window_start,
+                record.window_end,
+                record.idempotency_key,
+                record.status,
+                record.policy_id,
+                record.policy_version,
+                record.policy_content_hash,
+                json.dumps(record.actual_metrics_json or {}, ensure_ascii=False),
+                json.dumps(record.deviation_json or [], ensure_ascii=False),
+                json.dumps(record.drift_findings_json or [], ensure_ascii=False),
+                record.report_id,
+                record.started_at or "",
+                record.completed_at or "",
+                record.storage_uri,
+                record.engine_version,
+                json.dumps(record.metadata or {}, ensure_ascii=False),
+            ],
+        )
+
+    def get_performance_comparison_run(
+        self, run_id: str
+    ) -> PerformanceComparisonRunSummary:
+        rows = d1_client.query(
+            "SELECT * FROM performance_comparison_run WHERE run_id = ?",
+            [run_id],
+        )
+        if not rows:
+            raise KeyError(f"performance_comparison_run missing: {run_id}")
+        return _performance_comparison_run_from_row(rows[0])
+
+    def list_performance_comparison_runs(
+        self, strategy_code: str | None = None
+    ) -> list[PerformanceComparisonRunSummary]:
+        try:
+            if strategy_code:
+                rows = d1_client.query(
+                    """
+                    SELECT * FROM performance_comparison_run
+                    WHERE strategy_code = ? ORDER BY completed_at
+                    """,
+                    [strategy_code],
+                )
+            else:
+                rows = d1_client.query(
+                    "SELECT * FROM performance_comparison_run ORDER BY completed_at"
+                )
+        except Exception:
+            return []
+        return [_performance_comparison_run_from_row(r) for r in rows or []]
+
 
 def _strategy_version_binding_from_row(row: dict[str, Any]) -> StrategyVersionBindingSummary:
     return StrategyVersionBindingSummary(
@@ -9378,6 +9727,75 @@ def _strategy_promotion_rollback_from_row(
         session_id=row.get("session_id") or "",
         created_at=row.get("created_at"),
         engine_version=row.get("engine_version") or "qd_strategy_promotion@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _drift_policy_from_row(row: dict[str, Any]) -> DriftPolicySummary:
+    return DriftPolicySummary(
+        policy_id=row["policy_id"],
+        policy_version=row["policy_version"],
+        policy_content_hash=row.get("policy_content_hash") or "",
+        rules_json=_json_field(row.get("rules_json"), []),
+        engine_version=row.get("engine_version") or "qd_live_performance_feedback@1",
+        description=row.get("description") or "",
+        created_at=row.get("created_at"),
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _performance_expected_baseline_from_row(
+    row: dict[str, Any],
+) -> PerformanceExpectedBaselineSummary:
+    return PerformanceExpectedBaselineSummary(
+        baseline_id=row["baseline_id"],
+        strategy_code=row["strategy_code"],
+        strategy_version=row.get("strategy_version") or "",
+        content_hash=row.get("content_hash") or "",
+        candidate_id=row.get("candidate_id") or "",
+        validation_id=row.get("validation_id") or "",
+        pipeline_run_id=row.get("pipeline_run_id") or "",
+        dataset_hash=row.get("dataset_hash") or "",
+        snapshot_id=row.get("snapshot_id") or "",
+        model_version=row.get("model_version") or "",
+        feature_version=row.get("feature_version") or "",
+        backtest_hash=row.get("backtest_hash") or "",
+        baseline_type=row.get("baseline_type") or "PROMOTION_BASELINE",
+        metrics_snapshot_json=_json_field(row.get("metrics_snapshot_json"), {}),
+        drift_policy_id=row.get("drift_policy_id") or "",
+        drift_policy_version=row.get("drift_policy_version") or "",
+        drift_policy_content_hash=row.get("drift_policy_content_hash") or "",
+        immutable=bool(row.get("immutable", 1)),
+        created_at=row.get("created_at"),
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_live_performance_feedback@1",
+        metadata=_json_field(row.get("metadata_json"), {}),
+    )
+
+
+def _performance_comparison_run_from_row(
+    row: dict[str, Any],
+) -> PerformanceComparisonRunSummary:
+    return PerformanceComparisonRunSummary(
+        run_id=row["run_id"],
+        strategy_code=row["strategy_code"],
+        baseline_id=row["baseline_id"],
+        actual_source=row.get("actual_source") or "SHADOW",
+        window_start=row.get("window_start") or "",
+        window_end=row.get("window_end") or "",
+        idempotency_key=row.get("idempotency_key") or "",
+        status=row.get("status") or "CREATED",
+        policy_id=row.get("policy_id") or "",
+        policy_version=row.get("policy_version") or "",
+        policy_content_hash=row.get("policy_content_hash") or "",
+        actual_metrics_json=_json_field(row.get("actual_metrics_json"), {}),
+        deviation_json=_json_field(row.get("deviation_json"), []),
+        drift_findings_json=_json_field(row.get("drift_findings_json"), []),
+        report_id=row.get("report_id") or "",
+        started_at=row.get("started_at"),
+        completed_at=row.get("completed_at"),
+        storage_uri=row.get("storage_uri") or "",
+        engine_version=row.get("engine_version") or "qd_live_performance_feedback@1",
         metadata=_json_field(row.get("metadata_json"), {}),
     )
 

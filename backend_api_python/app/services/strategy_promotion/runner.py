@@ -390,6 +390,7 @@ class StrategyPromotionService:
             self._requests[req.request_id] = req_done
 
             self._patch_candidate_metadata(req.candidate_id, saved.pipeline_run_id)
+            self._try_freeze_performance_baseline(saved.pipeline_run_id)
             return saved
         except (PreconditionError, PromotionError, PromotionLockError) as exc:
             failed = run.model_copy(
@@ -401,6 +402,18 @@ class StrategyPromotionService:
             )
             self._writer.write_run(failed)
             raise PromotionError(str(exc)) from exc
+
+    def _try_freeze_performance_baseline(self, pipeline_run_id: str) -> None:
+        """8E 可选：晋升完成后冻结 ExpectedBaseline（失败不回滚 promotion）。"""
+        try:
+            from app.services.live_performance_feedback.runner import (
+                LivePerformanceFeedbackService,
+            )
+
+            fb = LivePerformanceFeedbackService(self._store, self._registry, promotion=self)
+            fb.freeze_baseline_from_promotion(pipeline_run_id)
+        except Exception:
+            pass
 
     def _patch_candidate_metadata(self, candidate_id: str, pipeline_run_id: str) -> None:
         if self._candidate_service is None:
