@@ -10,6 +10,7 @@ npm install
 npx wrangler d1 create l2_factors
 # 把返回的 database_id 写入 wrangler.toml
 npx wrangler d1 migrations apply l2_factors --remote
+# 含 0003_l2_factor_pipeline.sql：百因子元数据表（definitions/jobs/datasets/day_status）
 echo -n '<随机 token>' | npx wrangler secret put WORKER_TOKEN
 npx wrangler deploy
 ```

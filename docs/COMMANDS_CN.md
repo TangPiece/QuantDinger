@@ -983,11 +983,16 @@ D1_WORKER_TOKEN=<随机 token>
 | `QUANTDINGER_SKIP_APP_INIT=1 python scripts/migrate_r2_factors_to_d1.py --mode worker --date 20251009` | 不经 wrangler，直接经 Worker 批量写入 | 会写 D1 |
 | `./scripts/run_level2_factors.sh all --dry-run` | 只打印将要计算的日期 | 否 |
 | `./scripts/run_level2_factors.sh all status` | 查看因子进程 | 否 |
+| `./scripts/run_level2_l2_daily.sh 20261009` | **百因子新链路**：算 100 个日频因子，写本地/R2 `factors/l2_daily`，D1 只登记元数据 | 写 Parquet/R2/D1 元数据；**不写**热表 `l2_factors` |
+| `./scripts/run_level2_l2_daily.sh --start 20261001 --end 20261009 --groups trade` | 只跑成交组（可多组逗号分隔） | 同上 |
+| `./scripts/run_level2_l2_daily.sh 20261009 --force --no-r2` | 强制重算且不上传 R2 | 写本地 Parquet |
 | `./scripts/run_level2_upload.sh all` | 把**明细** Parquet 按 `STORAGE_BACKEND` 传到 R2 或百度网盘 | 会写远端 |
 | `./scripts/run_level2_upload.sh 20260506` | 只上传这一天的明细 | 会写远端 |
 | `python scripts/level2_baidu_oauth.py` | 用授权码换百度 token，写入 `.env` | 会改 `.env` |
 
 `run_level2_convert.sh all` 按日串行：解压 → 从 CSV 算因子 → 写 D1 → 达标删源，默认 8 进程，不写 `level2_staging/parquet` 明细。单日 `convert` 与 `run_level2_factors.sh` 仍可读已有明细 Parquet。都支持 `--workers N`；`--dry-run` 只调度日期。已写入 D1 的日期会跳过。图表/回测读侧以 D1 为真源（需配置 `D1_WORKER_URL` / `D1_WORKER_TOKEN`），并经本地 SQLite（`data/level2_d1_cache.sqlite`）做读缓存；默认约保留三年（`LEVEL2_FACTOR_CACHE_MAX_DAYS=1200`）、总体积上限约 2GB（`LEVEL2_FACTOR_CACHE_MAX_MB=2048`）。日文件只含基础列且发布后删除；云端表是 `l2_factors`，主键 `(trade_date, symbol)`。股票 R2 镜像已废弃（D1 有 `symbol, trade_date` 索引），`--mirror` 为 no-op。某一天因子写入失败时命令返回非 0，并保留 CSV/.7z 便于重试。
+
+百因子新链路 `run_level2_l2_daily.sh` 与上述热表链路**并行**：按 `trade` / `book` / `order` / `microstructure` 四组独立计算（缺某类明细不拖垮其他组），一次扫描成交同时产出基础/方向/大单。数值宽表落在 `data/level2_staging/factors/l2_daily/version=1/year=.../month=.../date=YYYYMMDD.parquet`（可用 `LEVEL2_L2_DAILY_ROOT`），满月可 compact 为 `part-000.parquet`；R2 键为 `factors/l2_daily/version=1/.../date=YYYYMMDD.parquet`（`R2_L2_DAILY_PREFIX`）。D1（`l2-factors-d1` migration `0003`）只登记 `l2_factor_definitions` / `l2_factor_jobs` / `l2_factor_datasets` / `l2_factor_day_status`，**不把 100 列数值写入 D1**。增量按日×组的 `source_version`（明细 size+mtime 摘要）跳过；`--force` 重算。图表读侧本阶段仍只读旧 17 列热表。
 
 百度按日流水线 `run_level2_baidu_factors.sh` 不读 staging 转换产物，直接从网盘拉当日全部股票的三类 Parquet 到 `data/level2_parquet`，下完再算、再写入 D1；成功后删掉当日本地明细，再处理下一日。默认 `--download-workers 1`，按批提交，本地已齐全的股票会跳过。百度请求全局串行；连续连接失败 5 次会熔断休眠 60 秒。当日下载成功率低于 90% 时不算、不上传，已下明细保留便于续跑。令牌过期刷新后写回 `.env`。`--dry-run` 只打印日历日。`--force` 忽略已上传标记。上传失败会停止后续日期，本地明细和日宽表会保留便于重试。若本机长期连不上 `pan.baidu.com`，需要先修网络。
 
