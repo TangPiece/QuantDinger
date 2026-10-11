@@ -14,7 +14,7 @@ def main(argv: list[str] | None = None) -> int:
     staging = config.STAGING_PARQUET / args.date
     if not staging.is_dir():
         print(f"missing staging: {staging}")
-        print(f"run: .venv/bin/python -m storage.convert_local --date {args.date}")
+        print(f"missing staging parquet for {args.date}; use existing convert_local or upload books first")
         return 1
 
     n = sum(1 for p in staging.rglob("*.parquet"))

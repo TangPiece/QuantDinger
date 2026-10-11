@@ -2,18 +2,15 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
-from app.services.level2_factors.book import default_parquet_directory
-from app.services.level2_ingest import config as ingest_config
-
 from .catalog import ALL_GROUPS, FACTOR_VERSION
-from .orchestrator import run
+from . import prepare, storage
+from .orchestrator import run, run_batch
 
 
-def _parse_dates(args: argparse.Namespace) -> list[str]:
+def _parse_explicit_dates(args: argparse.Namespace) -> list[str]:
     if args.dates:
         return [item.strip() for item in args.dates.split(",") if item.strip()]
     if args.start and args.end:
@@ -21,36 +18,37 @@ def _parse_dates(args: argparse.Namespace) -> list[str]:
         end = str(args.end)
         if not (start.isdigit() and end.isdigit() and len(start) == 8 and len(end) == 8):
             raise SystemExit("--start/--end 需要 YYYYMMDD")
-        # 从 parquet 根列举区间内已有日期
-        root = _parquet_root(args)
-        dates = []
+        root = Path(args.raw_dir or args.parquet_dir) if (args.raw_dir or args.parquet_dir) else prepare.default_raw_root()
+        dates: list[str] = []
         if root.is_dir():
             for child in sorted(root.iterdir()):
-                name = child.name
-                if child.is_dir() and name.isdigit() and len(name) == 8 and start <= name <= end:
-                    dates.append(name)
-        return dates
-    raise SystemExit("需要 --dates 或 --start/--end")
-
-
-def _parquet_root(args: argparse.Namespace) -> Path:
-    if args.parquet_dir:
-        return Path(args.parquet_dir)
-    env = os.getenv("LEVEL2_PARQUET_DIR", "").strip()
-    if env:
-        return Path(env)
-    staging = ingest_config.STAGING_PARQUET
-    if staging.is_dir():
-        return staging
-    return default_parquet_directory()
+                if child.is_dir() and child.name.isdigit() and len(child.name) == 8 and start <= child.name <= end:
+                    dates.append(child.name)
+                elif (
+                    child.is_file()
+                    and child.suffix == ".7z"
+                    and child.stem.isdigit()
+                    and len(child.stem) == 8
+                    and start <= child.stem <= end
+                ):
+                    dates.append(child.stem)
+        return sorted(set(dates))
+    return []
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="L2 百因子日频计算（并行新链路）")
+    parser = argparse.ArgumentParser(description="L2 百因子日频：解压(可选)→CSV 直算→本地/R2/D1 元数据")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="",
+        help="all | reupload | YYYYMMDD（也可只用 --dates）",
+    )
     parser.add_argument("--dates", default="", help="逗号分隔交易日 YYYYMMDD")
     parser.add_argument("--start", default="", help="起始交易日 YYYYMMDD")
     parser.add_argument("--end", default="", help="结束交易日 YYYYMMDD")
-    parser.add_argument("--parquet-dir", default="", help="明细 Parquet 根目录")
+    parser.add_argument("--raw-dir", default="", help="明细根（CSV/.7z），默认 LEVEL2_RAW_DIR / level2_raw")
+    parser.add_argument("--parquet-dir", default="", help="兼容旧名：同 --raw-dir，也可指向已有 Parquet 根")
     parser.add_argument("--output", default="", help="因子输出根，默认 LEVEL2_L2_DAILY_ROOT")
     parser.add_argument(
         "--groups",
@@ -61,36 +59,99 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-r2", action="store_true", help="不上传 R2")
     parser.add_argument("--no-compact", action="store_true", help="不跑月 compact")
     parser.add_argument("--no-seed", action="store_true", help="不写 D1 因子定义种子")
+    parser.add_argument("--no-delete", action="store_true", help="算完不删 CSV/.7z")
+    parser.add_argument("--keep-old-r2", action="store_true", help="reupload 时保留 R2 旧 Hive 键")
+    parser.add_argument("--local-only", action="store_true", help="只处理已解压目录")
+    parser.add_argument("--7z-only", action="store_true", dest="z7_only", help="只处理 .7z")
+    parser.add_argument("--dry-run", action="store_true", help="只调度/解压预览，不算因子")
     parser.add_argument("--factor-version", type=int, default=FACTOR_VERSION)
     args = parser.parse_args(argv)
 
-    dates = _parse_dates(args)
     groups = [g.strip() for g in args.groups.split(",") if g.strip()] or None
     if groups:
         unknown = set(groups) - set(ALL_GROUPS)
         if unknown:
             raise SystemExit(f"未知 factor_group: {sorted(unknown)}")
 
-    parquet_root = _parquet_root(args)
+    raw = Path(args.raw_dir or args.parquet_dir) if (args.raw_dir or args.parquet_dir) else prepare.default_raw_root()
     output = Path(args.output) if args.output else None
-    print(
-        f"l2_daily dates={len(dates)} groups={groups or list(ALL_GROUPS)} "
-        f"parquet={parquet_root} force={args.force}",
-        flush=True,
-    )
-    summary = run(
-        dates,
-        parquet_root=parquet_root,
-        output_root=output,
-        groups=groups,
-        force=args.force,
-        factor_version=args.factor_version,
-        upload_r2=not args.no_r2,
-        seed_defs=not args.no_seed,
-        compact_months=not args.no_compact,
-    )
+
+    if args.command == "reupload":
+        dates = _parse_explicit_dates(args)
+        summary = storage.reupload_local_days(
+            output,
+            dates=dates or None,
+            factor_version=args.factor_version,
+            delete_old_r2=not args.keep_old_r2,
+            dry_run=args.dry_run,
+        )
+        print(summary, flush=True)
+        return 1 if summary.get("missing") else 0
+
+    batch_mode = args.command == "all" or (not args.command and not args.dates and not (args.start and args.end))
+
+    # 显式 DATE 位置参数
+    if args.command and args.command != "all":
+        if not (args.command.isdigit() and len(args.command) == 8):
+            raise SystemExit(f"未知 command: {args.command}（需要 all、reupload 或 YYYYMMDD）")
+        dates = [args.command]
+        batch_mode = False
+    else:
+        dates = _parse_explicit_dates(args)
+
+    if batch_mode or args.command == "all" or (not dates and not args.command):
+        # all：扫描 raw；若给了 --dates/--start/--end 则限定范围
+        print(f"l2_daily batch raw={raw} force={args.force}", flush=True)
+        summary = run_batch(
+            raw_root=raw,
+            output_root=output,
+            groups=groups,
+            dates=dates or None,
+            force=args.force,
+            factor_version=args.factor_version,
+            upload_r2=not args.no_r2,
+            seed_defs=not args.no_seed,
+            compact_months=not args.no_compact,
+            delete_sources=not args.no_delete,
+            dry_run=args.dry_run,
+            local_only=args.local_only,
+            z7_only=args.z7_only,
+        )
+    else:
+        if not dates:
+            raise SystemExit("需要 all、YYYYMMDD、--dates 或 --start/--end")
+        # 显式日期：先 ensure CSV（可解压），再算；不默认删源（避免误删手动准备的目录）
+        # 与 all 一致：若未 --no-delete 则删。计划说每日成功后删。
+        for day in dates:
+            prepare.ensure_day_csv(day, raw, dry_run=args.dry_run)
+        if args.dry_run:
+            print({"dates": dates, "dry_run": True}, flush=True)
+            return 0
+        print(
+            f"l2_daily dates={len(dates)} groups={groups or list(ALL_GROUPS)} books={raw} force={args.force}",
+            flush=True,
+        )
+        summary = run(
+            dates,
+            books_root=raw,
+            output_root=output,
+            groups=groups,
+            force=args.force,
+            factor_version=args.factor_version,
+            upload_r2=not args.no_r2,
+            seed_defs=not args.no_seed,
+            compact_months=not args.no_compact,
+        )
+        if not args.no_delete and int(summary.get("failed") or 0) == 0:
+            deleted = []
+            for day in dates:
+                deleted.extend(prepare.delete_day_sources(day, raw))
+            summary["deleted"] = deleted
+
     print(summary, flush=True)
-    return 1 if int(summary.get("failed") or 0) > 0 and int(summary.get("processed") or 0) == 0 else 0
+    failed = int(summary.get("failed") or 0)
+    processed = int(summary.get("processed") or 0)
+    return 1 if failed > 0 and processed == 0 else 0
 
 
 if __name__ == "__main__":

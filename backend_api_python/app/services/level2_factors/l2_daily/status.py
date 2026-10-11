@@ -4,10 +4,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from app.services.level2_factors.book import book_path
-
 from . import meta
 from .catalog import FACTOR_VERSION, GROUP_BOOK, GROUP_MICROSTRUCTURE, GROUP_ORDER, GROUP_TRADE
+from .engine import source_file_path
 
 _GROUP_FILES = {
     GROUP_TRADE: ("逐笔成交",),
@@ -18,14 +17,14 @@ _GROUP_FILES = {
 
 
 def source_version_for_date(
-    parquet_root: Path,
+    books_root: Path,
     trade_date: str,
     factor_group: str,
     codes: list[str] | None = None,
 ) -> str:
-    """由当日相关明细文件的 size+mtime 摘要得到 source_version。"""
+    """由当日相关明细文件（CSV 优先，否则 Parquet）的 size+mtime 摘要得到 source_version。"""
     files = _GROUP_FILES.get(factor_group, ("行情", "逐笔成交", "逐笔委托"))
-    day = Path(parquet_root) / str(trade_date)
+    day = Path(books_root) / str(trade_date)
     digest = hashlib.sha256()
     digest.update(factor_group.encode("utf-8"))
     digest.update(str(trade_date).encode("utf-8"))
@@ -35,15 +34,18 @@ def source_version_for_date(
     selected = codes
     if selected is None:
         selected = sorted(child.name for child in day.iterdir() if child.is_dir())
-    # 限制扫描规模：最多取全部代码，摘要按路径排序
     for code in selected:
         for ftype in files:
-            path = book_path(parquet_root, trade_date, code, ftype)
-            if not path.is_file():
+            path = source_file_path(books_root, trade_date, code, ftype)
+            if path is None:
                 digest.update(f"missing:{code}:{ftype}".encode("utf-8"))
                 continue
             stat = path.stat()
-            digest.update(f"{code}:{ftype}:{stat.st_size}:{int(stat.st_mtime_ns)}".encode("utf-8"))
+            digest.update(
+                f"{code}:{ftype}:{path.suffix}:{stat.st_size}:{int(stat.st_mtime_ns)}".encode(
+                    "utf-8"
+                )
+            )
     return digest.hexdigest()[:16]
 
 

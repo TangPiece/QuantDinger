@@ -194,13 +194,38 @@ def test_storage_merge_compact_and_logical_uri(tmp_path, monkeypatch):
     assert panel.loc[0, "l2_trade_count"] == 1.0
 
     uri = storage.upload_day_to_r2(root, date)
-    assert uri == f"factors/l2_daily/version=1/year=2026/month=202610/date={date}.parquet"
+    assert uri == f"factors/l2_daily/v1/2026/202610/{date}.parquet"
     assert uploaded == [uri]
     assert not Path(uri).is_absolute()
 
     part = storage.compact_month(root, "202610")
     assert part is not None and part.is_file()
     assert len(pd.read_parquet(part)) == 1
+
+
+def test_upload_r2_once_after_all_groups(tmp_path, monkeypatch):
+    """多组算完后才上传一次日宽表，不是每组一次。"""
+    from app.services.level2_factors.l2_daily import orchestrator, storage
+
+    monkeypatch.setenv("R2_L2_DAILY_PREFIX", "factors/l2_daily")
+    books = tmp_path / "books"
+    date = "20261009"
+    _write_books(books, date, "000001")
+    uploaded: list[str] = []
+    storage.set_r2_uploader(lambda key, payload: uploaded.append(key))
+
+    summary = orchestrator.run(
+        [date],
+        parquet_root=books,
+        output_root=tmp_path / "factors",
+        groups=["trade", "book", "order"],
+        force=True,
+        upload_r2=True,
+        seed_defs=False,
+        compact_months=False,
+    )
+    assert summary["processed"] >= 3
+    assert uploaded == [f"factors/l2_daily/v1/2026/202610/{date}.parquet"]
 
 
 def test_incremental_skip_same_source_version(tmp_path, monkeypatch):

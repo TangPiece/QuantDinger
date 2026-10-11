@@ -87,38 +87,6 @@ def _write_symbol_csv(root: Path, date: str, code: str) -> None:
     (folder / "逐笔委托.csv").write_bytes(order_header.encode("gb18030"))
 
 
-def test_dry_run_does_not_calculate_factors(tmp_path, monkeypatch):
-    """整批转换的干跑只调度日期，不调用因子上传。"""
-    from app.services.level2_ingest import convert_all
-
-    (tmp_path / "20260929").mkdir()
-    monkeypatch.setattr(convert_all.config, "DATA_ROOT", tmp_path)
-    monkeypatch.setattr(
-        convert_all,
-        "convert_one_local",
-        lambda date, **_kwargs: {
-            "date": date,
-            "source": "local",
-            "stats": {"rows": 0, "symbols": 1, "uploaded": False, "skipped": False},
-            "ok": True,
-            "reason": "dry_run",
-        },
-    )
-    called = []
-    monkeypatch.setattr(
-        convert_all.factor_batch,
-        "write_trade_date",
-        lambda *args, **kwargs: called.append(("write", args, kwargs)) or None,
-    )
-    monkeypatch.setattr(
-        convert_all.factor_batch,
-        "_upload_factor_file",
-        lambda *args, **kwargs: called.append(("upload", args, kwargs)),
-    )
-    assert convert_all.main(["--dry-run", "--local-only"]) == 0
-    assert called == []
-
-
 def test_write_trade_date_from_csv(tmp_path):
     """三类 CSV 齐全时 source=csv 可写出日宽表。"""
     from app.services.level2_ingest.factor_batch import write_trade_date
@@ -141,48 +109,6 @@ def test_write_trade_date_from_csv(tmp_path):
     panel = pd.read_parquet(path)
     assert set(panel["symbol"]) == {"600000.SH", "000001.SZ"}
     assert list(panel.columns) == stored_columns()
-
-
-def test_convert_all_uploads_from_csv_without_staging_parquet(tmp_path, monkeypatch):
-    """convert_all 单日从 CSV 算因子并上传，不写 staging 明细 Parquet。"""
-    from app.services.level2_ingest import convert_all
-
-    date = "20260929"
-    raw = tmp_path / "raw"
-    staging = tmp_path / "staging"
-    factors = staging / "factors"
-    parquet = staging / "parquet"
-    _write_symbol_csv(raw, date, "600000.SH")
-    monkeypatch.setattr(convert_all.config, "DATA_ROOT", raw)
-    monkeypatch.setattr(convert_all.config, "STAGING_ROOT", staging)
-    monkeypatch.setattr(convert_all.config, "STAGING_PARQUET", parquet)
-    monkeypatch.setattr(convert_all, "_MIN_FACTOR_ROWS", 1)
-    monkeypatch.setattr(convert_all.factor_batch, "default_output_dir", lambda: factors)
-
-    uploaded: list[str] = []
-
-    def fake_upload(path, uploader):
-        del uploader
-        uploaded.append(path.name)
-        path.unlink(missing_ok=True)
-
-    monkeypatch.setattr(convert_all.factor_batch, "_upload_factor_file", fake_upload)
-    monkeypatch.setattr(convert_all, "delete_sources", lambda *_args, **_kwargs: [])
-
-    rec = convert_all.convert_one_local(
-        date,
-        delete=True,
-        dry_run=False,
-        skip_existing=True,
-        equities_only=True,
-        workers=1,
-    )
-    assert rec["ok"] is True
-    assert rec["stats"]["uploaded"] is True
-    assert rec["stats"]["rows"] == 1
-    assert uploaded == [f"{date}.parquet"]
-    assert not parquet.exists() or not any(parquet.rglob("*.parquet"))
-    assert (factors / "_uploaded" / f"{date}.json").is_file()
 
 
 def test_factor_main_dry_run_does_not_calculate(tmp_path, monkeypatch):
