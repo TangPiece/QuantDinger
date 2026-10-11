@@ -121,7 +121,7 @@ def test_list_experiments(client):
     assert "exp_demo" in ids
 
 
-def test_create_experiment(client):
+def test_create_experiment_frozen(client):
     resp = client.post(
         "/api/research/experiments",
         data=json.dumps(
@@ -133,10 +133,10 @@ def test_create_experiment(client):
         ),
         content_type="application/json",
     )
-    assert resp.status_code == 200
-    data = resp.get_json()["data"]
-    assert data["name"] == "New Exp"
-    assert data["dataset_ref"] == "ds_test@v1"
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["code"] == 0
+    assert body["msg"] == "experiment.writeFrozen"
 
 
 def test_alpha_factor_evaluation_empty(client):

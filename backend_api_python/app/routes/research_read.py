@@ -1,12 +1,10 @@
-"""Phase 10B: Research read API + minimal Experiment register (10E)."""
+"""Phase 10B/10B-R: Research read API; Experiment write frozen until SSOT Run exists."""
 
 from __future__ import annotations
 
-from flask import jsonify, request
-from pydantic import ValidationError
+from flask import jsonify
 
 from app.openapi.blueprint import HumanBlueprint as Blueprint
-from app.services.research_data.experiment_platform.protocol import ExperimentCreateSpec
 from app.services.research_data.experiment_platform.service import (
     ExperimentPlatformError,
     get_experiment_platform_service,
@@ -179,15 +177,8 @@ def get_experiment(experiment_id: str):
 @research_blp.route("/experiments", methods=["POST"])
 @login_required
 def create_experiment():
-    payload = request.get_json(silent=True) or {}
-    try:
-        spec = ExperimentCreateSpec.model_validate(payload)
-        item = get_experiment_platform_service().register_experiment(spec)
-    except ValidationError:
-        return _err("experiment.invalidPayload", 400)
-    except ExperimentPlatformError as exc:
-        return _err(str(exc), 400)
-    except Exception:
-        logger.exception("create experiment failed")
-        return _err("experiment.createFailed", 500)
-    return _ok(item.model_dump(mode="json"))
+    """Frozen in 10B-R: register-only POST was writing status=COMPLETED without a real ExperimentRun.
+
+    Keep GET list/detail. Re-enable write only when Experiment SSOT (Run/Job/Artifact) exists.
+    """
+    return _err("experiment.writeFrozen", 409)
