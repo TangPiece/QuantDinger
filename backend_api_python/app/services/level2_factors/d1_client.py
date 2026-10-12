@@ -17,9 +17,9 @@ _log = logging.getLogger(__name__)
 # 与 Worker 侧 MAX_BATCH_STATEMENTS 对齐。
 MAX_BATCH_STATEMENTS = 200
 _TIMEOUT = 120
-# 全量日宽表写入时偶发 ConnectTimeout，短退避重试避免半日残留。
-_POST_RETRIES = 4
-_POST_BACKOFF_SEC = (1.0, 2.0, 4.0, 8.0)
+# 全量日宽表写入时偶发 ConnectTimeout / SSLEOF，稍长退避避免半日残留。
+_POST_RETRIES = 6
+_POST_BACKOFF_SEC = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
 
 
 class D1WorkerError(RuntimeError):

@@ -2,12 +2,23 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from .catalog import ALL_GROUPS, FACTOR_VERSION
 from . import prepare, storage
 from .orchestrator import run, run_batch
+
+DEFAULT_WORKERS = 8
+
+
+def _default_workers() -> int:
+    raw = os.getenv("LEVEL2_L2_DAILY_WORKERS", str(DEFAULT_WORKERS)).strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_WORKERS
 
 
 def _parse_explicit_dates(args: argparse.Namespace) -> list[str]:
@@ -64,8 +75,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local-only", action="store_true", help="只处理已解压目录")
     parser.add_argument("--7z-only", action="store_true", dest="z7_only", help="只处理 .7z")
     parser.add_argument("--dry-run", action="store_true", help="只调度/解压预览，不算因子")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=_default_workers(),
+        help=f"同一日×组内按股票并行进程数（默认 {DEFAULT_WORKERS} 或 LEVEL2_L2_DAILY_WORKERS）",
+    )
     parser.add_argument("--factor-version", type=int, default=FACTOR_VERSION)
     args = parser.parse_args(argv)
+    workers = max(1, int(args.workers))
 
     groups = [g.strip() for g in args.groups.split(",") if g.strip()] or None
     if groups:
@@ -101,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if batch_mode or args.command == "all" or (not dates and not args.command):
         # all：扫描 raw；若给了 --dates/--start/--end 则限定范围
-        print(f"l2_daily batch raw={raw} force={args.force}", flush=True)
+        print(f"l2_daily batch raw={raw} force={args.force} workers={workers}", flush=True)
         summary = run_batch(
             raw_root=raw,
             output_root=output,
@@ -116,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             local_only=args.local_only,
             z7_only=args.z7_only,
+            workers=workers,
         )
     else:
         if not dates:
@@ -128,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
             print({"dates": dates, "dry_run": True}, flush=True)
             return 0
         print(
-            f"l2_daily dates={len(dates)} groups={groups or list(ALL_GROUPS)} books={raw} force={args.force}",
+            f"l2_daily dates={len(dates)} groups={groups or list(ALL_GROUPS)} "
+            f"books={raw} force={args.force} workers={workers}",
             flush=True,
         )
         summary = run(
@@ -141,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             upload_r2=not args.no_r2,
             seed_defs=not args.no_seed,
             compact_months=not args.no_compact,
+            workers=workers,
         )
         if not args.no_delete and int(summary.get("failed") or 0) == 0:
             deleted = []

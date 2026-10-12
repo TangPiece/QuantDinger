@@ -228,6 +228,75 @@ def test_upload_r2_once_after_all_groups(tmp_path, monkeypatch):
     assert uploaded == [f"factors/l2_daily/v1/2026/202610/{date}.parquet"]
 
 
+def test_finish_job_failure_does_not_abort_upload(tmp_path, monkeypatch):
+    """D1 finish_job / create_job 失败时仍完成本地计算并上传 R2。"""
+    from app.services.level2_factors.l2_daily import meta, orchestrator, storage
+
+    monkeypatch.setenv("R2_L2_DAILY_PREFIX", "factors/l2_daily")
+    books = tmp_path / "books"
+    date = "20261009"
+    _write_books(books, date, "000001")
+    uploaded: list[str] = []
+    storage.set_r2_uploader(lambda key, payload: uploaded.append(key))
+
+    def boom_create(**_kwargs):
+        raise RuntimeError("D1 create_job ssl blip")
+
+    def boom_finish(*_args, **_kwargs):
+        raise RuntimeError("D1 finish_job ssl blip")
+
+    monkeypatch.setattr(meta, "create_job", boom_create)
+    monkeypatch.setattr(meta, "finish_job", boom_finish)
+
+    summary = orchestrator.run(
+        [date],
+        parquet_root=books,
+        output_root=tmp_path / "factors",
+        groups=["trade"],
+        force=True,
+        upload_r2=True,
+        seed_defs=False,
+        compact_months=False,
+    )
+    assert summary["processed"] == 1
+    assert summary["failed"] == 0
+    assert uploaded == [f"factors/l2_daily/v1/2026/202610/{date}.parquet"]
+
+
+def test_workers_two_symbols_match_serial(tmp_path, monkeypatch):
+    """workers=2 与 workers=1 对两只股票产出相同行数与关键因子值。"""
+    from app.services.level2_factors.l2_daily import orchestrator, storage
+
+    monkeypatch.setenv("R2_L2_DAILY_PREFIX", "factors/l2_daily")
+    books = tmp_path / "books"
+    date = "20261009"
+    _write_books(books, date, "000001")
+    _write_books(books, date, "600000")
+    storage.set_r2_uploader(lambda key, payload: None)
+
+    serial_root = tmp_path / "factors_serial"
+    parallel_root = tmp_path / "factors_parallel"
+    common = dict(
+        parquet_root=books,
+        groups=["trade"],
+        force=True,
+        upload_r2=False,
+        seed_defs=False,
+        compact_months=False,
+    )
+    serial = orchestrator.run([date], output_root=serial_root, workers=1, **common)
+    parallel = orchestrator.run([date], output_root=parallel_root, workers=2, **common)
+    assert serial["processed"] == 1
+    assert parallel["processed"] == 1
+    assert serial["rows"] == parallel["rows"] == 2
+
+    left = storage.read_day(serial_root, date).sort_values("symbol").reset_index(drop=True)
+    right = storage.read_day(parallel_root, date).sort_values("symbol").reset_index(drop=True)
+    assert list(left["symbol"]) == list(right["symbol"]) == ["000001", "600000"]
+    for column in ("l2_trade_count", "l2_trade_volume", "l2_vwap"):
+        assert np.allclose(left[column].to_numpy(), right[column].to_numpy(), equal_nan=True)
+
+
 def test_incremental_skip_same_source_version(tmp_path, monkeypatch):
     from app.services.level2_factors.l2_daily import orchestrator, storage
 

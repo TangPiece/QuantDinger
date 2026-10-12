@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 from . import meta, prepare, status, storage
@@ -9,6 +10,51 @@ from .catalog import ALL_GROUPS, FACTOR_VERSION, factor_ids_for_group, schema_ha
 from .engine import calc_group_day, list_codes
 
 _log = logging.getLogger(__name__)
+
+
+def _create_job_soft(
+    *,
+    factor_group: str,
+    start_date: str,
+    end_date: str,
+    factor_version: int,
+) -> str:
+    """创建 D1 job；失败时用本地 UUID 继续算，不阻断流水线。"""
+    try:
+        return meta.create_job(
+            factor_group=factor_group,
+            start_date=start_date,
+            end_date=end_date,
+            factor_version=factor_version,
+        )
+    except Exception:
+        job_id = uuid.uuid4().hex
+        _log.warning(
+            "创建 l2_daily job 失败 %s（继续本地计算 job_id=%s）",
+            factor_group,
+            job_id,
+            exc_info=True,
+        )
+        return job_id
+
+
+def _finish_job_soft(
+    job_id: str,
+    *,
+    status: str,
+    rows_processed: int = 0,
+    error_message: str | None = None,
+) -> None:
+    """写回 D1 job 状态；失败只记日志，不抛出。"""
+    try:
+        meta.finish_job(
+            job_id,
+            status=status,
+            rows_processed=rows_processed,
+            error_message=error_message,
+        )
+    except Exception:
+        _log.warning("写 job 状态失败 %s status=%s", job_id, status, exc_info=True)
 
 
 def run(
@@ -23,16 +69,19 @@ def run(
     upload_r2: bool = True,
     seed_defs: bool = True,
     compact_months: bool = True,
+    workers: int = 1,
 ) -> dict[str, object]:
     """执行增量计算。返回摘要。
 
     ``books_root`` 为明细根（CSV 或 Parquet）。``parquet_root`` 为兼容旧参数名的别名。
+    ``workers`` 为同一日×组内按股票并行的进程数。
     """
     root = Path(output_root) if output_root is not None else storage.default_root()
     root.mkdir(parents=True, exist_ok=True)
     books = Path(books_root if books_root is not None else parquet_root or prepare.default_raw_root())
     selected_groups = list(groups) if groups else list(ALL_GROUPS)
     ordered_dates = sorted({str(d) for d in dates if str(d).isdigit() and len(str(d)) == 8})
+    pool_workers = max(1, int(workers))
 
     if seed_defs:
         try:
@@ -54,7 +103,7 @@ def run(
     for factor_group in selected_groups:
         if not ordered_dates:
             break
-        job_id = meta.create_job(
+        job_id = _create_job_soft(
             factor_group=factor_group,
             start_date=ordered_dates[0],
             end_date=ordered_dates[-1],
@@ -71,6 +120,7 @@ def run(
                     output_root=root,
                     force=force,
                     factor_version=factor_version,
+                    workers=pool_workers,
                 )
                 if result["status"] == "skipped":
                     summary["skipped"] = int(summary["skipped"]) + 1
@@ -83,7 +133,7 @@ def run(
                 else:
                     summary["failed"] = int(summary["failed"]) + 1
                     job_error = str(result.get("error") or job_error or "group failed")
-            meta.finish_job(
+            _finish_job_soft(
                 job_id,
                 status="failed" if job_error and not job_rows else "done",
                 rows_processed=job_rows,
@@ -91,7 +141,12 @@ def run(
             )
         except Exception as exc:
             _log.exception("l2_daily job 失败 %s", factor_group)
-            meta.finish_job(job_id, status="failed", rows_processed=job_rows, error_message=str(exc))
+            _finish_job_soft(
+                job_id,
+                status="failed",
+                rows_processed=job_rows,
+                error_message=str(exc),
+            )
             summary["failed"] = int(summary["failed"]) + 1
 
     # 所选因子组全部算完后再按日上传一次
@@ -129,6 +184,7 @@ def run_batch(
     dry_run: bool = False,
     local_only: bool = False,
     z7_only: bool = False,
+    workers: int = 1,
 ) -> dict[str, object]:
     """扫描 raw：阶段 A 已解压 CSV，阶段 B 逐日解压；算百因子后可选删源。"""
     root = Path(raw_root) if raw_root is not None else prepare.default_raw_root()
@@ -137,6 +193,7 @@ def run_batch(
     all_7z = prepare.discover_7z_dates(root, only)
     local_set = set(local_dates)
     z7_dates = [] if local_only else [d for d in all_7z if d not in local_set]
+    pool_workers = max(1, int(workers))
 
     # 显式 dates 时：本地与 7z 都没有的日期仍排入计划，由 ensure_day_csv 失败并停后续
     if only:
@@ -155,7 +212,7 @@ def run_batch(
 
     print(
         f"l2_daily batch raw={root} local={len(local_dates)} 7z={len(z7_dates)} "
-        f"planned={len(planned)} delete={delete_sources} dry_run={dry_run}",
+        f"planned={len(planned)} workers={pool_workers} delete={delete_sources} dry_run={dry_run}",
         flush=True,
     )
     if local_dates:
@@ -203,6 +260,7 @@ def run_batch(
             upload_r2=upload_r2,
             seed_defs=seed_defs,
             compact_months=compact_months,
+            workers=pool_workers,
         )
         summary["dates"].append(trade_date)  # type: ignore[union-attr]
         summary["processed"] = int(summary["processed"]) + int(day_summary.get("processed") or 0)
@@ -234,6 +292,7 @@ def process_day_group(
     output_root: Path,
     force: bool = False,
     factor_version: int = FACTOR_VERSION,
+    workers: int = 1,
 ) -> dict[str, object]:
     """计算并合并一组到本地日宽表；不上传 R2（由 run 日终统一上传）。"""
     books = Path(books_root if books_root is not None else parquet_root or prepare.default_raw_root())
@@ -269,7 +328,13 @@ def process_day_group(
             "error": "no symbols",
         }
 
-    rows, status_rows, ok, fail = calc_group_day(books, trade_date, factor_group, codes=codes)
+    rows, status_rows, ok, fail = calc_group_day(
+        books,
+        trade_date,
+        factor_group,
+        codes=codes,
+        workers=max(1, int(workers)),
+    )
     for item in status_rows:
         item["source_version"] = source_version
 

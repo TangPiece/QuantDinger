@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from .groups import (
 
 _log = logging.getLogger(__name__)
 _FILE_TYPES = ("行情", "逐笔成交", "逐笔委托")
+_PROGRESS_EVERY = 100
 
 
 def source_file_path(root: Path, date: str, code: str, ftype: str) -> Path | None:
@@ -94,46 +96,136 @@ def calc_group_for_symbol(
     return row
 
 
+def calc_group_for_symbol_worker(
+    trade_date: str,
+    code: str,
+    books_root: str,
+    factor_group: str,
+) -> dict[str, Any] | None:
+    """子进程入口：参数均为可 pickle 的基本类型。"""
+    return calc_group_for_symbol(Path(books_root), trade_date, code, factor_group)
+
+
+def _emit_symbol_progress(trade_date: str, factor_group: str, done: int, total: int) -> None:
+    """每完成一批股票打印一次，最后一只也打印。"""
+    if total <= 0:
+        return
+    if done == total or done % _PROGRESS_EVERY == 0:
+        print(f"[{trade_date}] {factor_group} 已完成 {done}/{total}", flush=True)
+
+
+def _append_symbol_result(
+    *,
+    trade_date: str,
+    code: str,
+    factor_group: str,
+    result: dict[str, Any] | None,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    status_rows: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """把单股结果写入 rows/status_rows，返回 (ok_delta, fail_delta)。"""
+    if result is None:
+        status_rows.append(
+            {
+                "symbol": code,
+                "factor_group": factor_group,
+                "status": "failed",
+                "source_version": "",
+            }
+        )
+        return 0, 1
+    slim = {"trade_date": trade_date, "symbol": code}
+    for column in columns:
+        slim[column] = result.get(column, float("nan"))
+    rows.append(slim)
+    status_rows.append(
+        {
+            "symbol": code,
+            "factor_group": factor_group,
+            "status": "done",
+            "source_version": "",
+        }
+    )
+    return 1, 0
+
+
 def calc_group_day(
     books_root: Path,
     trade_date: str,
     factor_group: str,
     *,
     codes: list[str] | None = None,
+    workers: int = 1,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int]:
-    """返回 (factor_rows, status_rows, ok, fail)。"""
+    """返回 (factor_rows, status_rows, ok, fail)。
+
+    ``workers`` > 1 且股票数 > 1 时用进程池按股票并行；否则顺序计算。
+    """
     selected = codes if codes is not None else list_codes(books_root, trade_date)
     rows: list[dict[str, Any]] = []
     status_rows: list[dict[str, Any]] = []
     ok = 0
     fail = 0
     columns = factor_ids_for_group(factor_group)
-    for code in selected:
-        result = calc_group_for_symbol(books_root, trade_date, code, factor_group)
-        if result is None:
-            fail += 1
-            status_rows.append(
-                {
-                    "symbol": code,
-                    "factor_group": factor_group,
-                    "status": "failed",
-                    "source_version": "",
-                }
+    total = len(selected)
+    pool_workers = max(1, int(workers))
+
+    if pool_workers <= 1 or total <= 1:
+        for done, code in enumerate(selected, start=1):
+            result = calc_group_for_symbol(books_root, trade_date, code, factor_group)
+            d_ok, d_fail = _append_symbol_result(
+                trade_date=trade_date,
+                code=code,
+                factor_group=factor_group,
+                result=result,
+                columns=columns,
+                rows=rows,
+                status_rows=status_rows,
             )
-            continue
-        ok += 1
-        slim = {"trade_date": trade_date, "symbol": code}
-        for column in columns:
-            slim[column] = result.get(column, float("nan"))
-        rows.append(slim)
-        status_rows.append(
-            {
-                "symbol": code,
-                "factor_group": factor_group,
-                "status": "done",
-                "source_version": "",
-            }
-        )
+            ok += d_ok
+            fail += d_fail
+            _emit_symbol_progress(trade_date, factor_group, done, total)
+    else:
+        root_str = str(books_root)
+        with ProcessPoolExecutor(max_workers=min(pool_workers, total)) as pool:
+            futures = [
+                pool.submit(
+                    calc_group_for_symbol_worker,
+                    trade_date,
+                    code,
+                    root_str,
+                    factor_group,
+                )
+                for code in selected
+            ]
+            for done, (code, future) in enumerate(zip(selected, futures), start=1):
+                try:
+                    result = future.result()
+                except Exception:
+                    _log.warning(
+                        "l2_daily 并行计算异常 %s %s %s",
+                        trade_date,
+                        code,
+                        factor_group,
+                        exc_info=True,
+                    )
+                    result = None
+                d_ok, d_fail = _append_symbol_result(
+                    trade_date=trade_date,
+                    code=code,
+                    factor_group=factor_group,
+                    result=result,
+                    columns=columns,
+                    rows=rows,
+                    status_rows=status_rows,
+                )
+                ok += d_ok
+                fail += d_fail
+                _emit_symbol_progress(trade_date, factor_group, done, total)
+
+    rows.sort(key=lambda item: str(item.get("symbol") or ""))
+    status_rows.sort(key=lambda item: str(item.get("symbol") or ""))
     return rows, status_rows, ok, fail
 
 

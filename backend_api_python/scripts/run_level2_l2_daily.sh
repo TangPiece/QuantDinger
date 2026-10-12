@@ -33,6 +33,7 @@ usage() {
   --groups trade,book,order,microstructure
   --raw-dir DIR
   --output DIR
+  --workers N          同一日×组内按股票并行进程数（默认 8 或 LEVEL2_L2_DAILY_WORKERS）
   --force
   --no-r2
   --no-compact
@@ -44,6 +45,7 @@ usage() {
 
 示例:
   ./scripts/run_level2_l2_daily.sh all
+  ./scripts/run_level2_l2_daily.sh all --workers 4
   ./scripts/run_level2_l2_daily.sh all --no-delete
   ./scripts/run_level2_l2_daily.sh 20261009
   ./scripts/run_level2_l2_daily.sh 20261009 --force --no-r2
