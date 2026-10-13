@@ -103,7 +103,10 @@ class DataQuery:
         exchange: str = "CN",
         snapshot_id: Optional[str] = None,
     ) -> pd.DataFrame:
-        """PIT：available_time <= knowledge_time，再按 available_time/revision 取最新。"""
+        """PIT：available_time <= knowledge_time，再取最新报告期 → 最新 revision → 最晚 available_time。
+
+        旧报告期的迟到更正不得覆盖已可见的新报告期。
+        """
         del snapshot_id
         kt = _as_utc(knowledge_time)
         frames: list[pd.DataFrame] = []
@@ -131,11 +134,17 @@ class DataQuery:
         if out.empty:
             return out.reset_index(drop=True)
         out["revision"] = out.get("revision", 0).fillna(0).astype(int)
-        out = out.sort_values(
-            ["instrument_key", "metric_code", "available_time", "revision"],
-            ascending=[True, True, False, False],
-        )
+        sort_cols = ["instrument_key", "metric_code"]
+        ascending = [True, True]
+        if "report_period_end" in out.columns:
+            out["_rpe_sort"] = pd.to_datetime(out["report_period_end"])
+            sort_cols.append("_rpe_sort")
+            ascending.append(False)
+        sort_cols += ["revision", "available_time"]
+        ascending += [False, False]
+        out = out.sort_values(sort_cols, ascending=ascending)
         out = out.drop_duplicates(subset=["instrument_key", "metric_code"], keep="first")
+        out = out.drop(columns=["_rpe_sort"], errors="ignore")
         return out.reset_index(drop=True)
 
     def universe(

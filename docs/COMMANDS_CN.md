@@ -64,6 +64,26 @@ QUANTDINGER_SKIP_APP_INIT=1 python scripts/build_golden_dataset.py \
   --start 2020-01-01 --end 2025-12-31
 ```
 
+## A 股财务因子 fund_cn_basic@v1
+
+设计说明：[docs/data/fund_cn/README.md](data/fund_cn/README.md)。数值进 Canonical PIT + `qd/factor`；D1 只登记元数据，**不写** `l2_factors` 热表。
+
+| 命令 | 作用 |
+| --- | --- |
+| `./scripts/run_fund_cn.sh catalog` | 打印 30 因子与 RAW/COMPUTE/PIT 三态门禁 |
+| `./scripts/run_fund_cn.sh coverage --root ...` | 对 staging 做覆盖率门禁 |
+| `./scripts/run_fund_cn.sh pit --root ...` | staging → `qd/canonical/fundamental/pit` |
+| `./scripts/run_fund_cn.sh compute --instruments CNStock:000001 --dates 2024-04-01` | 日面板 forward-fill / 估值（需 staging） |
+| `./scripts/run_fund_cn.sh register` | 注册 MVP 因子到 Factor Lab（LocalJson） |
+| `./scripts/run_fund_cn.sh promote --factor-id roic` | 字段实测后升格三态门禁 |
+
+离线/单测注入：`orchestrator.run_pipeline(..., statement_rows=..., announce_rows=..., market=...)`。
+
+```bash
+cd backend_api_python
+QUANTDINGER_SKIP_APP_INIT=1 .test_deps/py312/bin/python -m pytest tests/research_data/test_fund_cn.py -q --confcutdir=tests/research_data
+```
+
 物化 Qlib 派生缓存（经 DataQuery；`--wipe` 删后重建）：
 
 ```bash
