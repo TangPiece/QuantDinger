@@ -180,3 +180,104 @@ def test_run_batch_from_7z_then_calc(tmp_path, monkeypatch):
     assert summary["failed"] == 0
     assert not (raw / date).exists()
     assert not (raw / f"{date}.7z").exists()
+
+
+def test_run_batch_all_rescans_new_7z(tmp_path, monkeypatch):
+    """纯 all：第一波跑完后发现新 .7z，自动开第二波。"""
+    from app.services.level2_factors.l2_daily import orchestrator
+
+    date1 = "20261015"
+    date2 = "20261016"
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / f"{date1}.7z").write_bytes(b"fake")
+    run_calls: list[str] = []
+
+    def fake_extract(seven_z, *, dest_root=None):
+        dest = Path(dest_root or raw)
+        stem = Path(seven_z).stem
+        _write_symbol_csv(dest, stem, "600000.SH")
+        return dest / stem
+
+    def fake_run(dates, **kwargs):
+        trade_date = dates[0]
+        run_calls.append(trade_date)
+        return {"processed": 1, "skipped": 0, "failed": 0, "rows": 1, "dates": dates}
+
+    real_delete = orchestrator.prepare.delete_day_sources
+
+    def delete_then_drop_second(trade_date, root, dry_run=False):
+        removed = real_delete(trade_date, root, dry_run=dry_run)
+        if trade_date == date1 and not (raw / f"{date2}.7z").exists():
+            (raw / f"{date2}.7z").write_bytes(b"fake")
+        return removed
+
+    monkeypatch.setattr(
+        "app.services.level2_ingest.extract.extract_archive",
+        fake_extract,
+    )
+    monkeypatch.setattr(orchestrator, "run", fake_run)
+    monkeypatch.setattr(
+        "app.services.level2_factors.l2_daily.prepare.delete_day_sources",
+        delete_then_drop_second,
+    )
+    summary = orchestrator.run_batch(
+        raw_root=raw,
+        output_root=tmp_path / "out",
+        groups=["trade"],
+        force=True,
+        upload_r2=False,
+        seed_defs=False,
+        compact_months=False,
+        delete_sources=True,
+        z7_only=True,
+    )
+    assert summary["failed"] == 0
+    assert summary["dates"] == [date1, date2]
+    assert run_calls == [date1, date2]
+    assert summary["processed"] == 2
+    assert not (raw / f"{date1}.7z").exists()
+    assert not (raw / f"{date2}.7z").exists()
+
+
+def test_run_batch_all_no_delete_does_not_loop(tmp_path, monkeypatch):
+    """--no-delete 时同一 .7z 不会因重扫死循环。"""
+    from app.services.level2_factors.l2_daily import orchestrator
+
+    date = "20261017"
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / f"{date}.7z").write_bytes(b"fake")
+    run_calls: list[str] = []
+
+    def fake_extract(seven_z, *, dest_root=None):
+        dest = Path(dest_root or raw)
+        stem = Path(seven_z).stem
+        _write_symbol_csv(dest, stem, "600000.SH")
+        return dest / stem
+
+    def fake_run(dates, **kwargs):
+        run_calls.append(dates[0])
+        assert len(run_calls) <= 2, "run_batch 因重扫陷入死循环"
+        return {"processed": 1, "skipped": 0, "failed": 0, "rows": 1, "dates": dates}
+
+    monkeypatch.setattr(
+        "app.services.level2_ingest.extract.extract_archive",
+        fake_extract,
+    )
+    monkeypatch.setattr(orchestrator, "run", fake_run)
+    summary = orchestrator.run_batch(
+        raw_root=raw,
+        output_root=tmp_path / "out",
+        groups=["trade"],
+        force=True,
+        upload_r2=False,
+        seed_defs=False,
+        compact_months=False,
+        delete_sources=False,
+        z7_only=True,
+    )
+    assert summary["failed"] == 0
+    assert summary["dates"] == [date]
+    assert run_calls == [date]
+    assert (raw / f"{date}.7z").exists()

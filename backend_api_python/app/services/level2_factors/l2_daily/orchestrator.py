@@ -169,6 +169,35 @@ def run(
     return summary
 
 
+def _discover_batch_dates(
+    root: Path,
+    *,
+    only: list[str] | None,
+    local_only: bool,
+    z7_only: bool,
+) -> tuple[list[str], list[str], list[str]]:
+    """返回 (local_dates, z7_dates, planned)。显式 only 时缺失日仍入 planned。"""
+    local_dates = [] if z7_only else prepare.discover_local_dates(root, only)
+    all_7z = prepare.discover_7z_dates(root, only)
+    local_set = set(local_dates)
+    z7_dates = [] if local_only else [d for d in all_7z if d not in local_set]
+
+    if only:
+        planned = sorted(set(only))
+        if local_only:
+            planned = [d for d in planned if d in local_set]
+        elif z7_only:
+            planned = [d for d in planned if d in set(all_7z)]
+        else:
+            # 已解压优先，其余按 only 顺序走解压/失败
+            planned = [d for d in planned if d in local_set] + [
+                d for d in planned if d not in local_set
+            ]
+    else:
+        planned = local_dates + z7_dates
+    return local_dates, z7_dates, planned
+
+
 def run_batch(
     *,
     raw_root: Path | None = None,
@@ -186,39 +215,15 @@ def run_batch(
     z7_only: bool = False,
     workers: int = 1,
 ) -> dict[str, object]:
-    """扫描 raw：阶段 A 已解压 CSV，阶段 B 逐日解压；算百因子后可选删源。"""
+    """扫描 raw：阶段 A 已解压 CSV，阶段 B 逐日解压；算百因子后可选删源。
+
+    纯 ``all``（无显式 dates）时：每波跑完立刻重扫；有尚未处理的新日期则续批，
+    否则结束。显式日期只跑一波。失败日停跑且不续批。
+    """
     root = Path(raw_root) if raw_root is not None else prepare.default_raw_root()
     only = list(dates) if dates else None
-    local_dates = [] if z7_only else prepare.discover_local_dates(root, only)
-    all_7z = prepare.discover_7z_dates(root, only)
-    local_set = set(local_dates)
-    z7_dates = [] if local_only else [d for d in all_7z if d not in local_set]
     pool_workers = max(1, int(workers))
-
-    # 显式 dates 时：本地与 7z 都没有的日期仍排入计划，由 ensure_day_csv 失败并停后续
-    if only:
-        planned = sorted(set(only))
-        if local_only:
-            planned = [d for d in planned if d in local_set]
-        elif z7_only:
-            planned = [d for d in planned if d in set(all_7z)]
-        else:
-            # 已解压优先，其余按 only 顺序走解压/失败
-            planned = [d for d in planned if d in local_set] + [
-                d for d in planned if d not in local_set
-            ]
-    else:
-        planned = local_dates + z7_dates
-
-    print(
-        f"l2_daily batch raw={root} local={len(local_dates)} 7z={len(z7_dates)} "
-        f"planned={len(planned)} workers={pool_workers} delete={delete_sources} dry_run={dry_run}",
-        flush=True,
-    )
-    if local_dates:
-        print(f"  阶段A local CSV: {local_dates}", flush=True)
-    if z7_dates:
-        print(f"  阶段B 7z 串行: {z7_dates}", flush=True)
+    allow_rescan = only is None
 
     summary = {
         "dates": [],
@@ -229,56 +234,86 @@ def run_batch(
         "rows": 0,
         "deleted": [],
     }
-    if not planned:
-        print("无可处理日期", flush=True)
-        summary["failed"] = 1
-        return summary
+    seen: set[str] = set()
+    wave = 0
+    stop_batch = False
 
-    for trade_date in planned:
-        try:
-            prepare.ensure_day_csv(trade_date, root, dry_run=dry_run)
-        except Exception as exc:
-            _log.exception("准备 CSV 失败 %s", trade_date)
-            print(f"[{trade_date}] 准备失败: {exc}，停止后续", flush=True)
-            summary["failed"] = int(summary["failed"]) + 1
-            break
-
-        if dry_run:
-            codes = list_codes(root, trade_date)
-            print(f"[{trade_date}] dry-run symbols={len(codes)}", flush=True)
-            summary["dates"].append(trade_date)  # type: ignore[union-attr]
-            summary["skipped"] = int(summary["skipped"]) + 1
-            continue
-
-        day_summary = run(
-            [trade_date],
-            books_root=root,
-            output_root=output_root,
-            groups=groups,
-            force=force,
-            factor_version=factor_version,
-            upload_r2=upload_r2,
-            seed_defs=seed_defs,
-            compact_months=compact_months,
-            workers=pool_workers,
+    while True:
+        local_dates, z7_dates, discovered = _discover_batch_dates(
+            root, only=only, local_only=local_only, z7_only=z7_only
         )
-        summary["dates"].append(trade_date)  # type: ignore[union-attr]
-        summary["processed"] = int(summary["processed"]) + int(day_summary.get("processed") or 0)
-        summary["skipped"] = int(summary["skipped"]) + int(day_summary.get("skipped") or 0)
-        summary["failed"] = int(summary["failed"]) + int(day_summary.get("failed") or 0)
-        summary["rows"] = int(summary["rows"]) + int(day_summary.get("rows") or 0)
-
-        day_failed = int(day_summary.get("failed") or 0)
-        day_ok = int(day_summary.get("processed") or 0) + int(day_summary.get("skipped") or 0)
-        if day_failed > 0 and int(day_summary.get("processed") or 0) == 0:
-            print(f"[{trade_date}] 当日失败，停止后续解压", flush=True)
+        planned = [d for d in discovered if d not in seen]
+        if not planned:
+            if wave == 0:
+                print("无可处理日期", flush=True)
+                summary["failed"] = 1
+            else:
+                print(f"l2_daily batch 无新日期，结束（waves={wave}）", flush=True)
             break
-        if delete_sources and day_failed == 0 and day_ok > 0:
-            removed = prepare.delete_day_sources(trade_date, root, dry_run=False)
-            summary["deleted"].extend(removed)  # type: ignore[union-attr]
-            print(f"[{trade_date}] 已删源 {removed}", flush=True)
-        # 仅第一日之后不再重复 seed
-        seed_defs = False
+
+        wave += 1
+        print(
+            f"l2_daily batch wave={wave} raw={root} local={len(local_dates)} "
+            f"7z={len(z7_dates)} planned={len(planned)} workers={pool_workers} "
+            f"delete={delete_sources} dry_run={dry_run}",
+            flush=True,
+        )
+        if local_dates:
+            print(f"  阶段A local CSV: {local_dates}", flush=True)
+        if z7_dates:
+            print(f"  阶段B 7z 串行: {z7_dates}", flush=True)
+
+        for trade_date in planned:
+            seen.add(trade_date)
+            try:
+                prepare.ensure_day_csv(trade_date, root, dry_run=dry_run)
+            except Exception as exc:
+                _log.exception("准备 CSV 失败 %s", trade_date)
+                print(f"[{trade_date}] 准备失败: {exc}，停止后续", flush=True)
+                summary["failed"] = int(summary["failed"]) + 1
+                stop_batch = True
+                break
+
+            if dry_run:
+                codes = list_codes(root, trade_date)
+                print(f"[{trade_date}] dry-run symbols={len(codes)}", flush=True)
+                summary["dates"].append(trade_date)  # type: ignore[union-attr]
+                summary["skipped"] = int(summary["skipped"]) + 1
+                continue
+
+            day_summary = run(
+                [trade_date],
+                books_root=root,
+                output_root=output_root,
+                groups=groups,
+                force=force,
+                factor_version=factor_version,
+                upload_r2=upload_r2,
+                seed_defs=seed_defs,
+                compact_months=compact_months,
+                workers=pool_workers,
+            )
+            summary["dates"].append(trade_date)  # type: ignore[union-attr]
+            summary["processed"] = int(summary["processed"]) + int(day_summary.get("processed") or 0)
+            summary["skipped"] = int(summary["skipped"]) + int(day_summary.get("skipped") or 0)
+            summary["failed"] = int(summary["failed"]) + int(day_summary.get("failed") or 0)
+            summary["rows"] = int(summary["rows"]) + int(day_summary.get("rows") or 0)
+
+            day_failed = int(day_summary.get("failed") or 0)
+            day_ok = int(day_summary.get("processed") or 0) + int(day_summary.get("skipped") or 0)
+            if day_failed > 0 and int(day_summary.get("processed") or 0) == 0:
+                print(f"[{trade_date}] 当日失败，停止后续解压", flush=True)
+                stop_batch = True
+                break
+            if delete_sources and day_failed == 0 and day_ok > 0:
+                removed = prepare.delete_day_sources(trade_date, root, dry_run=False)
+                summary["deleted"].extend(removed)  # type: ignore[union-attr]
+                print(f"[{trade_date}] 已删源 {removed}", flush=True)
+            # 仅第一日之后不再重复 seed
+            seed_defs = False
+
+        if stop_batch or not allow_rescan:
+            break
 
     return summary
 

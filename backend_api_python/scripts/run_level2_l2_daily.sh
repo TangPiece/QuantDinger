@@ -26,7 +26,8 @@ usage() {
   run_level2_l2_daily.sh --start YYYYMMDD --end YYYYMMDD [选项]
 
   all     扫描 data/level2_raw：已解压 CSV 优先，再逐日解压 .7z，
-          直接用 CSV 算百因子 → 本地/R2 + D1 元数据；达标后删 CSV/.7z
+          直接用 CSV 算百因子 → 本地/R2 + D1 元数据；达标后删 CSV/.7z。
+          每波结束后立刻重扫：有尚未处理的新 .7z/日目录则续批，无则结束
   DATE    单日 YYYYMMDD
 
 选项:

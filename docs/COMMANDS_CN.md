@@ -985,7 +985,7 @@ D1_WORKER_TOKEN=<随机 token>
 
 | 命令 | 作用 | 改数据 |
 | --- | --- | --- |
-| `./scripts/run_level2_l2_daily.sh all` | **百因子主链路**：扫描 raw，解压后直接用 CSV 算 100 因子 → 本地/R2 宽表 + D1 元数据；达标删 CSV/.7z；不落明细 Parquet | 写因子 Parquet/R2/D1 元数据；删源 |
+| `./scripts/run_level2_l2_daily.sh all` | **百因子主链路**：扫描 raw，解压后直接用 CSV 算 100 因子 → 本地/R2 宽表 + D1 元数据；达标删 CSV/.7z；每波结束后重扫，有新包续跑、无则退出；不落明细 Parquet | 写因子 Parquet/R2/D1 元数据；删源 |
 | `./scripts/run_level2_l2_daily.sh all --workers 4` | 同上；组内按股票并行进程数（默认 8，可用 `LEVEL2_L2_DAILY_WORKERS`） | 同上 |
 | `./scripts/run_level2_l2_daily.sh all status` / `tail` / `stop` | 查看、跟踪或停止百因子批量进程 | 否 |
 | `./scripts/run_level2_l2_daily.sh 20261009` | 单日：按需解压 → CSV 直算百因子 | 同上 |
@@ -1008,7 +1008,7 @@ D1_WORKER_TOKEN=<随机 token>
 | `./scripts/run_level2_upload.sh 20260506` | 只上传这一天的明细 | 会写远端 |
 | `python scripts/level2_baidu_oauth.py` | 用授权码换百度 token，写入 `.env` | 会改 `.env` |
 
-`run_level2_l2_daily.sh all` 按日串行：已解压 CSV 优先 → 再逐日解压 `.7z` → **直接用 CSV 算百因子（不转明细 Parquet）** → 本地/R2 因子宽表 + D1 元数据 → 达标删 CSV/.7z。四组 `trade` / `book` / `order` / `microstructure` 独立计算；**组内按股票进程池并行**（`--workers N` 或环境变量 `LEVEL2_L2_DAILY_WORKERS`，默认 8）。交易日之间、组之间仍串行，避免解压/删源与峰值内存冲突。建议 `N` 不超过本机物理核数；内存紧时用 `--workers 2`～`4`。数值在 `data/level2_staging/factors/l2_daily/v1/YYYY/YYYYMM/YYYYMMDD.parquet`（`LEVEL2_L2_DAILY_ROOT`）；R2 键同相对路径 `factors/l2_daily/v1/YYYY/YYYYMM/YYYYMMDD.parquet`。D1 migration `0003` 只登记定义/任务/数据集/按日状态，**不写**热表 `l2_factors`。`--no-delete` 保留源；`--dry-run` 只调度。D1 Worker 瞬态失败（含 SSL）时 `create_job` / `finish_job` / `day_status` / `dataset` 均为软失败，不阻断本地计算与 R2 上传；元数据可在 Worker 恢复后靠增量或 `--force` 补登记。若批处理在某日中断，用 `./scripts/run_level2_l2_daily.sh --start YYYYMMDD`（例如 `20170324`）从失败日起续跑；已完成日的本地 marker 会跳过对应组。
+`run_level2_l2_daily.sh all` 按日串行：已解压 CSV 优先 → 再逐日解压 `.7z` → **直接用 CSV 算百因子（不转明细 Parquet）** → 本地/R2 因子宽表 + D1 元数据 → 达标删 CSV/.7z。本波全部成功后立刻重扫 `level2_raw`：若有本进程尚未处理的新 `.7z`/日目录则自动开下一批，没有则结束（非常驻 watch）。显式日期（单日 / `--dates` / `--start`--`--end`）只跑一波。四组 `trade` / `book` / `order` / `microstructure` 独立计算；**组内按股票进程池并行**（`--workers N` 或环境变量 `LEVEL2_L2_DAILY_WORKERS`，默认 8）。交易日之间、组之间仍串行，避免解压/删源与峰值内存冲突。建议 `N` 不超过本机物理核数；内存紧时用 `--workers 2`～`4`。数值在 `data/level2_staging/factors/l2_daily/v1/YYYY/YYYYMM/YYYYMMDD.parquet`（`LEVEL2_L2_DAILY_ROOT`）；R2 键同相对路径 `factors/l2_daily/v1/YYYY/YYYYMM/YYYYMMDD.parquet`。D1 migration `0003` 只登记定义/任务/数据集/按日状态，**不写**热表 `l2_factors`。`--no-delete` 保留源（本进程用已见日期防死循环）；`--dry-run` 只调度。D1 Worker 瞬态失败（含 SSL）时 `create_job` / `finish_job` / `day_status` / `dataset` 均为软失败，不阻断本地计算与 R2 上传；元数据可在 Worker 恢复后靠增量或 `--force` 补登记。若批处理在某日中断，用 `./scripts/run_level2_l2_daily.sh --start YYYYMMDD`（例如 `20170324`）从失败日起续跑；已完成日的本地 marker 会跳过对应组。
 
 旧热表（约 17 列）仍由 `run_level2_factors.sh` / 百度流水线写入 D1 `l2_factors`，读侧图表暂用热表。读缓存为 `data/level2_d1_cache.sqlite`（`LEVEL2_FACTOR_CACHE_MAX_DAYS` / `MAX_MB`）。
 
