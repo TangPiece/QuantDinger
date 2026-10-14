@@ -16,7 +16,7 @@ from .contracts import DatasetHandle, PricePolicy
 from .paths import (
     corporate_action_prefix,
     market_daily_prefix,
-    pit_fundamental_prefix,
+    pit_fundamental_root_prefix,
     trading_status_prefix,
     universe_snapshot_prefix,
 )
@@ -109,17 +109,20 @@ class DataQuery:
         """
         del snapshot_id
         kt = _as_utc(knowledge_time)
-        frames: list[pd.DataFrame] = []
-        # 覆盖常见年份窗口：knowledge_time 年与前后一年
-        years = {kt.year - 1, kt.year, kt.year + 1}
-        for year in sorted(years):
-            prefix = pit_fundamental_prefix(exchange=exchange, year=year)
-            df = self._repo.read_parquet_df(prefix=prefix)
-            if not df.empty:
-                frames.append(df)
-        if not frames:
+        root = pit_fundamental_root_prefix(exchange=exchange)
+        keys: list[str] = []
+        for key in self._repo.list_keys(root):
+            # PIT 按 available_time 年分区；只排除明确晚于 KT 的年份，
+            # 不能用固定回看窗口，否则长期停牌/退市公司的最后披露会消失。
+            marker = "/year="
+            if marker not in key or not key.endswith(".parquet"):
+                continue
+            year_text = key.split(marker, 1)[1].split("/", 1)[0]
+            if year_text.isdigit() and int(year_text) <= kt.year:
+                keys.append(key)
+        out = self._repo.read_parquet_df(keys=sorted(keys))
+        if out.empty:
             return _empty_pit()
-        out = pd.concat(frames, ignore_index=True)
         if "available_time" not in out.columns:
             raise DataQueryError("pit table missing available_time")
         out["available_time"] = pd.to_datetime(out["available_time"], utc=True)

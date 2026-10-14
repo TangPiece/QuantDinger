@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .catalog import FACTOR_DEFINITIONS, backtest_eligible_factors, mvp_factors
+from .numeric import finite_float, safe_divide
 
 _log = logging.getLogger(__name__)
 
@@ -130,10 +131,7 @@ def latest_metric_asof_fast(
         age_days = (kt_ns - int(periods[idx])) / 86_400e9
         if age_days > max_staleness_days:
             return None
-    value = values[idx]
-    if value is None or (isinstance(value, float) and np.isnan(value)):
-        return None
-    return float(value)
+    return finite_float(values[idx])
 
 
 def latest_metric_asof(
@@ -281,9 +279,8 @@ def compute_valuation_factors(
     fallback_keys: set[str] = set()
 
     def _div(num: float | None, den: float | None) -> float | None:
-        if num is None or den is None or den == 0:
-            return None
-        return float(num) / float(den)
+        """Keep valuation output finite and reject economically unstable denominators."""
+        return safe_divide(num, den)
 
     def _shares(ik: str, kt: datetime) -> float | None:
         entry = share_index.get(ik)
@@ -291,7 +288,7 @@ def compute_valuation_factors(
             times, values, _ = entry
             idx = int(np.searchsorted(times, int(pd.Timestamp(kt).value), side="right")) - 1
             if idx >= 0:
-                return float(values[idx])
+                return finite_float(values[idx])
         fallback_keys.add(ik)
         return latest_metric_asof_fast(
             asof_index,
@@ -305,7 +302,7 @@ def compute_valuation_factors(
         kt = datetime(day.year, day.month, day.day, 7, 0, tzinfo=timezone.utc)
         for bar in day_frame.itertuples(index=False):
             ik = str(bar.instrument_key)
-            close = float(bar.close) if pd.notna(bar.close) else None
+            close = finite_float(bar.close)
 
             def pit(metric: str) -> float | None:
                 return latest_metric_asof_fast(
@@ -323,7 +320,11 @@ def compute_valuation_factors(
             ocf_ttm = pit("cash_from_operations_ttm")
             fcf_ttm = pit("free_cash_flow_ttm")
             dividend_ttm = pit("cash_dividend_ttm")
-            mcap = close * shares if close is not None and shares is not None else None
+            mcap = (
+                finite_float(close * shares)
+                if close is not None and shares is not None
+                else None
+            )
             values = {
                 "pe_ttm": _div(mcap, net_ttm),
                 "pb": _div(mcap, equity),

@@ -5,15 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+import numpy as np
 import pandas as pd
 
 from .catalog import FACTOR_DEFINITIONS, FundFactorDef, mvp_factors
 
 # Map every catalog metric_deps entry → upstream raw statement field_code(s).
 # Missing keys must raise (never silently fail coverage with empty frames).
-# "a|b" means either raw field satisfies the requirement (b used to derive a).
+# "|" means alternative sources; "+" means every component is required.
 _GROSS = "gross_profit|operating_cost"
-_OPEX = "operating_expenses|selling_expense"
+_OPEX = "operating_expenses|selling_expense+admin_expense+rd_expense+financial_expense"
 METRIC_TO_STATEMENT_FIELDS: dict[str, tuple[str, ...]] = {
     # Ratios / derived metrics
     "roe": ("net_profit_parent", "shareholder_equity"),
@@ -118,24 +119,35 @@ def evaluate_metric_coverage(
 
     frame = statements.copy()
     frame = frame[frame["field_code"] == metric_field]
+    if "revision" not in frame.columns:
+        frame["revision"] = 0
+    frame["revision"] = frame["revision"].fillna(0).astype(int)
     instruments = int(frame["instrument_key"].nunique()) if not frame.empty else 0
     periods = int(frame["report_period_end"].nunique()) if not frame.empty else 0
     if frame.empty:
         value_missing_rate = 1.0
     else:
-        value_missing_rate = float(frame["value"].isna().mean())
+        values = pd.to_numeric(frame["value"], errors="coerce")
+        # Inf 与 NaN 一样不能进入可交易因子，coverage 必须在注册前拦截。
+        value_missing_rate = float((values.isna() | ~np.isfinite(values)).mean())
 
     if announce is None or announce.empty:
         missing_announce_rate = 1.0
     else:
-        keys = frame[["instrument_key", "report_period_end"]].drop_duplicates()
+        # Coverage 必须复用指标生成的 revision 级公告契约，禁止 rev1
+        # 借用 rev0 的公告时间而被误判为 PIT-ready。
+        join_keys = ["instrument_key", "report_period_end", "revision"]
+        keys = frame[join_keys].drop_duplicates()
         ann = announce.copy()
+        if "revision" not in ann.columns:
+            ann["revision"] = 0
+        ann["revision"] = ann["revision"].fillna(0).astype(int)
         ann["report_period_end"] = pd.to_datetime(ann["report_period_end"]).dt.date
         keys = keys.copy()
         keys["report_period_end"] = pd.to_datetime(keys["report_period_end"]).dt.date
         merged = keys.merge(
-            ann[["instrument_key", "report_period_end"]].drop_duplicates(),
-            on=["instrument_key", "report_period_end"],
+            ann[join_keys].drop_duplicates(),
+            on=join_keys,
             how="left",
             indicator=True,
         )
@@ -175,9 +187,37 @@ def evaluate_factor_gates(
     raw_ok = bool(requirements)
     pit_ok = bool(requirements)
     for requirement in requirements:
-        alternatives = [
-            evaluate_metric_coverage(statements, announce, f) for f in requirement.split("|")
-        ]
+        alternatives: list[CoverageReport] = []
+        for alternative in requirement.split("|"):
+            component_reports = [
+                evaluate_metric_coverage(statements, announce, field)
+                for field in alternative.split("+")
+            ]
+            if len(component_reports) == 1:
+                alternatives.append(component_reports[0])
+                continue
+            # 派生字段只有在所有组成项均通过时才可用；取最差缺失率，
+            # 防止单一费用分项把不完整合计误判为 RAW/PIT 合格。
+            alternatives.append(
+                CoverageReport(
+                    metric_code=alternative,
+                    periods=min(report.periods for report in component_reports),
+                    instruments=min(report.instruments for report in component_reports),
+                    missing_announce_rate=max(
+                        report.missing_announce_rate for report in component_reports
+                    ),
+                    value_missing_rate=max(
+                        report.value_missing_rate for report in component_reports
+                    ),
+                    raw_ok=all(report.raw_ok for report in component_reports),
+                    pit_ok=all(report.pit_ok for report in component_reports),
+                    details={
+                        "all_components_required": [
+                            report.metric_code for report in component_reports
+                        ]
+                    },
+                )
+            )
         # Best alternative wins (PIT first, then RAW).
         best = max(alternatives, key=lambda r: (r.pit_ok, r.raw_ok))
         reports.append(best)

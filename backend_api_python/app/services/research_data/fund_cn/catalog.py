@@ -13,6 +13,7 @@ EXCHANGE_DEFAULT = "CN"
 
 FactorKind = Literal["report", "valuation"]
 GateFlag = Literal["pending", "ok", "fail"]
+Applicability = Literal["all_a_shares", "non_financial"]
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class FundFactorDef:
     compute_ok: GateFlag = "pending"
     pit_ok: GateFlag = "pending"
     notes: str = ""
+    applicability: Applicability = "all_a_shares"
 
     @property
     def factor_ref(self) -> str:
@@ -54,6 +56,7 @@ def _report(
     mvp: bool = False,
     compute_ok: GateFlag = "pending",
     notes: str = "",
+    applicability: Applicability = "all_a_shares",
 ) -> FundFactorDef:
     enabled = mvp
     policy: Literal["PIT_SAFE", "NON_PIT", "UNKNOWN"] = "PIT_SAFE" if mvp else "UNKNOWN"
@@ -71,6 +74,7 @@ def _report(
         compute_ok=compute_ok if not mvp else "ok",
         pit_ok="ok" if mvp else "pending",
         notes=notes,
+        applicability=applicability,
     )
 
 
@@ -84,6 +88,7 @@ def _valuation(
     mvp: bool = False,
     compute_ok: GateFlag = "pending",
     notes: str = "",
+    applicability: Applicability = "all_a_shares",
 ) -> FundFactorDef:
     enabled = mvp
     policy: Literal["PIT_SAFE", "NON_PIT", "UNKNOWN"] = "PIT_SAFE" if mvp else "UNKNOWN"
@@ -102,6 +107,7 @@ def _valuation(
         compute_ok=compute_ok if not mvp else "ok",
         pit_ok="ok" if mvp else "pending",
         notes=notes,
+        applicability=applicability,
     )
 
 
@@ -148,7 +154,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "net_income_ttm / shareholder_equity",
         ("roe",),
         mvp=True,
-        notes=_TTM_NOTE,
+        notes=f"{_TTM_NOTE}; denominator=end-of-period equity (not average equity)",
     ),
     _report(
         "roa",
@@ -157,7 +163,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "net_income_ttm / total_assets",
         ("roa",),
         mvp=True,
-        notes=_TTM_NOTE,
+        notes=f"{_TTM_NOTE}; denominator=end-of-period assets (not average assets)",
     ),
     _report(
         "gross_margin",
@@ -167,6 +173,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         ("gross_margin",),
         mvp=True,
         notes="time_basis=ttm; gross_profit derived as revenue - operating_cost when absent",
+        applicability="non_financial",
     ),
     _report(
         "net_margin",
@@ -203,7 +210,10 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "(net_profit_sq - net_profit_sq_lag4) / |net_profit_sq_lag4|",
         ("net_profit_yoy",),
         mvp=True,
-        notes="time_basis=sq; None if lagged==0",
+        notes=(
+            "time_basis=sq; denominator=|lagged|; None if lagged≈0; negative bases "
+            "represent loss narrowing/widening rather than ordinary profit growth"
+        ),
     ),
     _report(
         "total_assets_yoy",
@@ -241,6 +251,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "(close * shares_outstanding) / net_income_ttm",
         ("net_income_ttm", "shares_outstanding"),
         mvp=True,
+        notes="negative earnings produce negative raw PE; consumers must not read it as normal PE",
     ),
     _valuation(
         "pb",
@@ -266,7 +277,10 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "(close * shares_outstanding) / cash_from_operations_ttm",
         ("cash_from_operations_ttm", "shares_outstanding"),
         compute_ok="ok",
-        notes="OCF TTM from single-quarter sum / FY cum shortcut",
+        notes=(
+            "OCF TTM from single-quarter sum / FY cum shortcut; negative OCF produces "
+            "negative raw PCF"
+        ),
     ),
     _valuation(
         "dividend_yield",
@@ -285,6 +299,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         ("operating_margin",),
         compute_ok="ok",
         notes="time_basis=ttm",
+        applicability="non_financial",
     ),
     _report(
         "expense_ratio",
@@ -293,18 +308,23 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "operating_expenses_ttm / revenue_ttm",
         ("expense_ratio",),
         compute_ok="ok",
-        notes="time_basis=ttm; operating_expenses = selling + admin + R&D + financial",
+        notes=(
+            "time_basis=ttm; broad period-expense ratio = selling + admin + R&D + "
+            "financial; all four components required when no direct total is provided"
+        ),
+        applicability="non_financial",
     ),
     _report(
         "roic",
-        "ROIC",
+        "投入资本营业利润率（近似 ROIC）",
         "quality",
         "operating_profit_ttm / (equity + interest_bearing_debt)",
         ("roic",),
         compute_ok="ok",
         notes=(
-            "time_basis=ttm OP / point-in-time invested; approx NOPAT (no tax adj); "
-            "None when interest_bearing_debt missing"
+            "not standard ROIC: pre-tax operating profit / end-of-period "
+            "(equity + interest-bearing debt); no NOPAT, cash or average-capital adjustment; "
+            "None when debt components are incomplete"
         ),
     ),
     _report(
@@ -314,6 +334,10 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "(deducted_sq - deducted_sq_lag4) / |deducted_sq_lag4|",
         ("deducted_net_profit_yoy",),
         compute_ok="ok",
+        notes=(
+            "denominator=|lagged|; negative bases describe loss state changes, "
+            "not ordinary positive-profit growth"
+        ),
     ),
     _report(
         "equity_yoy",
@@ -348,6 +372,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         ("capex_ratio",),
         compute_ok="ok",
         notes="time_basis=ttm",
+        applicability="non_financial",
     ),
     _report(
         "current_ratio",
@@ -356,6 +381,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "current_assets / current_liabilities",
         ("current_ratio",),
         compute_ok="ok",
+        applicability="non_financial",
     ),
     _report(
         "interest_bearing_debt_ratio",
@@ -373,7 +399,8 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "accounts_receivable / revenue_ttm",
         ("ar_to_revenue",),
         compute_ok="ok",
-        notes="time_basis=point_in_time / ttm",
+        notes="time_basis=point_in_time / ttm; scale ratio, not receivables turnover",
+        applicability="non_financial",
     ),
     _report(
         "inventory_to_revenue",
@@ -382,7 +409,8 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         "inventory / revenue_ttm",
         ("inventory_to_revenue",),
         compute_ok="ok",
-        notes="time_basis=point_in_time / ttm",
+        notes="time_basis=point_in_time / ttm; scale ratio, not inventory turnover",
+        applicability="non_financial",
     ),
     _report(
         "asset_turnover",
@@ -392,6 +420,7 @@ FACTOR_DEFINITIONS: tuple[FundFactorDef, ...] = (
         ("asset_turnover",),
         compute_ok="ok",
         notes="time_basis=ttm",
+        applicability="non_financial",
     ),
     _report(
         "earnings_volatility",
@@ -462,7 +491,7 @@ def schema_hash() -> str:
     import hashlib
 
     payload = "|".join(
-        f"{f.factor_id}:{f.kind}:{f.formula}:{f.raw_ok}:{f.compute_ok}:{f.pit_ok}"
+        f"{f.factor_id}:{f.kind}:{f.formula}:{f.raw_ok}:{f.compute_ok}:{f.pit_ok}:{f.applicability}"
         for f in FACTOR_DEFINITIONS
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -481,6 +510,7 @@ def coverage_matrix() -> list[dict]:
             "COMPUTE_OK": f.compute_ok,
             "PIT_OK": f.pit_ok,
             "information_policy": f.information_policy,
+            "applicability": f.applicability,
             "notes": f.notes,
         }
         for f in FACTOR_DEFINITIONS
@@ -543,6 +573,7 @@ def effective_factor(factor_id: str) -> FundFactorDef:
         compute_ok=overlay.get("compute_ok", base.compute_ok),
         pit_ok=overlay.get("pit_ok", base.pit_ok),
         notes=base.notes,
+        applicability=base.applicability,
     )
 
 

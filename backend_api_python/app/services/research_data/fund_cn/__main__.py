@@ -8,6 +8,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from app.services.research_data.canonical_store import LocalCanonicalStore
 from app.services.research_data.registry import LocalJsonRegistry
 
@@ -25,6 +27,16 @@ from .paths_local import default_staging_root
 
 def _parse_dates(text: str) -> list[str]:
     return [p.strip() for p in text.split(",") if p.strip()]
+
+
+def _read_market_file(path: str) -> pd.DataFrame:
+    """读取显式注入的未复权日行情文件；CSV/Parquet 共用同一列契约。"""
+    source = Path(path)
+    if source.suffix.lower() in {".parquet", ".pq"}:
+        return pd.read_parquet(source)
+    if source.suffix.lower() == ".csv":
+        return pd.read_csv(source)
+    raise ValueError("--market-file must be .parquet, .pq or .csv")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,11 +60,21 @@ def main(argv: list[str] | None = None) -> int:
     p_compute = sub.add_parser("compute", help="Build daily panels from staging PIT metrics")
     p_compute.add_argument("--instruments", required=True)
     p_compute.add_argument("--dates", required=True, help="Comma-separated YYYY-MM-DD")
+    p_compute.add_argument(
+        "--market-file",
+        required=True,
+        help="CSV/Parquet with instrument_key,trading_date,unadjusted close",
+    )
     p_compute.add_argument("--root", default="")
     p_compute.add_argument("--all", action="store_true", help="Include compute_ok factors beyond MVP")
 
     p_reg = sub.add_parser("register", help="Register MVP factors into LocalJson Factor Lab registry")
     p_reg.add_argument("--registry-root", default="")
+    p_reg.add_argument(
+        "--allow-uncovered",
+        action="store_true",
+        help="Bypass staging coverage gate (unsafe; intended only for diagnostics)",
+    )
 
     p_promote = sub.add_parser("promote", help="Mark factor gates ok after audit (Phase 3)")
     p_promote.add_argument("--factor-id", required=True)
@@ -101,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         result = run_compute_publish(
             dates,
             keys,
+            market=_read_market_file(args.market_file),
             root=root,
             mvp_only=not args.all,
         )
@@ -109,7 +132,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "register":
         reg = LocalJsonRegistry(Path(args.registry_root) if args.registry_root else None)
-        refs = run_register(reg, root=root)
+        refs = run_register(
+            reg,
+            root=root,
+            require_coverage=not args.allow_uncovered,
+        )
         print(json.dumps({"registered": refs, "mvp_ids": factor_ids(mvp_only=True)}, ensure_ascii=False, indent=2))
         return 0
 

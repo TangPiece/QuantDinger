@@ -21,8 +21,13 @@ def market_daily_key(*, exchange: str, year: int, month: int, part: str = "part-
     return f"{market_daily_prefix(exchange=exchange, year=year, month=month)}/{part}"
 
 
+def pit_fundamental_root_prefix(*, exchange: str) -> str:
+    """返回交易所级 PIT 财务根前缀，用于发现实际存在的年份分区。"""
+    return f"{_root()}/canonical/fundamental/pit/exchange={exchange}"
+
+
 def pit_fundamental_prefix(*, exchange: str, year: int) -> str:
-    return f"{_root()}/canonical/fundamental/pit/exchange={exchange}/year={int(year):04d}"
+    return f"{pit_fundamental_root_prefix(exchange=exchange)}/year={int(year):04d}"
 
 
 def pit_fundamental_key(*, exchange: str, year: int, part: str = "part-000.parquet") -> str:

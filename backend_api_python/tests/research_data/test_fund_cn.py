@@ -10,7 +10,11 @@ import pytest
 
 from app.services.research_data.canonical_store import LocalCanonicalStore
 from app.services.research_data.data_query import DataQuery
-from app.services.research_data.fund_cn.adapters.base import AnnounceRow, StatementFieldRow
+from app.services.research_data.fund_cn.adapters.base import (
+    AnnounceRow,
+    ShareCapitalRow,
+    StatementFieldRow,
+)
 from app.services.research_data.fund_cn.catalog import (
     FACTOR_DEFINITIONS,
     FACTOR_SET,
@@ -36,6 +40,7 @@ from app.services.research_data.fund_cn.ingest import stage_from_adapters
 from app.services.research_data.fund_cn.metrics import (
     attach_announce,
     compute_period_metrics,
+    derive_fields,
     pivot_statements,
     statements_to_pit_metrics,
     to_single_quarter,
@@ -138,6 +143,27 @@ def test_revision_snapshot_no_lookahead(sample_universe: str):
     assert by_rev[1]["available_time"] == t1
 
 
+def test_same_timestamp_revisions_emit_only_effective_snapshot(sample_universe: str):
+    """同一时点没有 rev0 独立可见区间，只发布最高 revision 的有效快照。"""
+    ik = sample_universe
+    pe = date(2023, 12, 31)
+    at = datetime(2024, 4, 15, 10, 0, tzinfo=timezone.utc)
+    statements = [
+        _stmt(ik, pe, "net_profit_parent", 100.0, revision=0),
+        _stmt(ik, pe, "shareholder_equity", 1000.0, statement_type="balance", revision=0),
+        _stmt(ik, pe, "net_profit_parent", 200.0, revision=1),
+        _stmt(ik, pe, "shareholder_equity", 1000.0, statement_type="balance", revision=1),
+    ]
+    rows = statements_to_pit_metrics(
+        pd.DataFrame([s.__dict__ for s in statements]),
+        pd.DataFrame([_ann(ik, pe, at, 0).__dict__, _ann(ik, pe, at, 1).__dict__]),
+    )
+    roe_rows = [row for row in rows if row["metric_code"] == "roe"]
+    assert len(roe_rows) == 1
+    assert roe_rows[0]["revision"] == 1
+    assert roe_rows[0]["value"] == pytest.approx(0.2)
+
+
 def test_to_single_quarter_and_ttm(sample_universe: str):
     ik = sample_universe
     # YTD cumulatives: Q1=10, Q2=25, Q3=45, FY=100 → SQ 10,15,20,55; TTM@FY=100
@@ -228,6 +254,15 @@ def test_pipeline_pit_visibility_and_restatement(tmp_path: Path, sample_universe
         [date(2024, 3, 20), date(2024, 4, 1), date(2024, 4, 16)],
         statement_rows=statements,
         announce_rows=announces,
+        share_capital_rows=[
+            ShareCapitalRow(
+                ik,
+                date(2023, 12, 31),
+                datetime(2024, 3, 28, 15, 0, tzinfo=timezone.utc),
+                10.0,
+                source="test",
+            )
+        ],
         market=market,
         root=tmp_path / "staging",
         store=store,
@@ -238,6 +273,14 @@ def test_pipeline_pit_visibility_and_restatement(tmp_path: Path, sample_universe
     assert result["pit"]["row_count"] > 0
     assert result["factors"]["row_count"] > 0
     assert result["registered"]
+    # 端到端读取已发布日面板，确认估值使用 staging 中的时点总股本。
+    from app.services.research_data.canonical_repository import CanonicalRepository
+
+    factor_keys = [day["storage_uri"] for day in result["factors"]["days"]]
+    factor_panel = CanonicalRepository(store).read_parquet_df(keys=factor_keys)
+    pe_by_day = dict(zip(factor_panel["trading_date"], factor_panel["pe_ttm"]))
+    assert pe_by_day["2024-04-01"] == pytest.approx(11.0)
+    assert pe_by_day["2024-04-16"] == pytest.approx(10.0)
 
     query = DataQuery(store, registry)
     mid = query.fundamental([ik], ["roe"], datetime(2024, 4, 1, 12, 0, tzinfo=timezone.utc), exchange="CN")
@@ -268,6 +311,29 @@ def test_coverage_requires_announce(tmp_path: Path, sample_universe: str):
 
     summary = coverage_summary(read_statement_rows(tmp_path), read_announce_rows(tmp_path))
     assert summary["eligible_count"] == 0
+
+
+def test_coverage_announcement_must_match_revision(sample_universe: str):
+    """rev1 没有自己的公告时不能借用 rev0 公告通过 PIT 门禁。"""
+    ik = sample_universe
+    pe = date(2023, 12, 31)
+    statements = pd.DataFrame(
+        [
+            _stmt(ik, pe, "net_profit_parent", 10.0, revision=0).__dict__,
+            _stmt(ik, pe, "net_profit_parent", 12.0, revision=1).__dict__,
+        ]
+    )
+    announce = pd.DataFrame(
+        [_ann(ik, pe, datetime(2024, 3, 28, 15, tzinfo=timezone.utc), revision=0).__dict__]
+    )
+    report = evaluate_metric_coverage(
+        statements,
+        announce,
+        "net_profit_parent",
+        max_missing_announce=0.0,
+    )
+    assert report.missing_announce_rate == pytest.approx(0.5)
+    assert not report.pit_ok
 
 
 def test_valuation_requires_market(sample_universe: str):
@@ -584,6 +650,38 @@ def test_late_old_period_restatement_does_not_roll_back(tmp_path: Path, sample_u
     assert pd.Timestamp(got.iloc[0]["report_period_end"]).date() == date(2024, 3, 31)
 
 
+def test_fundamental_query_discovers_older_partitions(tmp_path: Path, sample_universe: str):
+    """多年无新披露时，点查仍应找到 KT 之前最后一条历史 PIT 数据。"""
+    from app.services.research_data.ingest.fundamental_pit import ingest_pit_fundamental
+
+    ik = sample_universe
+    row = _pit_row(
+        ik,
+        "roe",
+        date(2020, 12, 31),
+        datetime(2021, 3, 28, 15, tzinfo=timezone.utc),
+        0.1,
+    )
+    store = LocalCanonicalStore(tmp_path / "canonical")
+    registry = LocalJsonRegistry(tmp_path / "registry")
+    ingest_pit_fundamental(
+        store,
+        instrument_keys=[ik],
+        version="test.v1",
+        registry=registry,
+        rows=[row],
+        allow_synthetic=False,
+    )
+    got = DataQuery(store, registry).fundamental(
+        [ik],
+        ["roe"],
+        datetime(2025, 1, 2, tzinfo=timezone.utc),
+        exchange="CN",
+    )
+    assert len(got) == 1
+    assert float(got.iloc[0]["value"]) == pytest.approx(0.1)
+
+
 def test_report_forward_fill_staleness_cap(sample_universe: str):
     from app.services.research_data.fund_cn.compute import forward_fill_report_factors
 
@@ -663,6 +761,8 @@ def test_alias_priority_and_derived_gross_margin(sample_universe: str):
                 "NETPROFIT": 20.0,
                 "SALE_EXPENSE": 5.0,
                 "MANAGE_EXPENSE": 4.0,
+                "RESEARCH_EXPENSE": 0.0,
+                "FINANCE_EXPENSE": 0.0,
             }
         ]
     )
@@ -675,6 +775,10 @@ def test_alias_priority_and_derived_gross_margin(sample_universe: str):
                 "TOTAL_PARENT_EQUITY": 180.0,
                 "TOTAL_EQUITY": 200.0,
                 "SHARE_CAPITAL": 10.0,
+                # 三项债务均明确出现时才允许派生“有息负债为 0”。
+                "SHORT_LOAN": 0.0,
+                "LONG_LOAN": 0.0,
+                "BOND_PAYABLE": 0.0,
             }
         ]
     )
@@ -709,6 +813,136 @@ def test_alias_priority_and_derived_gross_margin(sample_universe: str):
         factors=[f for f in FACTOR_DEFINITIONS if f.factor_id == "gross_margin"],
     )
     assert summary["factors"][0]["RAW_OK"] == "ok"
+
+
+def test_eastmoney_update_date_is_conservative_visibility(sample_universe: str):
+    """最新修订值只能从 UPDATE_DATE 可见，不能回填至原 NOTICE_DATE。"""
+    from app.services.research_data.fund_cn.adapters.akshare_adapter import AkshareStatementAdapter
+
+    income = pd.DataFrame(
+        [
+            {
+                "REPORT_DATE": "2023-12-31",
+                "NOTICE_DATE": "2024-03-28",
+                "UPDATE_DATE": "2024-04-15",
+                "OPERATE_INCOME": 120.0,
+                "PARENT_NETPROFIT": 20.0,
+            }
+        ]
+    )
+    balance = pd.DataFrame(
+        [
+            {
+                "REPORT_DATE": "2023-12-31",
+                "NOTICE_DATE": "2024-03-29",
+                "UPDATE_DATE": "2024-03-29",
+                "TOTAL_ASSETS": 300.0,
+                "TOTAL_PARENT_EQUITY": 180.0,
+            }
+        ]
+    )
+    adapter = AkshareStatementAdapter(
+        income_fetcher=lambda _s: income,
+        balance_fetcher=lambda _s: balance,
+        cashflow_fetcher=lambda _s: pd.DataFrame(),
+    )
+    statements = adapter.fetch_statements([sample_universe])
+    announcements = adapter.fetch_announcements([sample_universe])
+    assert statements and {row.revision for row in statements} == {1}
+    assert len(announcements) == 1
+    assert announcements[0].revision == 1
+    assert announcements[0].is_restatement
+    assert announcements[0].available_time == datetime(
+        2024, 4, 15, 16, 0, tzinfo=timezone.utc
+    )
+
+
+def test_partial_debt_and_expenses_do_not_create_understated_derived_values(
+    sample_universe: str,
+):
+    """组成项不完整时保持缺失，避免把部分和误当成完整财务指标。"""
+    from app.services.research_data.fund_cn.adapters.akshare_adapter import (
+        dataframe_to_statement_rows,
+        merge_interest_bearing,
+    )
+
+    balance = pd.DataFrame(
+        [{"REPORT_DATE": "2023-12-31", "TOTAL_ASSETS": 100.0, "SHORT_LOAN": 10.0}]
+    )
+    debt_rows = merge_interest_bearing(
+        dataframe_to_statement_rows(
+            balance,
+            instrument_key=sample_universe,
+            statement_type="balance",
+            source="test",
+        )
+    )
+    assert not any(row.field_code == "interest_bearing_debt" for row in debt_rows)
+
+    partial = derive_fields(pd.DataFrame([{"revenue": 100.0, "selling_expense": 5.0}]))
+    assert "operating_expenses" not in partial or pd.isna(partial.iloc[0]["operating_expenses"])
+
+
+def test_derived_fcf_normalizes_capex_sign_and_rejects_non_finite_values(
+    sample_universe: str,
+):
+    """资本开支正负记账应得到同一 FCF，非有限输入不得进入 PIT 指标。"""
+    derived = derive_fields(
+        pd.DataFrame(
+            [
+                {"cash_from_operations": 100.0, "capex": 30.0},
+                {"cash_from_operations": 100.0, "capex": -30.0},
+            ]
+        )
+    )
+    assert list(derived["free_cash_flow"]) == pytest.approx([70.0, 70.0])
+
+    pe = date(2023, 12, 31)
+    rows = statements_to_pit_metrics(
+        pd.DataFrame(
+            [
+                _stmt(sample_universe, pe, "net_profit_parent", float("inf")).__dict__,
+                _stmt(
+                    sample_universe,
+                    pe,
+                    "shareholder_equity",
+                    100.0,
+                    statement_type="balance",
+                ).__dict__,
+            ]
+        ),
+        pd.DataFrame(
+            [
+                _ann(
+                    sample_universe,
+                    pe,
+                    datetime(2024, 3, 28, 15, tzinfo=timezone.utc),
+                ).__dict__
+            ]
+        ),
+    )
+    assert not [row for row in rows if row["metric_code"] in {"net_profit_parent", "roe"}]
+
+    from app.services.research_data.fund_cn.compute import compute_valuation_factors
+
+    at = datetime(2024, 3, 28, 15, tzinfo=timezone.utc)
+    valuation = compute_valuation_factors(
+        [
+            _pit_row(sample_universe, "net_income_ttm", pe, at, 1e-15),
+            _pit_row(sample_universe, "shares_outstanding", pe, at, 10.0),
+        ],
+        pd.DataFrame(
+            [
+                {
+                    "instrument_key": sample_universe,
+                    "trading_date": date(2024, 4, 1),
+                    "close": 10.0,
+                }
+            ]
+        ),
+        factor_ids_subset=["pe_ttm"],
+    )
+    assert valuation.iloc[0]["pe_ttm"] is None
 
 
 def test_ttm_roe_comparable_between_q1_and_fy_reporters():

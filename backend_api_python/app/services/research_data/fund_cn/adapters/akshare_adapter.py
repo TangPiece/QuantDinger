@@ -6,13 +6,14 @@ Eastmoney ``stock_*_sheet_by_report_em`` returns **English** column names
 ``UPDATE_DATE``. Chinese names are kept as secondary candidates for other dumps.
 
 PIT limitation: em only serves the latest version of each period. When a period
-was restated (``UPDATE_DATE`` > ``NOTICE_DATE``) the restated numbers carry the
-original disclosure date — a residual look-ahead risk documented in README.
+was restated (``UPDATE_DATE`` > ``NOTICE_DATE``), the latest snapshot is exposed
+only from UPDATE_DATE; the unavailable original values are never reconstructed.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Any, Callable, Sequence
 
@@ -72,6 +73,7 @@ _FIELD_CANDIDATES: dict[str, dict[str, tuple[str, ...]]] = {
 
 _PERIOD_COLS: tuple[str, ...] = ("REPORT_DATE", "报告日", "报告期", "REPORT_DATE_NAME", "日期")
 _NOTICE_COLS: tuple[str, ...] = ("NOTICE_DATE", "公告日期", "披露日期")
+_UPDATE_COLS: tuple[str, ...] = ("UPDATE_DATE", "更新日期", "修改日期")
 
 Fetcher = Callable[[str], pd.DataFrame | None]
 
@@ -116,6 +118,18 @@ def _first_col(frame: pd.DataFrame, candidates: Sequence[str]) -> str | None:
     return next((c for c in candidates if c in frame.columns), None)
 
 
+def _visibility_contract(raw: pd.Series, notice_col: str) -> tuple[datetime, int, bool] | None:
+    """返回最新快照的保守可见时点；更正值绝不回填到首次公告日。"""
+    notice = _parse_period(raw.get(notice_col))
+    if notice is None:
+        return None
+    update_col = next((col for col in _UPDATE_COLS if col in raw.index), None)
+    update = _parse_period(raw.get(update_col)) if update_col else None
+    is_restatement = update is not None and update > notice
+    visible_date = update if is_restatement else notice
+    return as_utc(visible_date), 1 if is_restatement else 0, is_restatement
+
+
 def dataframe_to_statement_rows(
     frame: pd.DataFrame,
     *,
@@ -130,6 +144,7 @@ def dataframe_to_statement_rows(
     period_col = _first_col(frame, period_col_candidates)
     if period_col is None:
         return []
+    notice_col = _first_col(frame, _NOTICE_COLS)
     candidates = _FIELD_CANDIDATES.get(statement_type, {})
     present = {
         field: [c for c in cols if c in frame.columns]
@@ -140,6 +155,8 @@ def dataframe_to_statement_rows(
         period_end = _parse_period(raw[period_col])
         if period_end is None:
             continue
+        contract = _visibility_contract(raw, notice_col) if notice_col else None
+        revision = contract[1] if contract else 0
         for field, cols in present.items():
             num = None
             for col in cols:
@@ -159,7 +176,10 @@ def dataframe_to_statement_rows(
                     field_code=field,
                     value=num,
                     source=source,
-                    source_record_id=f"{instrument_key}:{statement_type}:{period_end.isoformat()}:{field}",
+                    source_record_id=(
+                        f"{instrument_key}:{statement_type}:{period_end.isoformat()}:{field}:r{revision}"
+                    ),
+                    revision=revision,
                 )
             )
     return rows
@@ -171,7 +191,7 @@ def dataframe_to_announce_rows(
     instrument_key: str,
     source: str,
 ) -> list[AnnounceRow]:
-    """One AnnounceRow per period from the sheet's NOTICE_DATE (date-only → D+1 visible)."""
+    """One conservative latest-snapshot announcement per period."""
     if frame is None or frame.empty:
         return []
     period_col = _first_col(frame, _PERIOD_COLS)
@@ -181,20 +201,20 @@ def dataframe_to_announce_rows(
     out: list[AnnounceRow] = []
     for _, raw in frame.iterrows():
         pe = _parse_period(raw[period_col])
-        notice = _parse_period(raw[notice_col])
-        if pe is None or notice is None:
+        contract = _visibility_contract(raw, notice_col)
+        if pe is None or contract is None:
             continue
-        at = as_utc(notice)
+        at, revision, is_restatement = contract
         out.append(
             AnnounceRow(
                 instrument_key=instrument_key,
                 report_period_end=pe,
                 publish_time=at,
                 available_time=at,
-                revision=0,
-                is_restatement=False,
+                revision=revision,
+                is_restatement=is_restatement,
                 source=source,
-                source_record_id=f"{instrument_key}:{pe.isoformat()}:r0",
+                source_record_id=f"{instrument_key}:{pe.isoformat()}:r{revision}",
             )
         )
     return out
@@ -203,9 +223,8 @@ def dataframe_to_announce_rows(
 def merge_interest_bearing(rows: list[StatementFieldRow]) -> list[StatementFieldRow]:
     """Derive interest_bearing_debt = short + long + bonds.
 
-    When a balance sheet exists for the period but all debt lines are blank, the
-    source convention is "not applicable" → 0 (debt-free issuers). Periods without
-    any balance sheet get no interest_bearing_debt row.
+    三项必须全部明确披露（包括显式 0）才合成；空白无法区分“无债务”和
+    “数据源漏项”，因此保持缺失，避免系统性低估投入资本。
     """
     by_key: dict[tuple, dict[str, float]] = {}
     meta: dict[tuple, StatementFieldRow] = {}
@@ -224,7 +243,8 @@ def merge_interest_bearing(rows: list[StatementFieldRow]) -> list[StatementField
             fields.get("long_term_debt"),
             fields.get("bonds_payable"),
         ]
-        present = [c for c in components if c is not None]
+        if any(component is None for component in components):
+            continue
         sample = meta[key]
         extra.append(
             StatementFieldRow(
@@ -235,7 +255,7 @@ def merge_interest_bearing(rows: list[StatementFieldRow]) -> list[StatementField
                 fiscal_quarter=sample.fiscal_quarter,
                 statement_type="balance",
                 field_code="interest_bearing_debt",
-                value=float(sum(present)),
+                value=float(sum(component for component in components if component is not None)),
                 source=sample.source,
                 source_record_id=(
                     f"{sample.instrument_key}:balance:{sample.report_period_end.isoformat()}"
@@ -311,6 +331,60 @@ class AkshareStatementAdapter:
     def _instrument(key: str, code: str) -> str:
         return key if ":" in key else a_code_to_instrument(code)
 
+    def _period_contracts(self, code: str, instrument: str) -> dict[date, AnnounceRow]:
+        """合并三张表的时点契约；完整快照等待所有贡献表均已可见。"""
+        rows_by_type: dict[str, list[StatementFieldRow]] = {}
+        announce_by_type: dict[str, dict[date, AnnounceRow]] = {}
+        for statement_type in ("income", "balance", "cashflow"):
+            frame = self._sheet(code, statement_type)
+            rows_by_type[statement_type] = dataframe_to_statement_rows(
+                frame,
+                instrument_key=instrument,
+                statement_type=statement_type,
+                source=self.source,
+            )
+            announce_by_type[statement_type] = {
+                row.report_period_end: row
+                for row in dataframe_to_announce_rows(
+                    frame,
+                    instrument_key=instrument,
+                    source=f"{self.source}_notice",
+                )
+            }
+
+        periods = {
+            row.report_period_end
+            for typed_rows in rows_by_type.values()
+            for row in typed_rows
+        }
+        contracts: dict[date, AnnounceRow] = {}
+        for period in periods:
+            contributors = [
+                statement_type
+                for statement_type, typed_rows in rows_by_type.items()
+                if any(row.report_period_end == period for row in typed_rows)
+            ]
+            announcements = [
+                announce_by_type[statement_type].get(period) for statement_type in contributors
+            ]
+            # 任一贡献报表没有公告时，不为整期快照伪造可见时点。
+            if not announcements or any(row is None for row in announcements):
+                continue
+            visible_rows = [row for row in announcements if row is not None]
+            available = max(row.available_time for row in visible_rows)
+            revision = 1 if any(row.is_restatement for row in visible_rows) else 0
+            contracts[period] = AnnounceRow(
+                instrument_key=instrument,
+                report_period_end=period,
+                publish_time=available,
+                available_time=available,
+                revision=revision,
+                is_restatement=revision > 0,
+                source=f"{self.source}_notice",
+                source_record_id=f"{instrument}:{period.isoformat()}:r{revision}",
+            )
+        return contracts
+
     def fetch_statements(
         self,
         instrument_keys: Sequence[str],
@@ -322,15 +396,27 @@ class AkshareStatementAdapter:
         for key in instrument_keys:
             code = instrument_to_a_code(key)
             instrument = self._instrument(key, code)
+            contracts = self._period_contracts(code, instrument)
             for statement_type in ("balance", "income", "cashflow"):
-                rows.extend(
-                    dataframe_to_statement_rows(
-                        self._sheet(code, statement_type),
-                        instrument_key=instrument,
-                        statement_type=statement_type,
-                        source=self.source,
-                    )
+                sheet_rows = dataframe_to_statement_rows(
+                    self._sheet(code, statement_type),
+                    instrument_key=instrument,
+                    statement_type=statement_type,
+                    source=self.source,
                 )
+                for row in sheet_rows:
+                    contract = contracts.get(row.report_period_end)
+                    if contract is None:
+                        rows.append(row)
+                        continue
+                    record_base = row.source_record_id.rsplit(":r", 1)[0]
+                    rows.append(
+                        replace(
+                            row,
+                            revision=contract.revision,
+                            source_record_id=f"{record_base}:r{contract.revision}",
+                        )
+                    )
         if start is not None:
             rows = [r for r in rows if r.report_period_end >= start]
         if end is not None:
@@ -344,21 +430,12 @@ class AkshareStatementAdapter:
         start: date | None = None,
         end: date | None = None,
     ) -> list[AnnounceRow]:
-        """Earliest NOTICE_DATE per period across the three sheets."""
-        best: dict[tuple[str, date], AnnounceRow] = {}
+        """返回合并财报快照的保守可见时点。"""
+        out: list[AnnounceRow] = []
         for key in instrument_keys:
             code = instrument_to_a_code(key)
             instrument = self._instrument(key, code)
-            for statement_type in ("income", "balance", "cashflow"):
-                for row in dataframe_to_announce_rows(
-                    self._sheet(code, statement_type),
-                    instrument_key=instrument,
-                    source=f"{self.source}_notice",
-                ):
-                    slot = (row.instrument_key, row.report_period_end)
-                    if slot not in best or row.available_time < best[slot].available_time:
-                        best[slot] = row
-        out = list(best.values())
+            out.extend(self._period_contracts(code, instrument).values())
         if start is not None:
             out = [r for r in out if r.report_period_end >= start]
         if end is not None:

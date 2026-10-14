@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from .adapters.announce import as_utc
+from .numeric import finite_float, safe_divide
 
 QKey = tuple[int, int]
 
@@ -75,21 +76,17 @@ _OPEX_COMPONENTS: tuple[str, ...] = (
 
 
 def _safe_div(num: float | None, den: float | None) -> float | None:
-    if den is None or num is None:
-        return None
-    if den == 0 or (isinstance(den, float) and (np.isnan(den) or den == 0)):
-        return None
-    try:
-        return float(num) / float(den)
-    except (TypeError, ValueError, ZeroDivisionError):
-        return None
+    """Fundamental ratio guard shared with valuation calculations."""
+    return safe_divide(num, den)
 
 
 def _yoy_growth(current: float | None, lagged: float | None) -> float | None:
     """Single-quarter YoY: (current - lagged) / |lagged|. None if lagged==0."""
-    if current is None or lagged is None or lagged == 0:
+    current_num = finite_float(current)
+    lagged_num = finite_float(lagged)
+    if current_num is None or lagged_num is None:
         return None
-    return (float(current) - float(lagged)) / abs(float(lagged))
+    return safe_divide(current_num - lagged_num, abs(lagged_num))
 
 
 def _prev_q(key: QKey) -> QKey:
@@ -152,8 +149,9 @@ def derive_fields(wide: pd.DataFrame) -> pd.DataFrame:
     if "revenue" in out.columns and "operating_cost" in out.columns:
         out["gross_profit"] = _existing("gross_profit").fillna(out["revenue"] - out["operating_cost"])
     components = [c for c in _OPEX_COMPONENTS if c in out.columns]
-    if components:
-        derived = out[components].sum(axis=1, min_count=1)
+    if len(components) == len(_OPEX_COMPONENTS):
+        # 分项口径要求四项齐全；部分求和会把“缺字段”伪装成低费用率。
+        derived = out[components].sum(axis=1, min_count=len(_OPEX_COMPONENTS))
         out["operating_expenses"] = _existing("operating_expenses").fillna(derived)
     if "cash_from_operations" in out.columns and "capex" in out.columns:
         derived = out["cash_from_operations"] - out["capex"].abs()
@@ -280,13 +278,7 @@ class _PitState:
 
 
 def _num(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-    return None if np.isnan(out) else out
+    return finite_float(value)
 
 
 def _at_ns(value: Any) -> int | None:
@@ -302,8 +294,9 @@ def _iter_pit_rows(
     """Yield (row, state) per instrument row.
 
     Rows sharing the same available_time are applied to the state before any of
-    them is evaluated. Rows without available_time are yielded with ``state=None``.
-    Cost is O(rows) per instrument — no full-frame rescans.
+    them is evaluated. If the same report period has multiple revisions at that
+    timestamp, only the highest revision is effective because lower revisions had
+    no independent visibility interval. Rows without available_time yield state=None.
     """
     for _, sub in frame.groupby("instrument_key", sort=False):
         records = sub.to_dict("records")
@@ -319,7 +312,16 @@ def _iter_pit_rows(
             j = i
             while j < len(timed) and _at_ns(timed[j]["available_time"]) == at:
                 j += 1
-            batch = timed[i:j]
+            raw_batch = timed[i:j]
+            effective_by_period: dict[Any, dict[str, Any]] = {}
+            for row in raw_batch:
+                period_key = row["report_period_end"]
+                current = effective_by_period.get(period_key)
+                if current is None or int(row.get("revision") or 0) > int(
+                    current.get("revision") or 0
+                ):
+                    effective_by_period[period_key] = row
+            batch = list(effective_by_period.values())
             for r in batch:
                 key = (int(r["fiscal_year"]), int(r["fiscal_quarter"]))
                 rev = int(r.get("revision") or 0)
@@ -429,11 +431,12 @@ def compute_period_metrics(wide_with_announce: pd.DataFrame) -> list[dict[str, A
             record_id = None
 
         def emit(metric_code: str, value: float | None, unit: str = "ratio") -> None:
-            if value is None or (isinstance(value, float) and np.isnan(value)):
+            normalized = finite_float(value)
+            if normalized is None:
                 return
             item = dict(base)
             item["metric_code"] = metric_code
-            item["value"] = float(value)
+            item["value"] = normalized
             item["unit"] = unit
             item["source_record_id"] = str(
                 record_id or f"{ik}:{metric_code}:{pe.isoformat()}:r{revision}"
